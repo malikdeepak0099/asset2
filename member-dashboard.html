@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Member Dashboard | Asset Rise Portal</title>
+  <link rel="stylesheet" href="portal.css" />
+</head>
+<body class="portal-body">
+  <div class="portal-layout">
+    <aside class="sidebar">
+      <div class="sidebar-top">
+        <div class="brand-badge">AR</div>
+        <div>
+          <strong>Asset Rise</strong>
+          <small>Member Panel</small>
+        </div>
+      </div>
+
+      <nav class="side-nav">
+        <a class="active" href="#">Dashboard</a>
+        <a href="#">Profile</a>
+        <a href="#">My Team</a>
+        <a href="#">Referrals</a>
+        <a href="#">Reports</a>
+        <a href="login.html">Logout</a>
+      </nav>
+    </aside>
+
+    <main class="main-panel">
+      <header class="panel-header">
+        <div>
+          <p class="pill">Member Area</p>
+          <h1>Welcome, Demo Member</h1>
+        </div>
+        <div class="user-chip">ID: AR-1024</div>
+      </header>
+
+      <section class="stats-grid">
+        <div class="card stat">
+          <p>Total Team</p>
+          <h3>128</h3>
+          <span>Demo data</span>
+        </div>
+        <div class="card stat">
+          <p>Direct Referrals</p>
+          <h3>18</h3>
+          <span>Demo data</span>
+        </div>
+        <div class="card stat">
+          <p>Active Status</p>
+          <h3>Yes</h3>
+          <span>Demo data</span>
+        </div>
+        <div class="card stat">
+          <p>Profile Score</p>
+          <h3>92%</h3>
+          <span>Demo data</span>
+        </div>
+      </section>
+
+      <section class="panel-grid">
+        <div class="card">
+          <div class="card-head">
+            <h3>Referral Link</h3>
+          </div>
+          <div class="link-box">
+            <input id="refLink" value="https://assetrise.io/register?ref=AR1024" readonly />
+            <button class="btn btn-secondary" onclick="copyReferral()">Copy</button>
+          </div>
+          <p id="copyNote" class="form-note"></p>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3>Quick Actions</h3>
+          </div>
+          <div class="quick-list">
+            <button class="btn btn-primary">Update Profile</button>
+            <button class="btn btn-secondary">View Team</button>
+            <button class="btn btn-secondary">Download Report</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel-grid">
+        <div class="card">
+          <div class="card-head">
+            <h3>Recent Activity</h3>
+          </div>
+          <table class="table">
+            <thead>
+              <tr><th>Date</th><th>Activity</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>14 Apr</td><td>Profile updated</td><td><span class="status ok">Done</span></td></tr>
+              <tr><td>13 Apr</td><td>New referral joined</td><td><span class="status info">Recorded</span></td></tr>
+              <tr><td>12 Apr</td><td>Support request</td><td><span class="status wait">Pending</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3>My Team Snapshot</h3>
+          </div>
+          <div class="mini-list">
+            <div class="mini-item"><strong>Level 1</strong><span>18 members</span></div>
+            <div class="mini-item"><strong>Level 2</strong><span>44 members</span></div>
+            <div class="mini-item"><strong>Level 3</strong><span>66 members</span></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="portal.js"></script>
+</body>
+</html>

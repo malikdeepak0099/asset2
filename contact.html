@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Contact | Asset Rise Group LLC</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="container nav-wrap">
+      <a href="index.html" class="logo">
+        <span class="logo-mark">AR</span>
+        <span class="logo-text"><strong>ASSET RISE</strong><small>GROUP LLC</small></span>
+      </a>
+      <button class="menu-toggle" id="menuToggle" aria-label="Open menu">☰</button>
+      <nav class="nav" id="mainNav">
+        <a href="index.html">Home</a>
+        <a href="about.html">About</a>
+        <a href="opportunity.html">Opportunity</a>
+        <a href="dashboard.html" class="nav-cta">Dashboard</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="page-main">
+    <section class="page-hero">
+      <div class="container narrow">
+        <p class="section-tag">Contact</p>
+        <h1>Let’s build the next step.</h1>
+        <p class="lead">Update the details below with your final official contact information before launch.</p>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container contact-grid">
+        <div>
+          <h2>Contact Information</h2>
+          <div class="contact-lines">
+            <div><strong>Phone:</strong> +1 770-384-7328</div>
+            <div><strong>Website:</strong> www.assetrise.io</div>
+            <div><strong>Email:</strong> info@assetrise.io</div>
+          </div>
+        </div>
+
+        <form class="contact-card" onsubmit="return handleSubmit(event)">
+          <label>Full Name<input type="text" placeholder="Enter your name" required /></label>
+          <label>Email Address<input type="email" placeholder="Enter your email" required /></label>
+          <label>Message<textarea rows="5" placeholder="Tell us how we can help" required></textarea></label>
+          <button type="submit" class="btn btn-primary btn-full">Send Message</button>
+          <p class="form-note" id="formNote"></p>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-wrap">
+      <div>
+        <strong>ASSET RISE GROUP LLC</strong>
+        <p>Building Wealth. Empowering Growth.</p>
+      </div>
+      <div class="footer-links">
+        <a href="index.html">Home</a>
+        <a href="about.html">About</a>
+        <a href="opportunity.html">Opportunity</a>
+      </div>
+    </div>
+  </footer>
+  <script src="script.js"></script>
+</body>
+</html>

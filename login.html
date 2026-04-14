@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login | Asset Rise Portal</title>
+  <link rel="stylesheet" href="portal.css" />
+</head>
+<body class="auth-body">
+  <div class="auth-shell">
+    <div class="auth-brand">
+      <div class="brand-badge">AR</div>
+      <h1>Asset Rise Portal</h1>
+      <p>Secure access for members and administrators.</p>
+    </div>
+
+    <form class="auth-card" onsubmit="return demoLogin(event)">
+      <h2>Welcome Back</h2>
+      <p class="muted">Use demo credentials to preview the frontend flow.</p>
+
+      <label>Email
+        <input id="loginEmail" type="email" placeholder="admin@assetrise.io" required />
+      </label>
+
+      <label>Password
+        <input id="loginPassword" type="password" placeholder="••••••••" required />
+      </label>
+
+      <div class="auth-actions">
+        <button class="btn btn-primary" type="submit">Login</button>
+        <a class="link-btn" href="register.html">Create account</a>
+      </div>
+
+      <div class="demo-box">
+        <strong>Demo access</strong>
+        <div>Admin: admin@assetrise.io / admin123</div>
+        <div>Member: member@assetrise.io / member123</div>
+      </div>
+
+      <p id="authNote" class="form-note"></p>
+    </form>
+  </div>
+
+  <script src="portal.js"></script>
+</body>
+</html>

@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Register | Asset Rise Portal</title>
+  <link rel="stylesheet" href="portal.css" />
+</head>
+<body class="auth-body">
+  <div class="auth-shell">
+    <div class="auth-brand">
+      <div class="brand-badge">AR</div>
+      <h1>Create Account</h1>
+      <p>Frontend registration page for new members.</p>
+    </div>
+
+    <form class="auth-card" onsubmit="return demoRegister(event)">
+      <h2>Join Asset Rise</h2>
+
+      <label>Full Name
+        <input type="text" placeholder="Enter full name" required />
+      </label>
+
+      <label>Email
+        <input type="email" placeholder="Enter email address" required />
+      </label>
+
+      <label>Phone
+        <input type="text" placeholder="Enter phone number" required />
+      </label>
+
+      <label>Sponsor ID
+        <input type="text" placeholder="Optional sponsor code" />
+      </label>
+
+      <label>Password
+        <input type="password" placeholder="Create password" required />
+      </label>
+
+      <div class="auth-actions">
+        <button class="btn btn-primary" type="submit">Create Account</button>
+        <a class="link-btn" href="login.html">Back to login</a>
+      </div>
+
+      <p id="registerNote" class="form-note"></p>
+    </form>
+  </div>
+
+  <script src="portal.js"></script>
+</body>
+</html>

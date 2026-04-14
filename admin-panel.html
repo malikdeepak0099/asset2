@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Panel | Asset Rise Portal</title>
+  <link rel="stylesheet" href="portal.css" />
+</head>
+<body class="portal-body">
+  <div class="portal-layout">
+    <aside class="sidebar">
+      <div class="sidebar-top">
+        <div class="brand-badge">AR</div>
+        <div>
+          <strong>Asset Rise</strong>
+          <small>Admin Panel</small>
+        </div>
+      </div>
+
+      <nav class="side-nav">
+        <a class="active" href="#">Overview</a>
+        <a href="#">Members</a>
+        <a href="#">Leads</a>
+        <a href="#">Approvals</a>
+        <a href="#">Reports</a>
+        <a href="#">Settings</a>
+        <a href="login.html">Logout</a>
+      </nav>
+    </aside>
+
+    <main class="main-panel">
+      <header class="panel-header">
+        <div>
+          <p class="pill">Administrator</p>
+          <h1>Admin Control Center</h1>
+        </div>
+        <div class="user-chip">Super Admin</div>
+      </header>
+
+      <section class="stats-grid">
+        <div class="card stat"><p>Total Members</p><h3>1,248</h3><span>Demo data</span></div>
+        <div class="card stat"><p>Pending Approvals</p><h3>16</h3><span>Demo data</span></div>
+        <div class="card stat"><p>New Leads</p><h3>54</h3><span>Demo data</span></div>
+        <div class="card stat"><p>Active Teams</p><h3>86</h3><span>Demo data</span></div>
+      </section>
+
+      <section class="panel-grid">
+        <div class="card">
+          <div class="card-head">
+            <h3>Recent Registrations</h3>
+          </div>
+          <table class="table">
+            <thead>
+              <tr><th>Name</th><th>Email</th><th>Status</th><th>Action</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Alex Morgan</td><td>alex@example.com</td><td><span class="status wait">Pending</span></td><td><button class="small-btn">Approve</button></td></tr>
+              <tr><td>Priya Sharma</td><td>priya@example.com</td><td><span class="status ok">Approved</span></td><td><button class="small-btn">View</button></td></tr>
+              <tr><td>Michael Lee</td><td>michael@example.com</td><td><span class="status info">Review</span></td><td><button class="small-btn">Review</button></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3>Admin Quick Actions</h3>
+          </div>
+          <div class="quick-list">
+            <button class="btn btn-primary">Add Member</button>
+            <button class="btn btn-secondary">Export CSV</button>
+            <button class="btn btn-secondary">Generate Report</button>
+            <button class="btn btn-secondary">Send Notice</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel-grid">
+        <div class="card">
+          <div class="card-head">
+            <h3>System Notes</h3>
+          </div>
+          <div class="mini-list">
+            <div class="mini-item"><strong>Frontend only</strong><span>No real database connected</span></div>
+            <div class="mini-item"><strong>Approvals</strong><span>Buttons are demo UI</span></div>
+            <div class="mini-item"><strong>Security</strong><span>Add backend auth before launch</span></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3>Lead Sources</h3>
+          </div>
+          <div class="chart-wrap">
+            <div class="bar" style="height:52%"></div>
+            <div class="bar" style="height:78%"></div>
+            <div class="bar" style="height:66%"></div>
+            <div class="bar" style="height:88%"></div>
+            <div class="bar" style="height:61%"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="portal.js"></script>
+</body>
+</html>
