@@ -86,13 +86,13 @@ INTENTS = [  # order matters: first match wins
     ("plans", ["vip", "boost", "promot", "sponsor", "top of", "plans", "tariff", "продвиж", "поднять", "реклам", "ტოპ", "პაკეტ", "რეკლამ"]),
     ("payment", ["payment", "how to pay", "how do i pay", "how can i pay", "iban", "bank transfer", "оплат", "как платить", "გადახდ", "ანგარიშ", "ჩარიცხ"]),
     ("viewing", ["viewing", "visit", "see the flat", "see the apartment", "show me the", "appointment", "просмотр", "посмотреть", "ნახვა", "დათვალიერ", "ვნახო"]),
-    ("foreigner", ["foreigner", "foreign", "non-resident", "citizen", "иностран", "нерезидент", "უცხოელ", "უცხო ქვეყნ"]),
+    ("foreigner", ["foreigner", "foreign", "forner", "foriner", "forigner", "foreiner", "forener", "expat", "non resident", "not citizen", "non-resident", "citizen", "иностран", "нерезидент", "უცხოელ", "უცხო ქვეყნ"]),
     ("residence", ["residen", "permit", "visa", "внж", "вид на жительство", "резидент", "ბინადრ", "ვიზა"]),
     ("mortgage", ["mortgage", "loan", "installment", "credit", "ипотек", "кредит", "рассроч", "იპოთეკ", "სესხ", "განვადებ"]),
     ("documents", ["document", "contract", "deposit", "registration", "registry", "докум", "договор", "депозит", "залог", "регистрац",
                    "დოკუმენტ", "ხელშეკრულებ", "დეპოზიტ", "რეგისტრაც"]),
     ("fees", ["commission", "fee", "how much do you charge", "your price", "комисси", "сколько берете", "საკომისიო", "მომსახურების ფას"]),
-    ("contact", ["address", "office", "where are you", "location", "phone", "number", "whatsapp", "email", "hours", "open", "working time",
+    ("contact", ["share me number", "your number", "share number", "contact details", "contact number", "address", "office", "where are you", "location", "phone", "number", "whatsapp", "email", "hours", "open", "working time",
                  "адрес", "офис", "где вы", "телефон", "номер", "часы", "график", "მისამართ", "ოფის", "სად ხართ", "ტელეფონ", "ნომერ", "სამუშაო საათ"]),
     ("services", ["what do you do", "services", "about you", "who are you", "услуг", "кто вы", "чем занимаетесь", "სერვის", "მომსახურებ", "ვინ ხართ"]),
     ("thanks", ["thank", "thx", "спасибо", "благодар", "მადლობ", "გმადლობ"]),
@@ -271,6 +271,32 @@ def district_buttons(lang):
     return b
 
 
+def done_msg(lang):
+    return {"text": T(lang, "Done ✅ An agent has your request and will reply right here or contact you on WhatsApp / phone — usually within an hour during working time (Mon–Sat, 10:00–19:00). Meanwhile I can still answer questions here.",
+                      "მზადაა ✅ აგენტმა მიიღო თქვენი მოთხოვნა და გიპასუხებთ აქვე ან WhatsApp-ით / ტელეფონით — ჩვეულებრივ ერთ საათში სამუშაო დროს (ორშ–შაბ, 10:00–19:00). მანამდე კითხვებს აქვე გიპასუხებთ.",
+                      "Готово ✅ Агент получил ваш запрос и ответит здесь или свяжется по WhatsApp / телефону — обычно в течение часа в рабочее время (Пн–Сб, 10:00–19:00). А пока я отвечу на вопросы здесь.")}
+
+
+def reply_waiting(con, state, text, settings, site):
+    """Visitor is waiting for an agent: still answer what the bot knows, stay quiet otherwise."""
+    raw = (text or "").strip()[:1000]
+    lang = detect_lang(raw, state.get("lang") or "en") if raw and not raw.startswith("__") else state.get("lang") or "en"
+    state["lang"] = lang
+    it = intent_of(raw)
+    if it in ("agent", "valuation", "viewing") or raw in ("__agent", "__valuation", "__viewing", "__findforme", "__sellforme"):
+        return [{"text": T(lang, "Your request is already with our agents — they will answer here shortly.",
+                           "თქვენი მოთხოვნა უკვე აგენტებთანაა — მალე გიპასუხებენ აქვე.",
+                           "Ваш запрос уже у агентов — они скоро ответят здесь.")}]
+    if it in ("thanks", "bye", "hello") or (not it and not parse_search(raw) and not raw.startswith("__")):
+        return []
+    st = dict(state); st["step"] = None
+    msgs, event = reply(con, st, raw, settings, site)
+    if event:
+        return []
+    state["search"] = st.get("search", state.get("search"))
+    return msgs
+
+
 def handoff_start(state, lang, topic):
     state["step"] = "ask_name"
     state["topic"] = topic
@@ -412,23 +438,45 @@ def reply(con, state, text, settings, site):
 
     # ---- collecting contact for an agent
     step = state.get("step")
-    if step == "ask_name" and not raw.startswith("__"):
-        state["name"] = raw[:80]
-        state["step"] = "ask_phone"
-        return [{"text": T(lang, f"Thanks, {state['name']}! Your phone or WhatsApp number?",
-                           f"გმადლობთ, {state['name']}! თქვენი ტელეფონი ან WhatsApp ნომერი?",
-                           f"Спасибо, {state['name']}! Ваш телефон или WhatsApp?")}], None
-    if step == "ask_phone" and not raw.startswith("__"):
+    if step in ("ask_name", "ask_phone") and not raw.startswith("__"):
         digits = re.sub(r"\D", "", raw)
-        if len(digits) < 9:
-            return [{"text": T(lang, "Please send a phone number (for example 5XX XXX XXX) so the agent can reach you.",
-                               "გთხოვთ, მოგვწეროთ ტელეფონის ნომერი (მაგ. 5XX XXX XXX).",
-                               "Пожалуйста, отправьте номер телефона (например +995 5XX XXX XXX).")}], None
-        state["phone"] = raw[:40]
+        if len(digits) >= 9:
+            if step == "ask_name":
+                left = re.sub(r"[+\d()\-\s]{9,}", " ", raw).strip(" ,.-")
+                state["name"] = left[:80] if left and len(left.split()) <= 3 and not intent_of(left) else ""
+            state["phone"] = re.search(r"[+\d][\d()\-\s]{7,}\d", raw).group(0).strip()[:40]
+            state["step"] = None
+            return [done_msg(lang)], "handoff"
+        it = intent_of(raw)
+        looks_like_name = step == "ask_name" and not it and "?" not in raw and 0 < len(raw.split()) <= 3 and not parse_search(raw)
+        if looks_like_name:
+            state["name"] = raw[:80]
+            state["step"] = "ask_phone"
+            return [{"text": T(lang, f"Thanks, {state['name']}! Your phone or WhatsApp number?",
+                               f"გმადლობთ, {state['name']}! თქვენი ტელეფონი ან WhatsApp ნომერი?",
+                               f"Спасибо, {state['name']}! Ваш телефон или WhatsApp?")}], None
+        ask = (T(lang, "To connect you with an agent, please write your name or phone number.",
+                 "აგენტთან დასაკავშირებლად მოგვწერეთ სახელი ან ტელეფონის ნომერი.",
+                 "Чтобы соединить вас с агентом, напишите имя или номер телефона.") if step == "ask_name" else
+               T(lang, "To connect you with an agent, please send your phone or WhatsApp number (for example 5XX XXX XXX).",
+                 "აგენტთან დასაკავშირებლად გამოგვიგზავნეთ ტელეფონის ან WhatsApp ნომერი (მაგ. 5XX XXX XXX).",
+                 "Чтобы соединить вас с агентом, отправьте номер телефона или WhatsApp (например +995 5XX XXX XXX)."))
+        out = []
+        if it and it not in ("agent", "valuation", "viewing", "hello", "thanks"):
+            a = answer(it, {}, lang, settings, site)
+            if a:
+                out.append(a)
+        elif not it and parse_search(raw):
+            st2 = dict(state); st2["search"] = dict(state.get("search") or {}, **parse_search(raw))
+            if st2["search"].get("deal"):
+                state["search"] = st2["search"]
+                out.append(do_search(con, state, lang, site))
+        out.append({"text": ask, "buttons": [{"label": T(lang, "↩ Not now", "↩ ახლა არა", "↩ Не сейчас"), "value": "__cancel"},
+                                             {"label": "WhatsApp", "url": WA}]})
+        return out, None
+    if raw == "__cancel":
         state["step"] = None
-        return [{"text": T(lang, "Done ✅ An agent has your request and will reply right here or contact you on WhatsApp / phone — usually within an hour during working time (Mon–Sat, 10:00–19:00). You can keep writing here.",
-                           "მზადაა ✅ აგენტმა მიიღო თქვენი მოთხოვნა და გიპასუხებთ აქვე ან WhatsApp-ით / ტელეფონით — ჩვეულებრივ ერთ საათში სამუშაო დროს (ორშ–შაბ, 10:00–19:00). შეგიძლიათ აქვე გააგრძელოთ წერა.",
-                           "Готово ✅ Агент получил ваш запрос и ответит здесь или свяжется по WhatsApp / телефону — обычно в течение часа в рабочее время (Пн–Сб, 10:00–19:00). Можете продолжать писать здесь.")}], "handoff"
+        return [welcome(lang)], None
 
     # ---- buttons
     if raw == "__start":

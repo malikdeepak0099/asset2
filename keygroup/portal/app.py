@@ -872,6 +872,11 @@ async def chat_send(request):
             con.execute("UPDATE chats SET unread=unread+1 WHERE id=?", (chat["id"],))
             if not text.startswith("__"):
                 alert = f"💬 <b>Website chat #{chat['id']}</b> — {esc(chat['name'])} {esc(chat['phone'])}\n{esc(shown[:500])}\n\nReply: {SITE}/admin/#chats"
+            if chat["status"] == "waiting":
+                state = json.loads(chat["state"] or "{}")
+                for m in chatbot.reply_waiting(con, state, text, get_settings(), SITE):
+                    add_msg(con, chat["id"], "bot", m)
+                con.execute("UPDATE chats SET state=? WHERE id=?", (json.dumps(state, ensure_ascii=False), chat["id"]))
         else:
             state = json.loads(chat["state"] or "{}")
             msgs, event = chatbot.reply(con, state, text, get_settings(), SITE)
