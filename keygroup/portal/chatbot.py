@@ -214,7 +214,7 @@ def search(con, q, site, limit=3):
         if q.get("max_price") and l["price"] > q["max_price"] * 1.05:
             continue
         out.append(l)
-    out.sort(key=lambda l: (-l["rank"], abs((q.get("max_price") or l["price"]) - l["price"])))
+    out.sort(key=lambda l: (-l["rank"], abs(q["max_price"] - l["price"]) if q.get("max_price") else l["price"]))
     return len(out), out[:limit]
 
 
