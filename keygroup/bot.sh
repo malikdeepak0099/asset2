@@ -28,7 +28,9 @@ fi
 docker compose up -d --build 2>&1 | tail -3
 sleep 8
 if docker compose ps | grep -q "Up"; then
-  echo "DONE - KEY GROUP Assistant is running. Open the bot in Telegram and send /start"
+  echo "DONE - KEY GROUP Assistant is running."
+  BOTNAME=$(curl -fsS "https://api.telegram.org/bot$(grep '^BOT_TOKEN=' .env | cut -d= -f2-)/getMe" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["username"])' 2>/dev/null)
+  [ -n "$BOTNAME" ] && echo "BOT NAME: @$BOTNAME   LINK: https://t.me/$BOTNAME"
 else
   echo "PROBLEM - bot did not start. Last log lines:"; docker compose logs --tail 20
 fi
