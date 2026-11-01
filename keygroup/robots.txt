@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /index.backup-
+Disallow: /index.v1.html
+
+Sitemap: https://keygroup.ge/sitemap.xml

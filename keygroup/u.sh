@@ -9,6 +9,9 @@ curl -fsSL "$RAW/index.html?$(date +%s)" -o index.new.html || { echo "STOP: coul
 grep -q 'KEY GROUP' index.new.html || { echo "STOP: downloaded page looks wrong - nothing changed"; rm -f index.new.html; exit 1; }
 [ -f index.html ] && cp index.html "index.backup-$(date +%Y%m%d-%H%M).html"
 mv index.new.html index.html
+for f in robots.txt sitemap.xml google3ca613aecc8cb616.html; do
+  curl -fsSL "$RAW/$f?$(date +%s)" -o "$f" || echo "could not download $f"
+done
 mkdir -p img
 for p in hero:8ad93447-40e3-41b8-b1a0-a509490a8ad1 vake:4cae281b-91eb-49e0-bc3e-74d7d24f5597 saburtalo:b40d1576-c15c-4653-a7d7-43d111ee36df oldtbilisi:f5c49673-65f6-4f93-8f97-9ec763ec8387 batumi:67f78f55-d517-4f74-91c9-7a48a3323d37; do
   n=${p%%:*}; id=${p#*:}
