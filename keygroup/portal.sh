@@ -13,7 +13,7 @@ done
 chmod -R a+rX "$SITE"
 # 2) portal service
 mkdir -p "$DIR/data" && cd "$DIR"
-for f in app.py chatbot.py requirements.txt Dockerfile docker-compose.yml; do
+for f in app.py chatbot.py kb.py requirements.txt Dockerfile docker-compose.yml; do
   curl -fsSL "$RAW/portal/$f?$(date +%s)" -o "$f" || { echo "STOP: could not download $f"; exit 1; }
 done
 CADDY_ID=$(cd /opt/keygroup && docker compose ps -q caddy)

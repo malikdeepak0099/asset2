@@ -6,10 +6,13 @@ residence permit, mortgage, renting documents, fees, office contact and hours.
 Anything it cannot answer (or when the visitor asks) goes to a human agent: it collects name + phone,
 then the conversation appears in the admin panel and on Telegram, and the agent replies from the admin panel.
 """
+import difflib
 import json
 import os
 import re
 import time
+
+import kb
 
 SITE_DIR = os.environ.get("SITE_DIR", "/site")
 OFFICE = {"en": "Richard Holbrooke St. 4, Tbilisi", "ka": "რიჩარდ ჰოლბრუკის ქ. 4, თბილისი", "ru": "ул. Ричарда Холбрука 4, Тбилиси"}
@@ -57,7 +60,7 @@ DISTRICTS = [  # canonical English, Georgian, words that match
     ("Krtsanisi", "კრწანისი", ["krtsanisi", "კრწანის", "крцаниси"]),
     ("Ortachala", "ორთაჭალა", ["ortachala", "ორთაჭალ", "ортачала"]),
     ("Avlabari", "ავლაბარი", ["avlabari", "ავლაბარ", "авлабари"]),
-    ("Lisi", "ლისი", ["lisi", "ლისი", "лиси"]),
+    ("Lisi", "ლისი", [" lisi", "ლისის ტბ", " лиси "]),
     ("Tskneti", "წყნეთი", ["tskneti", "წყნეთ", "цкнети"]),
     ("Bagebi", "ბაგები", ["bagebi", "ბაგებ", "багеби"]),
     ("Vazisubani", "ვაზისუბანი", ["vazisubani", "ვაზისუბან", "вазисубани"]),
@@ -68,7 +71,7 @@ RENT_W = ["rent", "rental", "lease", "kiray", "аренд", "снять", "сн�
 SALE_W = ["buy", "sale", "purchase", "invest", "kharid", "купить", "покуп", "продаж", "продаёт", "ყიდვ", "იყიდ", "შეძენ", "viyidi", "iyideba"]
 DAILY_W = ["daily", "per day", "short term", "short-term", "посуточ", "на день", "დღიურ", "დღეღამ"]
 TYPE_W = {
-    "flat": ["apartment", "flat", "studio", "квартир", "студи", "ბინა", "ბინის", "ბინებ", "bina"],
+    "flat": ["apartment", "flat", "studio", "квартир", "студи", " ბინა ", " ბინა,", "ბინის", "ბინებ", "ბინას", "ბინაზე", "ბინით", " bina "],
     "house": ["house", "villa", "cottage", "дом", "вилл", "коттедж", "სახლ", "აგარაკ"],
     "commercial": ["office", "shop", "commercial", "store", "warehouse", "restaurant", "офис", "магазин", "коммерч", "склад",
                    "ოფის", "კომერც", "მაღაზი", "საწყობ"],
@@ -79,13 +82,13 @@ TYPE_W = {
 INTENTS = [  # order matters: first match wins
     ("agent", ["agent", "human", "operator", "manager", "real person", "talk to someone", "call me", "callback", "call back",
                "оператор", "менеджер", "человек", "агент", "позвон", "აგენტ", "ოპერატორ", "მენეჯერ", "დამირეკ", "ადამიან"]),
-    ("valuation", ["valuation", "value my", "worth", "evaluate", "appraisal", "оцен", "сколько стоит моя", "შეფასებ", "რა ღირს ჩემი"]),
+    ("valuation", ["valuation", "value my", "my property worth", "my flat worth", "my apartment worth", "evaluate my", "appraisal", "оцен", "сколько стоит моя", "შეფასებ", "რა ღირს ჩემი"]),
     ("list", ["list my", "add my", "add listing", "post my", "sell my", "rent out", "i am owner", "i'm owner", "my property", "my apartment",
               "my flat", "landlord", "разместить", "сдать мою", "сдать свою", "продать мою", "продать свою", "моя квартира", "я собственник",
               "განცხადების დამატ", "ჩემი ბინ", "მესაკუთრე", "გავყიდო", "გავაქირავო", "დავდო განცხადება"]),
     ("plans", ["vip", "boost", "promot", "sponsor", "top of", "plans", "tariff", "продвиж", "поднять", "реклам", "ტოპ", "პაკეტ", "რეკლამ"]),
     ("payment", ["payment", "how to pay", "how do i pay", "how can i pay", "iban", "bank transfer", "оплат", "как платить", "გადახდ", "ანგარიშ", "ჩარიცხ"]),
-    ("viewing", ["viewing", "visit", "see the flat", "see the apartment", "show me the", "appointment", "просмотр", "посмотреть", "ნახვა", "დათვალიერ", "ვნახო"]),
+    ("viewing", ["viewing", "book a visit", "visit the flat", "visit the apartment", "see the flat", "see the apartment", "show me the", "appointment", "просмотр", "посмотреть", "ნახვა", "დათვალიერ", "ვნახო"]),
     ("foreigner", ["foreigner", "foreign", "forner", "foriner", "forigner", "foreiner", "forener", "expat", "non resident", "not citizen", "non-resident", "citizen", "иностран", "нерезидент", "უცხოელ", "უცხო ქვეყნ"]),
     ("residence", ["residen", "permit", "visa", "внж", "вид на жительство", "резидент", "ბინადრ", "ვიზა"]),
     ("mortgage", ["mortgage", "loan", "installment", "credit", "ипотек", "кредит", "рассроч", "იპოთეკ", "სესხ", "განვადებ"]),
@@ -146,6 +149,79 @@ def intent_of(text):
         if has(t, words):
             return name
     return None
+
+
+
+# ------------------------------------------------------------------ knowledge base topics
+
+_WORD = re.compile(r"[a-zA-ZႠ-ჿЀ-ӿ]{3,}")
+
+
+def match_topic(text):
+    """Best knowledge-base topic for a free-text question -> (topic_id, score)."""
+    t = " " + text.lower().strip() + " "
+    words = _WORD.findall(t)
+    best, best_score = None, 0.0
+    for tid, tp in kb.TOPICS.items():
+        score = 0.0
+        for k in tp.get("kw", []):
+            if k in t:
+                score += 1 + 0.08 * len(k)
+            elif " " not in k.strip() and len(k) >= 6:
+                for w in words:
+                    if len(w) >= 5 and abs(len(w) - len(k)) <= 2 and difflib.SequenceMatcher(None, w, k).ratio() >= 0.84:
+                        score += 0.8
+                        break
+        if score > best_score:
+            best, best_score = tid, score
+    return best, best_score
+
+
+ACTION_LABELS = {
+    "__rent": ("🔑 Find a rental", "🔑 ქირით ძიება", "🔑 Найти аренду"),
+    "__buy": ("🏠 Properties for sale", "🏠 იყიდება", "🏠 Объекты на продажу"),
+    "__agent": ("👤 Talk to an expert", "👤 ექსპერტთან საუბარი", "👤 Связаться с экспертом"),
+    "__valuation": ("💰 Free valuation", "💰 უფასო შეფასება", "💰 Бесплатная оценка"),
+    "__sellforme": ("🤝 KEY GROUP sells it for me", "🤝 KEY GROUP-მა გაყიდოს", "🤝 Пусть KEY GROUP продаст"),
+    "__guide": ("🇬🇪 More about Georgia", "🇬🇪 მეტი საქართველოზე", "🇬🇪 Ещё о Грузии"),
+}
+
+
+def topic_buttons(ids, lang):
+    out = []
+    for i in ids:
+        if i.startswith("__"):
+            lab = ACTION_LABELS.get(i)
+            if lab:
+                out.append({"label": T(lang, *lab), "value": i})
+        elif i in kb.TOPICS:
+            out.append({"label": kb.TOPICS[i]["label"][lang], "value": "__t_" + i})
+    return out
+
+
+def topic_reply(tid, state, lang, settings, site):
+    tp = kb.TOPICS[tid]
+    if tp.get("dynamic"):
+        msg = answer(tp["dynamic"], state, lang, settings, site)
+        msg = dict(msg)
+    else:
+        msg = {"text": tp[lang] + (kb.NOTE[lang] if tp.get("note") else "")}
+    btn = []
+    if tp.get("url"):
+        btn.append({"label": T(lang, "➡ Open my account", "➡ ჩემი ანგარიში", "➡ Мой кабинет"), "url": site + tp["url"]})
+    btn += topic_buttons(tp.get("next", []), lang)
+    if "__agent" not in tp.get("next", []) and tid not in ("owner",):
+        btn += topic_buttons(["__agent"], lang)
+    msg["buttons"] = (msg.get("buttons") or []) + btn
+    state["last_topic"] = tid
+    return msg
+
+
+def guide(lang):
+    return {"text": T(lang, "What would you like to know about property in Georgia? 🇬🇪",
+                      "რა გაინტერესებთ საქართველოში უძრავ ქონებაზე? 🇬🇪",
+                      "Что вас интересует о недвижимости в Грузии? 🇬🇪"),
+            "buttons": topic_buttons(kb.GUIDE, lang)}
 
 
 # ------------------------------------------------------------------ listings
@@ -249,7 +325,8 @@ def menu(lang):
     return [
         {"label": T(lang, "🔑 Rent", "🔑 ქირაობა", "🔑 Аренда"), "value": "__rent"},
         {"label": T(lang, "🏠 Buy", "🏠 ყიდვა", "🏠 Купить"), "value": "__buy"},
-        {"label": T(lang, "📢 List my property", "📢 ჩემი ქონების განთავსება", "📢 Разместить объект"), "value": "__list"},
+        {"label": T(lang, "🇬🇪 Invest in Georgia", "🇬🇪 ინვესტიცია საქართველოში", "🇬🇪 Инвестиции в Грузию"), "value": "__guide"},
+        {"label": T(lang, "🏠 I'm an owner", "🏠 მესაკუთრე ვარ", "🏠 Я владелец"), "value": "__list"},
         {"label": T(lang, "💰 Free valuation", "💰 უფასო შეფასება", "💰 Бесплатная оценка"), "value": "__valuation"},
         {"label": T(lang, "👤 Talk to an agent", "👤 აგენტთან საუბარი", "👤 Связаться с агентом"), "value": "__agent"},
     ]
@@ -257,9 +334,9 @@ def menu(lang):
 
 def welcome(lang):
     return {"text": T(lang,
-                      "Hi! 👋 I'm the KEY GROUP assistant. I can find a flat or house for you, explain how to list your property, or connect you with an agent. What are you looking for?",
-                      "გამარჯობა! 👋 მე ვარ KEY GROUP-ის ასისტენტი. დაგეხმარებით ბინის ან სახლის მოძებნაში, განცხადების დამატებაში ან აგენტთან დაკავშირებაში. რას ეძებთ?",
-                      "Здравствуйте! 👋 Я ассистент KEY GROUP. Помогу найти квартиру или дом, расскажу как разместить объект или соединю с агентом. Что вы ищете?"),
+                      "Hi! 👋 Welcome to KEY GROUP Real Estate.\nI can find you a flat or house in seconds, answer questions about buying in Georgia — residence permit, ROI, taxes — and help owners sell or rent out. How can I help?",
+                      "გამარჯობა! 👋 მოგესალმებით KEY GROUP-ში.\nწამებში მოგიძებნით ბინას ან სახლს, გიპასუხებთ კითხვებზე ყიდვის, ბინადრობის, შემოსავლის და გადასახადების შესახებ და დავეხმარებით მესაკუთრეებს. რით დაგეხმაროთ?",
+                      "Здравствуйте! 👋 Добро пожаловать в KEY GROUP.\nПодберу квартиру или дом за секунды, отвечу на вопросы о покупке в Грузии — ВНЖ, доходность, налоги — и помогу владельцам продать или сдать. Чем помочь?"),
             "buttons": menu(lang)}
 
 
@@ -287,7 +364,7 @@ def reply_waiting(con, state, text, settings, site):
         return [{"text": T(lang, "Your request is already with our agents — they will answer here shortly.",
                            "თქვენი მოთხოვნა უკვე აგენტებთანაა — მალე გიპასუხებენ აქვე.",
                            "Ваш запрос уже у агентов — они скоро ответят здесь.")}]
-    if it in ("thanks", "bye", "hello") or (not it and not parse_search(raw) and not raw.startswith("__")):
+    if it in ("thanks", "bye", "hello") or (not it and not parse_search(raw) and match_topic(raw)[1] < 0.8 and not raw.startswith("__")):
         return []
     st = dict(state); st["step"] = None
     msgs, event = reply(con, st, raw, settings, site)
@@ -305,8 +382,13 @@ def handoff_start(state, lang, topic):
                       "Конечно — соединю вас с агентом. Как вас зовут?")}
 
 
+TOPIC_OF = {"list": "owner", "foreigner": "process", "residence": "trc", "mortgage": "mortgage", "documents": "process", "fees": "fees"}
+
+
 def answer(intent, state, lang, settings, site):
     s = settings
+    if intent in TOPIC_OF:
+        return topic_reply(TOPIC_OF[intent], state, lang, settings, site)
     if intent == "hello":
         return welcome(lang)
     if intent == "agent":
@@ -448,7 +530,7 @@ def reply(con, state, text, settings, site):
             state["step"] = None
             return [done_msg(lang)], "handoff"
         it = intent_of(raw)
-        looks_like_name = step == "ask_name" and not it and "?" not in raw and 0 < len(raw.split()) <= 3 and not parse_search(raw)
+        looks_like_name = step == "ask_name" and not it and match_topic(raw)[1] < 0.8 and "?" not in raw and 0 < len(raw.split()) <= 3 and not parse_search(raw)
         if looks_like_name:
             state["name"] = raw[:80]
             state["step"] = "ask_phone"
@@ -462,7 +544,10 @@ def reply(con, state, text, settings, site):
                  "აგენტთან დასაკავშირებლად გამოგვიგზავნეთ ტელეფონის ან WhatsApp ნომერი (მაგ. 5XX XXX XXX).",
                  "Чтобы соединить вас с агентом, отправьте номер телефона или WhatsApp (например +995 5XX XXX XXX)."))
         out = []
-        if it and it not in ("agent", "valuation", "viewing", "hello", "thanks"):
+        tid, tscore = match_topic(raw)
+        if tid and tscore >= 0.8 and it not in ("agent", "valuation", "viewing", "contact"):
+            out.append(topic_reply(tid, {}, lang, settings, site))
+        elif it and it not in ("agent", "valuation", "viewing", "hello", "thanks"):
             a = answer(it, {}, lang, settings, site)
             if a:
                 out.append(a)
@@ -496,7 +581,12 @@ def reply(con, state, text, settings, site):
         state["step"] = None
         return [welcome(lang)], None
     if raw == "__list":
-        return [answer("list", state, lang, settings, site)], None
+        return [topic_reply("owner", state, lang, settings, site)], None
+    if raw == "__guide":
+        return [guide(lang)], None
+    if raw.startswith("__t_") and raw[4:] in kb.TOPICS:
+        state["step"] = None
+        return [topic_reply(raw[4:], state, lang, settings, site)], None
     if raw in ("__valuation", "__agent", "__viewing"):
         return [answer(raw[2:], state, lang, settings, site)], None
     if raw in ("__rent_keep", "__buy_keep"):
@@ -514,9 +604,17 @@ def reply(con, state, text, settings, site):
     # ---- free text
     intent = intent_of(raw)
     found = parse_search(raw)
-    if intent in ("agent", "valuation", "viewing", "list", "foreigner", "residence", "mortgage", "documents"):
+    tid0, ts0 = match_topic(raw)
+    if intent == "list" and tid0 and tid0.startswith("o_") and ts0 >= 1:
+        return [topic_reply(tid0, state, lang, settings, site)], None
+    if intent in ("agent", "valuation", "viewing", "list"):
         state["misses"] = 0
         return [answer(intent, state, lang, settings, site)], None
+    tid, tscore = match_topic(raw)
+    specific = bool(set(found) & {"district", "rooms", "max_price"})
+    if tid and intent not in ("contact",) and (tscore >= 3 or (tscore >= 1 and not specific)):
+        state["misses"] = 0
+        return [topic_reply(tid, state, lang, settings, site)], None
     if intent and set(found) <= {"type"} and state.get("step") != "district":
         found = {}
     if found:
@@ -535,6 +633,9 @@ def reply(con, state, text, settings, site):
     if intent:
         state["misses"] = 0
         return [answer(intent, state, lang, settings, site)], None
+    if tid and tscore >= 0.8:
+        state["misses"] = 0
+        return [topic_reply(tid, state, lang, settings, site)], None
     if state.get("step") == "district":
         state["step"] = None
         return [do_search(con, state, lang, site)], None
@@ -548,7 +649,7 @@ def reply(con, state, text, settings, site):
                            "Кажется, я не совсем понял. Давайте соединю вас с агентом."),
                  "buttons": [{"label": T(lang, "👤 Yes, connect me", "👤 დიახ, დამაკავშირეთ", "👤 Да, соедините"), "value": "__agent"},
                              {"label": "WhatsApp", "url": WA}]}], None
-    return [{"text": T(lang, "Sorry, I didn't quite get that. You can write, for example, “2-room flat in Saburtalo up to 800$” — or pick an option:",
+    return [{"text": T(lang, "Sorry, I didn't quite get that. You can write, for example, “2-room flat in Saburtalo up to 800$” or “residence permit” — or pick an option:",
                        "ბოდიში, ვერ გავიგე. მაგალითად მომწერეთ „2 ოთახიანი ბინა საბურთალოზე 800$-მდე“ — ან აირჩიეთ:",
                        "Извините, не совсем понял. Напишите, например, «2-комнатная в Сабуртало до 800$» — или выберите вариант:"),
              "buttons": menu(lang)}], None
