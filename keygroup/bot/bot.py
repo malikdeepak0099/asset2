@@ -27,6 +27,7 @@ from store import Store
 TOKEN = os.environ["BOT_TOKEN"].strip()
 API = f"https://api.telegram.org/bot{TOKEN}/"
 ADMIN_ID = os.environ.get("ADMIN_ID", "").strip()
+EXTRA_ADMINS = {a.strip() for a in os.environ.get("ADMINS", "").split(",") if a.strip()}
 COMPANY_PHONE = os.environ.get("COMPANY_PHONE", "+995 577 114 118").strip()
 CRM_URL = os.environ.get("CRM_URL", "").strip()
 CRM_SECRET = os.environ.get("CRM_SECRET", "").strip()
@@ -63,6 +64,20 @@ def save_state():
 STATE = load_state()
 STATE.setdefault("profiles", {})
 STATE.setdefault("last_daily", "")
+STATE.setdefault("admins", [])
+
+
+def admins():
+    return ({ADMIN_ID} if ADMIN_ID else set()) | EXTRA_ADMINS | set(STATE.get("admins", []))
+
+
+def is_admin(uid):
+    return str(uid) in admins()
+
+
+def send_admins(text, buttons=None):
+    for a in admins():
+        send(a, text, buttons)
 for pair in os.environ.get("AGENTS", "").split(","):
     if ":" in pair:
         i, n = pair.split(":", 1)
@@ -73,7 +88,7 @@ def agent_name(uid):
     uid = str(uid)
     if uid in STATE["agents"]:
         return STATE["agents"][uid]
-    if uid == ADMIN_ID:
+    if uid in admins():
         return "Deepak"
     return None
 
@@ -121,7 +136,7 @@ HELP = (
 
 ADMIN_HELP = (
     "\n\n👑 <b>ადმინი</b>\n/team — კომპანიის ანგარიში · /syncall — ყველა აგენტის განახლება\n"
-    "/agents — აგენტები · /setprofile &lt;TelegramID&gt; &lt;ბმული&gt; — აგენტის პროფილი"
+    "/agents — აგენტები · /addadmin &lt;ID&gt; — მეორე ადმინი · /setprofile &lt;TelegramID&gt; &lt;ბმული&gt; — აგენტის პროფილი"
 )
 
 
@@ -373,8 +388,8 @@ def sync_all(report_to_admin=True, notify_agents=True):
         for uid in list(STATE["agents"].keys()):
             results.append(sync_agent(uid, notify=notify_agents))
             time.sleep(2)
-        if report_to_admin and ADMIN_ID:
-            send(ADMIN_ID, company_report(results))
+        if report_to_admin:
+            send_admins(company_report(results))
         return results
 
 
@@ -405,7 +420,8 @@ def ask_admin_to_register(user):
     if row:
         rows.append(row)
     rows.append([{"text": "❌ არა", "callback_data": f"rej|{uid}|-"}])
-    send(ADMIN_ID, f"🙋 ახალი მომხმარებელი ითხოვს წვდომას: <b>{e(who)}</b> · ID <code>{uid}</code>\nრომელი აგენტია?", rows)
+    rows.insert(-1, [{"text": "👑 ადმინი (მფლობელი)", "callback_data": f"adm|{uid}|-"}])
+    send_admins(f"🙋 ახალი მომხმარებელი ითხოვს წვდომას: <b>{e(who)}</b> · ID <code>{uid}</code>\nრომელი აგენტია?", rows)
 
 
 # ---------------------------------------------------------------- handlers
@@ -418,7 +434,7 @@ def on_message(msg):
     if text.startswith("/myid"):
         send(chat, f"შენი Telegram ID: <code>{uid}</code>\nგაუგზავნე ადმინისტრატორს.")
         return
-    if text.startswith("/addagent") and str(uid) == ADMIN_ID:
+    if text.startswith("/addagent") and is_admin(uid):
         parts = text.split(maxsplit=2)
         if len(parts) == 3:
             STATE["agents"][parts[1]] = parts[2]
@@ -427,7 +443,17 @@ def on_message(msg):
         else:
             send(chat, "ფორმატი: <code>/addagent 123456789 ნინი</code>")
         return
-    if text.startswith("/agents") and str(uid) == ADMIN_ID:
+    if text.startswith("/addadmin") and is_admin(uid):
+        parts = text.split()
+        if len(parts) == 2 and parts[1].isdigit():
+            if parts[1] not in STATE["admins"]:
+                STATE["admins"].append(parts[1]); save_state()
+            send(chat, f"👑 ადმინი დამატებულია: <code>{e(parts[1])}</code>")
+            send(parts[1], "👑 შენ ახლა ხარ KEY GROUP Assistant-ის ადმინი.\n\n" + HELP + ADMIN_HELP)
+        else:
+            send(chat, "ფორმატი: <code>/addadmin 123456789</code>")
+        return
+    if text.startswith("/agents") and is_admin(uid):
         cnt = DB.counts()
         lst = []
         for i, n in STATE["agents"].items():
@@ -436,7 +462,7 @@ def on_message(msg):
             lst.append(f"• {e(n)} — <code>{e(i)}</code> · MyHome: {'✅ ' + str(act) if p.get('myhome') else '❌'} · SS.ge: {'✅' if p.get('ss') else '❌'}")
         send(chat, "აგენტები:\n" + ("\n".join(lst) or "ჯერ არავინ"))
         return
-    if text.startswith("/setprofile") and str(uid) == ADMIN_ID:
+    if text.startswith("/setprofile") and is_admin(uid):
         parts = text.split(maxsplit=2)
         if len(parts) == 3 and parts[1] in STATE["agents"]:
             msg_ = set_profile_from_text(parts[1], parts[2])
@@ -446,11 +472,11 @@ def on_message(msg):
         else:
             send(chat, "ფორმატი: <code>/setprofile 123456789 https://www.myhome.ge/udzravi-qoneba/?users=9925395</code>")
         return
-    if text.startswith("/syncall") and str(uid) == ADMIN_ID:
+    if text.startswith("/syncall") and is_admin(uid):
         send(chat, "⏳ ყველა აგენტის განახლება დაიწყო…")
         threading.Thread(target=sync_all, kwargs={"notify_agents": False}, daemon=True).start()
         return
-    if text.startswith("/team") and str(uid) == ADMIN_ID:
+    if text.startswith("/team") and is_admin(uid):
         since = time.time() - 86400
         act = DB.activity_since(since)
         cnt = DB.counts()
@@ -464,12 +490,12 @@ def on_message(msg):
 
     name = agent_name(uid)
     if not name:
-        if ADMIN_ID and str(uid) != ADMIN_ID:
+        if admins() and not is_admin(uid):
             ask_admin_to_register(msg["from"])
         send(chat, "👋 ეს KEY GROUP-ის აგენტების ასისტენტია. მოთხოვნა გაეგზავნა ადმინისტრატორს — დადასტურების შემდეგ მოგწერ.")
         return
     if text.startswith("/start") or text.startswith("/help"):
-        send(chat, HELP + (ADMIN_HELP if str(uid) == ADMIN_ID else ""))
+        send(chat, HELP + (ADMIN_HELP if is_admin(uid) else ""))
         if not profile_of(uid).get("myhome"):
             send(chat, "👉 დავიწყოთ: გამომიგზავნე შენი <b>MyHome.ge პროფილის ბმული</b> ან შენი ნებისმიერი განცხადების ბმული ბრძანებით:\n<code>/profile ბმული</code>")
         return
@@ -559,13 +585,20 @@ def on_callback(cb):
     tg("answerCallbackQuery", callback_query_id=cb["id"])
     action, _, key = (cb.get("data") or "").partition("|")
     chat = cb["message"]["chat"]["id"]
-    if action in ("reg", "rej"):
-        if str(cb["from"]["id"]) != ADMIN_ID:
+    if action in ("reg", "rej", "adm"):
+        if not is_admin(cb["from"]["id"]):
             return
         new_uid, _, agent = key.partition("|")
         tg("editMessageReplyMarkup", chat_id=chat, message_id=cb["message"]["message_id"], reply_markup={"inline_keyboard": []})
         if action == "rej":
             send(chat, f"უარყოფილია: <code>{e(new_uid)}</code>")
+            return
+        if action == "adm":
+            if new_uid not in STATE["admins"]:
+                STATE["admins"].append(new_uid)
+                save_state()
+            send(chat, f"👑 ადმინი დამატებულია: <code>{e(new_uid)}</code>")
+            send(new_uid, "👑 შენ ახლა ხარ KEY GROUP Assistant-ის ადმინი. ანგარიშები აქაც მოვა.\n\n" + HELP + ADMIN_HELP)
             return
         STATE["agents"][new_uid] = agent
         save_state()
@@ -577,7 +610,7 @@ def on_callback(cb):
     if not item:
         send(chat, "ეს განცხადება ვადაგასულია. გამომიგზავნე ბმული თავიდან.")
         return
-    if str(cb["from"]["id"]) != str(item["uid"]) and str(cb["from"]["id"]) != ADMIN_ID:
+    if str(cb["from"]["id"]) != str(item["uid"]) and not is_admin(cb["from"]["id"]):
         return
     tg("editMessageReplyMarkup", chat_id=chat, message_id=cb["message"]["message_id"], reply_markup={"inline_keyboard": []})
     if action == "no":
@@ -611,8 +644,8 @@ def on_callback(cb):
     save_state()
     send(chat, ("💾 ჩაწერილია Master CRM-ში." if ok else "⚠️ CRM-ში ჩაწერა ვერ მოხერხდა — ადმინისტრატორს ვაცნობე.")
          + "\n\n➡️ ახლა დადე შენს ქვე-აგენტის ანგარიშზე (Key Group). ტექსტზე ერთი დაჭერით დაკოპირდება.")
-    if not ok and ADMIN_ID:
-        send(ADMIN_ID, f"⚠️ CRM error for {e(item['agent'])}: {e(info)}")
+    if not ok:
+        send_admins(f"⚠️ CRM error for {e(item['agent'])}: {e(info)}")
 
 
 # ---------------------------------------------------------------- main loop
