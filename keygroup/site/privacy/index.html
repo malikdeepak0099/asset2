@@ -109,7 +109,7 @@
 <script>
 (function () {
   KG.header('');
-  var saved = 'en'; try { saved = localStorage.getItem('kg_lang') || 'en'; } catch (e) {}
+  var saved = KG.lang; try { saved = localStorage.getItem('kg_lang') || KG.lang; } catch (e) {}
   var H = {en: 'Privacy Policy & Terms', ka: 'კონფიდენციალურობა და წესები', ru: 'Конфиденциальность и правила'};
   function show(l) {
     if (!H[l]) l = 'en';

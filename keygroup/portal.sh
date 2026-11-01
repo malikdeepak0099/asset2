@@ -10,7 +10,8 @@ for f in backup.sh restore.sh; do curl -fsSL "$RAW/$f?$(date +%s)" -o "/opt/keyg
 [ -d /opt/keygroup-portal/data ] && bash /opt/keygroup/backup.sh
 # 1) website pages
 curl -fsSL "$RAW/u.sh?$(date +%s)" | bash || { echo "STOP: website update failed"; exit 1; }
-for f in account/index.html admin/index.html p/index.html search/index.html privacy/index.html assets/portal.css assets/portal.js assets/chat.js; do
+curl -fsSL "$RAW/site/manifest.txt?$(date +%s)" -o /tmp/kg-manifest.txt || { echo "STOP: could not download the file list"; exit 1; }
+for f in $(cat /tmp/kg-manifest.txt); do
   mkdir -p "$SITE/$(dirname $f)"
   curl -fsSL "$RAW/site/$f?$(date +%s)" -o "$SITE/$f" || { echo "STOP: could not download $f"; exit 1; }
 done

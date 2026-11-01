@@ -52,10 +52,12 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
   function login() {
     $('#app').innerHTML = '<form class="card" id="lf" style="max-width:420px;margin:30px auto;padding:28px;display:flex;flex-direction:column;gap:14px"><h1>Admin login</h1>' +
       '<label class="f">Phone<input name="phone" type="tel" required autocomplete="username"></label><label class="f">Password<input name="password" type="password" required autocomplete="current-password"></label>' +
+      '<label class="f hidden" id="codebox">6-digit code from your authenticator app<input name="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></label>' +
       '<button class="btn b-navy" type="submit">Log in</button><div id="lm"></div></form>';
     $('#lf').onsubmit = function (e) {
       e.preventDefault();
-      api('/api/login', {method: 'POST', json: {phone: e.target.phone.value, password: e.target.password.value}}).then(function (j) {
+      api('/api/login', {method: 'POST', json: {phone: e.target.phone.value, password: e.target.password.value, code: e.target.code.value}}).then(function (j) {
+        if (j.need_code) { $('#codebox').classList.remove('hidden'); e.target.code.focus(); }
         if (!j.ok) { $('#lm').className = 'msg err'; $('#lm').textContent = j.error; return; }
         if (j.user.role !== 'admin') { $('#lm').className = 'msg err'; $('#lm').textContent = 'This account is not an admin.'; return; }
         shell();
@@ -69,19 +71,19 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
       var pend = (STATS.listings || {}).pending || 0;
       $('#app').innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"><h1>KEY GROUP admin</h1>' +
         '<div style="display:flex;gap:8px"><a class="btn b-ghost" href="/account/">Owner view</a><button class="btn b-ghost" id="out">Log out</button></div></div>' +
-        '<div class="tabs">' + [['dash', 'Dashboard', 0], ['listings', 'Listings', pend], ['chats', 'Chats', STATS.chats_waiting], ['orders', 'Payments', STATS.orders_waiting], ['reports', 'Reports', STATS.reports_open], ['users', 'Users', 0], ['analytics', 'Analytics', 0], ['log', 'Activity log', 0], ['settings', 'Plans & settings', 0]].map(function (x) {
+        '<div class="tabs">' + [['dash', 'Dashboard', 0], ['listings', 'Listings', pend], ['chats', 'Chats', STATS.chats_waiting], ['leads', 'Leads', STATS.leads_new], ['partners', 'Partners', STATS.apps_new], ['orders', 'Payments', STATS.orders_waiting], ['reports', 'Reports', STATS.reports_open], ['users', 'Users', 0], ['analytics', 'Analytics', 0], ['log', 'Activity log', 0], ['settings', 'Plans & settings', 0]].map(function (x) {
           return '<button data-t="' + x[0] + '" aria-pressed="' + (TAB === x[0]) + '">' + x[1] + (x[2] ? ' <span class="n">' + x[2] + '</span>' : '') + '</button>';
         }).join('') + '</div><div id="tab"></div>';
       $$('[data-t]').forEach(function (b) { b.onclick = function () { TAB = b.dataset.t; shell(); }; });
       $('#out').onclick = function () { api('/api/logout', {method: 'POST'}).then(login); };
       clearInterval(window.__chatTimer);
-      ({analytics: analytics, log: activity, dash: dash, chats: chats, listings: listings, orders: orders, reports: reports, users: users, settings: settings})[TAB]();
+      ({leads: leadsTab, partners: partnersTab, analytics: analytics, log: activity, dash: dash, chats: chats, listings: listings, orders: orders, reports: reports, users: users, settings: settings})[TAB]();
     });
   }
   function dash() {
     var L = STATS.listings || {}, cur = STATS.currency === 'GEL' ? '₾' : STATS.currency;
     $('#tab').innerHTML = '<div class="kpis">' + [[L.pending || 0, 'Waiting for approval'], [L.active || 0, 'Live owner listings'], [STATS.vip_active, 'VIP / Super VIP live'], [STATS.orders_waiting, 'Payments to confirm'],
-      [cur + Math.round(STATS.revenue_30d), 'Paid in last 30 days'], [STATS.owners, 'Owner accounts'], [STATS.reports_open, 'Open reports'], [STATS.duplicates || 0, 'Possible duplicates'], [L.changes || 0, 'Waiting for owner changes'], [STATS.chats_today || 0, 'Website chats (24h)'], [L.expired || 0, 'Expired']].map(function (k) {
+      [cur + Math.round(STATS.revenue_30d), 'Paid in last 30 days'], [STATS.owners, 'Owner accounts'], [STATS.leads_new || 0, 'New enquiries'], [STATS.partners || 0, 'Partners'], [STATS.apps_new || 0, 'Partner applications'], [STATS.reports_open, 'Open reports'], [STATS.duplicates || 0, 'Possible duplicates'], [L.changes || 0, 'Waiting for owner changes'], [STATS.chats_today || 0, 'Website chats (24h)'], [L.expired || 0, 'Expired']].map(function (k) {
         return '<div class="card"><b>' + esc(k[0]) + '</b><span>' + esc(k[1]) + '</span></div>'; }).join('') + '</div>' +
       '<p class="muted" style="margin-top:18px">New listings, plan orders and reports also come to the KEY GROUP Telegram bot.</p>';
   }
@@ -141,6 +143,77 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
   }
   function confirmClose() { return true; }
   function alertMsg(t) { var d = document.createElement('div'); d.className = 'msg err'; d.textContent = t; $('#thread').prepend(d); }
+  var LEADSTAGES = ['new', 'contacted', 'viewing', 'offer', 'closed', 'lost'];
+  function leadsTab() {
+    api('/api/admin/leads').then(function (j) {
+      var L = j.leads || [];
+      $('#tab').innerHTML = '<div class="card tablewrap"><table><thead><tr><th>When</th><th>Visitor</th><th>Listing</th><th>Listed by</th><th>Message</th><th>Stage</th></tr></thead><tbody>' +
+        (L.length ? L.map(function (d) {
+          return '<tr><td>' + fmtDate(d.created) + '<br><span class="muted">' + esc(d.source) + '</span></td><td><b>' + esc(d.name || '—') + '</b><br><a href="tel:' + esc(d.phone) + '" style="color:var(--blue)">' + esc(d.phone) + '</a> <a href="https://wa.me/' + esc(String(d.phone).replace(/\D/g, '')) + '" target="_blank" rel="noopener" style="color:var(--teal)">WA</a></td>' +
+            '<td><a href="/p/?id=' + d.listing_id + '" target="_blank" style="color:var(--blue)">#' + d.listing_id + '</a> ' + esc(d.title || d.district || '') + '</td><td>' + esc(d.owner_name || '') + '<br><span class="muted">' + esc(d.owner_phone || '') + '</span></td>' +
+            '<td>' + esc(d.message || '') + (d.note ? '<br><span class="muted">Note: ' + esc(d.note) + '</span>' : '') + '</td>' +
+            '<td><select data-ls="' + d.id + '">' + LEADSTAGES.map(function (s) { return '<option' + (d.stage === s ? ' selected' : '') + '>' + s + '</option>'; }).join('') + '</select></td></tr>';
+        }).join('') : '<tr><td colspan="6" class="muted">No enquiries yet. Leads from listing pages (call back form and chat) appear here and in the owner\'s / agent\'s account.</td></tr>') + '</tbody></table></div>';
+      $$('[data-ls]').forEach(function (sl) { sl.onchange = function () { api('/api/my/leads', {method: 'POST', json: {id: +sl.dataset.ls, stage: sl.value}}); }; });
+    });
+  }
+  function partnersTab() {
+    api('/api/admin/partners').then(function (j) {
+      var A = j.applications || [], P = j.partners || [], I = j.imports || [];
+      $('#tab').innerHTML = '<p class="muted" style="margin-top:0">Founding Partner applications come from <a href="/partners/" target="_blank" style="color:var(--blue)">keygroup.ge/partners</a>. Approving creates (or upgrades) the account with a free ' + '90-day professional period.</p>' +
+        '<h3 style="margin:10px 0">Applications</h3><div class="card tablewrap"><table><thead><tr><th>When</th><th>Type</th><th>Name / company</th><th>Contact</th><th>City · size</th><th>Message</th><th></th></tr></thead><tbody>' +
+        (A.length ? A.map(function (a) {
+          return '<tr><td>' + fmtDate(a.created) + '</td><td><span class="pill t-vip">' + esc(a.ptype) + '</span></td><td><b>' + esc(a.name) + '</b><br>' + esc(a.company || '') + '</td>' +
+            '<td>' + esc(a.phone) + '<br><span class="muted">' + esc(a.email || '') + '</span>' + (a.website ? '<br><a href="' + esc(/^https?:/.test(a.website) ? a.website : 'https://' + a.website) + '" target="_blank" rel="noopener" style="color:var(--blue)">website</a>' : '') + '</td>' +
+            '<td>' + esc(a.city || '') + ' · ' + esc(a.listings_est || '') + '</td><td class="muted">' + esc(a.message || '') + '</td>' +
+            '<td>' + (a.status === 'new' ? '<button class="btn sm b-teal" data-pa="approve" data-id="' + a.id + '">Approve</button> <button class="btn sm b-ghost" data-pa="reject" data-id="' + a.id + '">Reject</button>' : '<span class="pill ' + (a.status === 'approved' ? 'st-active' : 'st-rejected') + '">' + esc(a.status) + '</span>') + '</td></tr>';
+        }).join('') : '<tr><td colspan="7" class="muted">No applications yet.</td></tr>') + '</tbody></table></div>' +
+        '<h3 style="margin:22px 0 10px">Partners</h3><div class="card tablewrap"><table><thead><tr><th>Partner</th><th>Type</th><th>Phone</th><th>Live listings</th><th>Free until</th></tr></thead><tbody>' +
+        (P.length ? P.map(function (p) { return '<tr><td><b>' + esc(p.company || p.name) + '</b><br><span class="muted">' + esc(p.name) + '</span></td><td>' + esc(p.role) + '</td><td>' + esc(p.phone) + '</td><td>' + p.live + (p.listing_limit ? ' / ' + p.listing_limit : '') + '</td><td>' + (p.partner_until ? fmtDate(p.partner_until) : '—') + '</td></tr>'; }).join('') : '<tr><td colspan="5" class="muted">No partners yet.</td></tr>') + '</tbody></table></div>' +
+        '<h3 style="margin:22px 0 10px">Bulk uploads</h3><div class="card tablewrap"><table><thead><tr><th>Upload</th><th>Partner</th><th>Rows</th><th>Waiting review</th><th>Status</th><th></th></tr></thead><tbody>' +
+        (I.length ? I.map(function (x) {
+          return '<tr><td>#' + x.id + ' ' + esc(x.filename) + '<br><span class="muted">' + fmtDate(x.created) + '</span></td><td>' + esc(x.company || x.user_name || '') + '<br><span class="muted">' + esc(x.phone || '') + '</span></td>' +
+            '<td>' + x.imported + ' imported / ' + x.total + '</td><td>' + x.pending + '</td><td>' + esc(x.status.replace('_', ' ')) + '</td>' +
+            '<td>' + (x.status !== 'rolled_back' ? (x.pending ? '<button class="btn sm b-teal" data-im="approve_all" data-id="' + x.id + '">Approve all (non-duplicates)</button> ' : '') + '<button class="btn sm b-red" data-im="rollback" data-id="' + x.id + '">Roll back</button>' : '') + '</td></tr>';
+        }).join('') : '<tr><td colspan="6" class="muted">No uploads yet.</td></tr>') + '</tbody></table></div>' +
+        '<p class="muted" style="font-size:13px">Tip: review a few random listings of a new partner (Listings → Pending) before approving a whole upload. Possible duplicates are never auto-approved.</p>';
+      $$('[data-pa]').forEach(function (b) { b.onclick = function () {
+        api('/api/admin/partners/' + b.dataset.id, {method: 'POST', json: {action: b.dataset.pa}}).then(function (r) {
+          if (!r.ok) { alert(r.error); return; }
+          if (r.password) alert('Partner account created.\nLogin: keygroup.ge/account\nPhone: ' + r.phone + '\nPassword: ' + r.password + '\n\nSend these to the partner on WhatsApp and ask them to change the password.');
+          else if (b.dataset.pa === 'approve') alert('Approved — the existing account ' + r.phone + ' is now a partner account.');
+          shell();
+        });
+      }; });
+      $$('[data-im]').forEach(function (b) { b.onclick = function () {
+        if (b.dataset.im === 'rollback' && !confirm('Remove all listings of upload #' + b.dataset.id + '?')) return;
+        api('/api/admin/imports/' + b.dataset.id, {method: 'POST', json: {action: b.dataset.im}}).then(function (r) { if (!r.ok) alert(r.error); else alert(r.count + ' listings updated.'); shell(); });
+      }; });
+    });
+  }
+  function twoFactor(el) {
+    api('/api/me').then(function (j) {
+      var on = j.user && j.user.totp_on;
+      el.innerHTML = '<h3>2-step login</h3><p class="muted" style="margin:0">' + (on ? '✅ On — login asks for a 6-digit code from your authenticator app.' : 'Protect the admin login with a code from Google Authenticator / Microsoft Authenticator on your phone.') + '</p>' +
+        (on ? '<label class="f">Current code (to turn off)<input id="tf-c" inputmode="numeric" maxlength="6"></label><button class="btn b-ghost" type="button" id="tf-off">Turn off</button>'
+          : '<button class="btn b-navy" type="button" id="tf-setup">Set up 2-step login</button>') + '<div id="tf-box"></div><div id="tf-m"></div>';
+      var msg = function (ok, t) { $('#tf-m').className = 'msg ' + (ok ? 'ok' : 'err'); $('#tf-m').textContent = t; };
+      if ($('#tf-off')) $('#tf-off').onclick = function () { api('/api/admin/2fa', {method: 'POST', json: {action: 'disable', code: $('#tf-c').value}}).then(function (r) { r.ok ? twoFactor(el) : msg(false, r.error); }); };
+      if ($('#tf-setup')) $('#tf-setup').onclick = function () {
+        api('/api/admin/2fa', {method: 'POST', json: {action: 'setup'}}).then(function (r) {
+          if (!r.ok) { msg(false, r.error); return; }
+          $('#tf-box').innerHTML = '<ol style="padding-left:18px;color:#33465c;font-size:14px"><li>Open Google Authenticator (or Microsoft Authenticator) → add account → scan this QR code.</li><li>Or type the key manually: <b style="font-family:monospace;letter-spacing:.06em">' + esc(r.secret.replace(/(.{4})/g, '$1 ').trim()) + '</b></li><li>Enter the 6-digit code shown in the app.</li></ol>' +
+            '<div id="tf-qr" style="background:#fff;padding:10px;display:inline-block;border:1px solid var(--line);border-radius:12px"></div>' +
+            '<label class="f" style="margin-top:10px">6-digit code<input id="tf-code" inputmode="numeric" maxlength="6"></label><button class="btn b-teal" type="button" id="tf-en">Turn on</button>' +
+            '<p class="muted" style="font-size:12px">Lost your phone later? Reset from the server console with the reset line — it also turns 2-step login off.</p>';
+          var s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+          s.onload = function () { new window.QRCode($('#tf-qr'), {text: r.uri, width: 180, height: 180}); };
+          document.head.appendChild(s);
+          $('#tf-en').onclick = function () { api('/api/admin/2fa', {method: 'POST', json: {action: 'enable', code: $('#tf-code').value}}).then(function (x) { x.ok ? twoFactor(el) : msg(false, x.error); }); };
+        });
+      };
+    });
+  }
   function analytics() {
     var days = window.__anDays || 30;
     api('/api/admin/analytics?days=' + days).then(function (j) {
@@ -251,9 +324,11 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
       var U = j.users || [];
       $('#tab').innerHTML = '<div class="card tablewrap"><table><thead><tr><th>Name</th><th>Phone</th><th>Role</th><th>Listings</th><th>Joined</th><th></th></tr></thead><tbody>' +
         U.map(function (u) {
-          return '<tr><td>' + esc(u.name) + (u.blocked ? ' <span class="pill st-rejected">blocked</span>' : '') + (u.contact_verified ? ' <span class="pill t-ver">contact verified</span>' : '') + (u.consent_at ? '<br><span class="muted" style="font-size:11px">consent ' + fmtDate(u.consent_at) + '</span>' : '') + '</td><td>' + esc(u.phone) + '</td><td>' + esc(u.role) + '</td><td>' + u.listings + '</td><td>' + fmtDate(u.created) + '</td>' +
+          return '<tr><td>' + esc(u.name) + (u.blocked ? ' <span class="pill st-rejected">blocked</span>' : '') + (u.contact_verified ? ' <span class="pill t-ver">contact verified</span>' : '') + (u.consent_at ? '<br><span class="muted" style="font-size:11px">consent ' + fmtDate(u.consent_at) + '</span>' : '') + '</td><td>' + esc(u.phone) + '</td><td>' + (u.role === 'admin' ? 'admin' : '<select data-role="' + u.id + '">' + ['owner', 'agent', 'agency', 'developer'].map(function (r) { return '<option' + (u.role === r ? ' selected' : '') + '>' + r + '</option>'; }).join('') + '</select>') + (u.company ? '<br><span class="muted" style="font-size:12px">' + esc(u.company) + '</span>' : '') + '</td><td>' + u.listings + (u.role !== 'admin' ? '<br><span class="muted" style="font-size:12px">limit <input data-limit="' + u.id + '" type="number" min="0" value="' + (u.listing_limit || '') + '" placeholder="default" style="width:70px;border:1px solid var(--line);border-radius:6px;padding:2px 4px"></span>' : '') + '</td><td>' + fmtDate(u.created) + '</td>' +
             '<td>' + (u.role !== 'admin' ? '<button class="btn sm b-ghost" data-u="' + (u.blocked ? 'unblock' : 'block') + '" data-id="' + u.id + '">' + (u.blocked ? 'Unblock' : 'Block') + '</button> <button class="btn sm b-ghost" data-u="reset_password" data-id="' + u.id + '">Reset password</button> <button class="btn sm b-ghost" data-u="' + (u.contact_verified ? 'unverify_contact' : 'verify_contact') + '" data-id="' + u.id + '">' + (u.contact_verified ? 'Unverify contact' : 'Verify contact (L1)') + '</button>' : '') + '</td></tr>';
         }).join('') + '</tbody></table></div>';
+      $$('[data-role]').forEach(function (sl) { sl.onchange = function () { api('/api/admin/users', {method: 'POST', json: {id: +sl.dataset.role, action: 'set_role', role: sl.value}}); }; });
+      $$('[data-limit]').forEach(function (inp) { inp.onchange = function () { api('/api/admin/users', {method: 'POST', json: {id: +inp.dataset.limit, action: 'set_limit', limit: +inp.value || 0}}); }; });
       $$('[data-u]').forEach(function (b) {
         b.onclick = function () {
           if (b.dataset.u === 'block' && !confirm('Block this user? Their listings stay but they cannot log in.')) return;
@@ -276,6 +351,8 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
         }).join('') + '</tbody></table></div>' +
         '<div class="grid2"><label class="f">Free listings per owner (0 = unlimited)<input type="number" min="0" name="free_listing_limit" value="' + (s.free_listing_limit == null ? 2 : s.free_listing_limit) + '"></label>' +
         '<label class="f">Ask owners to re-confirm availability after (days)<input type="number" min="1" name="reconfirm_days" value="' + (s.reconfirm_days || 15) + '"></label></div>' +
+        '<div class="grid3"><label class="f">Agent listing limit<input type="number" min="0" name="rl_agent" value="' + s.role_limits.agent + '"></label><label class="f">Agency listing limit<input type="number" min="0" name="rl_agency" value="' + s.role_limits.agency + '"></label><label class="f">Developer listing limit<input type="number" min="0" name="rl_developer" value="' + s.role_limits.developer + '"></label></div>' +
+        '<label class="f">Founding Partner free period (days)<input type="number" min="0" name="founding_days" value="' + (s.founding_days || 90) + '"></label>' +
         '<label class="f">Currency<select name="currency">' + ['GEL', 'USD', 'EUR'].map(function (c) { return '<option' + (s.currency === c ? ' selected' : '') + '>' + c + '</option>'; }).join('') + '</select></label>' +
         '<label class="f">Payment instructions shown to owners (bank account, office address)<textarea name="payment_info">' + esc(s.payment_info) + '</textarea></label>' +
         '<label style="display:flex;gap:8px;align-items:center;font:600 14px var(--display)"><input type="checkbox" name="show_owner_phone"' + (s.show_owner_phone ? ' checked' : '') + '> Show the owner\'s phone on listings (off = buyers contact KEY GROUP)</label>' +
@@ -286,9 +363,11 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
         e.preventDefault();
         var f = e.target, plans = {};
         ['free', 'vip', 'super', 'boost'].forEach(function (p) { plans[p] = {}; if (f['price_' + p] && !f['price_' + p].disabled) plans[p].price = f['price_' + p].value; if (f['days_' + p] && !f['days_' + p].disabled) plans[p].days = f['days_' + p].value; });
-        api('/api/admin/settings', {method: 'POST', json: {plans: plans, free_listing_limit: f.free_listing_limit.value, reconfirm_days: f.reconfirm_days.value, currency: f.currency.value, payment_info: f.payment_info.value, show_owner_phone: f.show_owner_phone.checked}}).then(function (r) {
+        api('/api/admin/settings', {method: 'POST', json: {plans: plans, role_limits: {agent: f.rl_agent.value, agency: f.rl_agency.value, developer: f.rl_developer.value}, founding_days: f.founding_days.value, free_listing_limit: f.free_listing_limit.value, reconfirm_days: f.reconfirm_days.value, currency: f.currency.value, payment_info: f.payment_info.value, show_owner_phone: f.show_owner_phone.checked}}).then(function (r) {
           $('#sm').className = 'msg ' + (r.ok ? 'ok' : 'err'); $('#sm').textContent = r.ok ? 'Saved.' : r.error; });
       };
+      var tf = document.createElement('div'); tf.className = 'card'; tf.style.cssText = 'padding:22px;display:flex;flex-direction:column;gap:12px;max-width:520px;margin-top:18px';
+      $('#pw').after(tf); twoFactor(tf);
       $('#pw').onsubmit = function (e) {
         e.preventDefault();
         api('/api/password', {method: 'POST', json: {old: e.target.old.value, new: e.target.new.value}}).then(function (r) {
@@ -296,7 +375,7 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
       };
     });
   }
-  if (location.hash === '#chats') TAB = 'chats';
+  if (['#chats', '#leads', '#partners'].indexOf(location.hash) >= 0) TAB = location.hash.slice(1);
   api('/api/me').then(function (j) { j.user && j.user.role === 'admin' ? shell() : login(); });
 })();
 </script>

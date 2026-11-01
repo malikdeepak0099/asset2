@@ -43,11 +43,85 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
   var t = KG.t, esc = KG.esc, $ = KG.$, $$ = KG.$$, api = KG.api;
   KG.header('account');
   document.documentElement.lang = KG.lang === 'en' ? 'en' : 'ka';
-  var ME = null, SETTINGS = null, DATA = {listings: [], orders: []};
+  var ME = null, SETTINGS = null, DATA = {listings: [], orders: []}, TAB = 'listings';
+  var PARTNER = function () { return ME && ['agent', 'agency', 'developer', 'admin'].indexOf(ME.role) >= 0; };
+  var ROLE = function (r) { return {agent: t('Agent', 'აგენტი'), agency: t('Agency', 'სააგენტო'), developer: t('Developer', 'დეველოპერი'), admin: 'Admin', owner: t('Owner', 'მესაკუთრე')}[r] || r; };
+  var STAGES = [['new', t('New', 'ახალი')], ['contacted', t('Contacted', 'დაკავშირებული')], ['viewing', t('Viewing', 'დათვალიერება')], ['offer', t('Offer', 'შეთავაზება')], ['closed', t('Deal closed', 'გარიგება')], ['lost', t('Lost', 'დაკარგული')]];
+  function tabs() {
+    var nl = (ME && ME.new_leads) || 0;
+    return '<div class="seg" style="max-width:560px;margin:0 0 16px">' + [['listings', t('My listings', 'განცხადებები')], ['leads', t('Leads', 'მოთხოვნები') + (nl ? ' (' + nl + ')' : '')]].concat(PARTNER() ? [['bulk', t('Bulk upload', 'მასობრივი ატვირთვა')]] : []).map(function (x) {
+      return '<button type="button" data-tab="' + x[0] + '" aria-pressed="' + (TAB === x[0]) + '">' + esc(x[1]) + '</button>'; }).join('') + '</div>';
+  }
+  function bindTabs() { $$('[data-tab]').forEach(function (b) { b.onclick = function () { TAB = b.dataset.tab; render(); }; }); }
+  function render() { api('/api/me').then(function (j) { if (j.user) { ME = j.user; SETTINGS = j.settings; } ({listings: dash, leads: leads, bulk: bulk})[TAB](); }); }
+  function head() {
+    return '<div class="dash-head"><div><h1>' + (TAB === 'leads' ? t('Leads', 'მოთხოვნები') : TAB === 'bulk' ? t('Bulk upload', 'მასობრივი ატვირთვა') : t('My listings', 'ჩემი განცხადებები')) + '</h1><span class="muted">' + esc(ME.name) + (ME.company ? ' · ' + esc(ME.company) : '') + ' · ' + esc(ME.phone) +
+      (ME.role !== 'owner' ? ' · <span class="pill t-vip">' + esc(ROLE(ME.role)) + '</span>' : '') + (ME.limit ? ' · ' + t('active listings ', 'აქტიური ') + (ME.live || 0) + ' / ' + ME.limit : '') +
+      (ME.partner_until && ME.partner_until * 1000 > Date.now() ? ' · ' + t('Founding Partner until ', 'დამფუძნებელი პარტნიორი: ') + new Date(ME.partner_until * 1000).toLocaleDateString() : '') + '</span></div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">' + (ME.role === 'admin' ? '<a class="btn b-navy" href="/admin/">Admin panel</a>' : '') +
+      '<button class="btn b-coral" id="add">' + KG.icon('plus') + t('Add listing', 'განცხადების დამატება') + '</button><button class="btn b-ghost" id="out">' + t('Log out', 'გასვლა') + '</button></div></div>' + tabs();
+  }
+  function bindHead() {
+    $('#add').onclick = function () { form(null); };
+    $('#out').onclick = function () { api('/api/logout', {method: 'POST'}).then(function () { ME = null; auth('login'); }); };
+    bindTabs();
+  }
+  function leads() {
+    api('/api/my/leads').then(function (j) {
+      var L = j.leads || [];
+      $('#app').innerHTML = head() + '<div class="card">' + (L.length ? L.map(function (d) {
+        return '<div class="row" style="grid-template-columns:1fr auto"><div><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><b>' + esc(d.name || t('Visitor', 'ვიზიტორი')) + '</b> <a href="tel:' + esc(d.phone) + '" style="color:var(--blue);font-weight:700">' + esc(d.phone) + '</a>' +
+          '<a class="btn sm b-wa" target="_blank" rel="noopener" href="https://wa.me/' + esc(String(d.phone).replace(/\D/g, '')) + '">WhatsApp</a><span class="muted" style="font-size:12px">' + new Date(d.created * 1000).toLocaleString() + ' · ' + esc(d.source) + '</span></div>' +
+          '<div class="muted" style="font-size:13px;margin-top:4px">' + t('Listing', 'განცხადება') + ' <a href="/p/?id=' + d.listing_id + '" target="_blank" style="color:var(--blue)">#' + d.listing_id + '</a> ' + esc(d.title || d.district || '') + '</div>' +
+          (d.message ? '<div style="margin-top:4px">' + esc(d.message) + '</div>' : '') +
+          '<input data-note="' + d.id + '" value="' + esc(d.note || '') + '" placeholder="' + t('Note (only you see it)', 'შენიშვნა') + '" style="margin-top:8px;width:100%;border:1.5px solid var(--line);border-radius:10px;padding:8px 10px;font:inherit"></div>' +
+          '<div><select data-stage="' + d.id + '" style="border:1.5px solid var(--line);border-radius:10px;padding:8px;font:inherit">' + STAGES.map(function (x) { return '<option value="' + x[0] + '"' + (d.stage === x[0] ? ' selected' : '') + '>' + esc(x[1]) + '</option>'; }).join('') + '</select></div></div>';
+      }).join('') : '<div class="empty" style="border:0">' + t('No enquiries yet. When someone asks about your listing, it appears here and you can call or WhatsApp them.', 'მოთხოვნები ჯერ არ არის. როცა ვინმე თქვენს განცხადებაზე იკითხავს, აქ გამოჩნდება.') + '</div>') + '</div>';
+      bindHead();
+      $$('[data-stage]').forEach(function (sl) { sl.onchange = function () { api('/api/my/leads', {method: 'POST', json: {id: +sl.dataset.stage, stage: sl.value}}); }; });
+      $$('[data-note]').forEach(function (inp) { inp.onchange = function () { api('/api/my/leads', {method: 'POST', json: {id: +inp.dataset.note, note: inp.value}}); }; });
+    });
+  }
+  function bulk() {
+    api('/api/my/import').then(function (j) {
+      var I = j.imports || [];
+      $('#app').innerHTML = head() + '<div class="card" style="padding:22px;display:flex;flex-direction:column;gap:14px;max-width:860px">' +
+        '<h2>' + t('Upload many listings from a spreadsheet', 'ბევრი განცხადების ატვირთვა ცხრილიდან') + '</h2>' +
+        '<p class="muted" style="margin:0">' + t('1) Download the template and fill one property per row (save as CSV from Excel or Google Sheets). 2) Choose the file and press Check. 3) If the rows look right, press Import — listings go to our team for review. Add photos afterwards from My listings.', '1) ჩამოტვირთეთ შაბლონი, თითო ხაზზე ერთი ქონება (შეინახეთ CSV-ად). 2) აირჩიეთ ფაილი და დააჭირეთ შემოწმებას. 3) შემდეგ — იმპორტს. ფოტოები დაამატეთ შემდეგ.') + '</p>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn b-ghost" href="/assets/keygroup-import-template.csv" download>' + t('Download template', 'შაბლონის ჩამოტვირთვა') + '</a></div>' +
+        '<label class="f">' + t('CSV file', 'CSV ფაილი') + '<input type="file" id="csvf" accept=".csv,text/csv"></label>' +
+        '<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px"><input type="checkbox" id="rights" style="margin-top:3px"> ' + t('I confirm I am authorised to advertise these properties and have the rights to their photos and descriptions.', 'ვადასტურებ, რომ მაქვს ამ ქონების რეკლამირების უფლება.') + '</label>' +
+        '<div style="display:flex;gap:8px"><button class="btn b-navy" id="chk">' + t('Check file', 'შემოწმება') + '</button><button class="btn b-coral" id="imp" disabled>' + t('Import', 'იმპორტი') + '</button></div><div id="bm"></div></div>' +
+        '<div class="card" style="margin-top:16px;padding:16px"><h3>' + t('Previous uploads', 'წინა ატვირთვები') + '</h3>' + (I.length ? '<table style="width:100%;font-size:14px;margin-top:8px"><tbody>' + I.map(function (x) {
+          return '<tr><td>#' + x.id + '</td><td>' + esc(x.filename) + '</td><td>' + new Date(x.created * 1000).toLocaleString() + '</td><td>' + x.imported + ' / ' + x.total + '</td><td>' + esc(x.status.replace('_', ' ')) + '</td></tr>'; }).join('') + '</tbody></table>' : '<p class="muted">' + t('None yet.', 'ჯერ არ არის.') + '</p>') + '</div>';
+      bindHead();
+      function send(mode) {
+        var f = $('#csvf').files[0];
+        if (!f) { $('#bm').className = 'msg err'; $('#bm').textContent = t('Choose a CSV file first.', 'აირჩიეთ ფაილი.'); return; }
+        if (mode === 'import' && !$('#rights').checked) { $('#bm').className = 'msg err'; $('#bm').textContent = t('Please confirm you are authorised to advertise these properties.', 'დაადასტურეთ უფლებამოსილება.'); return; }
+        var fd = new FormData(); fd.append('csv', f); fd.append('mode', mode);
+        api('/api/my/import', {method: 'POST', form: fd}).then(function (r) {
+          if (!r.ok) { $('#bm').className = 'msg err'; $('#bm').textContent = r.error; return; }
+          if (mode === 'preview') {
+            $('#bm').className = 'msg ' + (r.valid ? 'ok' : 'err');
+            $('#bm').innerHTML = esc(t('Rows: ', 'ხაზები: ') + r.total + ' · ' + t('ready to import: ', 'მზადაა: ') + r.valid + ' · ' + t('room in your plan: ', 'ლიმიტში ადგილი: ') + r.room) +
+              (r.errors.length ? '<br>' + r.errors.slice(0, 15).map(function (e) { return esc(t('Row ', 'ხაზი ') + e.row + ': ' + e.error); }).join('<br>') : '') +
+              (r.sample.length ? '<br><br>' + r.sample.map(function (x) { return esc(x.deal + ' · ' + x.type + ' · ' + (x.district || x.address) + ' · ' + x.rooms + ' rooms · ' + x.area + ' m² · ' + x.price + ' ' + x.currency); }).join('<br>') : '');
+            $('#imp').disabled = !r.valid;
+          } else {
+            $('#bm').className = 'msg ok'; $('#bm').textContent = t('Imported ', 'აიტვირთა ') + r.imported + t(' listings — they are now waiting for review.', ' განცხადება — მოწმდება.');
+            setTimeout(bulk, 1800);
+          }
+        });
+      }
+      $('#chk').onclick = function () { send('preview'); };
+      $('#imp').onclick = function () { send('import'); };
+    });
+  }
   var STATUS = function (s) { return {pending: t('Waiting for approval', 'მოლოდინში'), active: t('Live', 'აქტიური'), rejected: t('Rejected', 'უარყოფილი'), expired: t('Expired', 'ვადაგასული'), paused: t('Paused', 'შეჩერებული'), changes: t('Changes requested', 'საჭიროებს შესწორებას')}[s] || s; };
 
   function boot() {
-    api('/api/me').then(function (j) { ME = j.user; SETTINGS = j.settings; ME ? dash() : auth('login'); });
+    api('/api/me').then(function (j) { ME = j.user; SETTINGS = j.settings; ME ? render() : auth('login'); });
   }
 
   // ---------------- login / register
@@ -70,7 +144,7 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       if (f.consent) data.consent = f.consent.checked;
       api('/api/' + mode, {method: 'POST', json: data}).then(function (j) {
         if (!j.ok) { $('#am').className = 'msg err'; $('#am').textContent = j.error; return; }
-        ME = j.user; dash();
+        ME = j.user; render();
       });
     };
   }
@@ -83,15 +157,13 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       var L = j.listings, views = L.reduce(function (a, l) { return a + (l.views || 0); }, 0);
       var cnt = function (s) { return L.filter(function (l) { return l.status === s; }).length; };
       var waiting = j.orders.filter(function (o) { return o.status === 'awaiting_payment'; });
-      $('#app').innerHTML = '<div class="dash-head"><div><h1>' + t('My listings', 'ჩემი განცხადებები') + '</h1><span class="muted">' + esc(ME.name) + ' · ' + esc(ME.phone) + '</span></div>' +
-        '<div style="display:flex;gap:8px;flex-wrap:wrap">' + (ME.role === 'admin' ? '<a class="btn b-navy" href="/admin/">Admin panel</a>' : '') +
-        '<button class="btn b-coral" id="add">' + KG.icon('plus') + t('Add listing', 'განცხადების დამატება') + '</button><button class="btn b-ghost" id="out">' + t('Log out', 'გასვლა') + '</button></div></div>' +
+      $('#app').innerHTML = head() +
         '<div class="stats"><div class="card"><b>' + cnt('active') + '</b><span>' + t('Live', 'აქტიური') + '</span></div><div class="card"><b>' + cnt('pending') + '</b><span>' + t('Waiting for approval', 'მოლოდინში') + '</span></div>' +
         '<div class="card"><b>' + views + '</b><span>' + t('Total views', 'ნახვები სულ') + '</span></div><div class="card"><b>' + L.filter(function (l) { return l.tier !== 'free'; }).length + '</b><span>VIP / Super VIP</span></div></div>' +
         (waiting.length ? '<div class="msg info" style="margin-bottom:16px">' + t('Order waiting for payment: ', 'გადასახდელი შეკვეთა: ') + waiting.map(function (o) { return '#' + o.id + ' ' + esc(SETTINGS.plans[o.plan].name) + ' — ' + o.amount + ' ' + esc(o.currency); }).join(', ') + '<br>' + esc(SETTINGS.payment_info) + '</div>' : '') +
         '<div class="card" id="list">' + (L.length ? L.map(row).join('') : '<div class="empty" style="border:0">' + t('No listings yet. Add your first property — it is free.', 'განცხადებები ჯერ არ გაქვს. დაამატე პირველი — უფასოა.') + '</div>') + '</div>';
-      $('#add').onclick = function () { form(null); };
-      $('#out').onclick = function () { api('/api/logout', {method: 'POST'}).then(function () { ME = null; auth('login'); }); };
+      bindHead();
+      if (ME.role === 'owner') $('#list').insertAdjacentHTML('afterend', '<p class="muted" style="font-size:13px;margin-top:14px">' + t('Agent, agency or developer? ', 'აგენტი, სააგენტო ან დეველოპერი ხართ? ') + '<a href="/partners/" style="color:var(--teal);font-weight:700">' + t('Join the Founding Partner Program — 90 days free, bulk upload and lead inbox.', 'შემოგვიერთდით — 90 დღე უფასოდ.') + '</a></p>');
       $$('[data-act]').forEach(function (b) { b.onclick = function () { act(b.dataset.act, +b.dataset.id); }; });
     });
   }

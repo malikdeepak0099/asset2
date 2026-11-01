@@ -1,0 +1,4 @@
+deal,type,city,district,address,rooms,bedrooms,area,floor,total_floors,price,currency,title,description,contact_name,contact_phone
+rent,flat,Tbilisi,Vake,"Chavchavadze Ave 10",3,2,90,5,12,1200,USD,"3-room apartment in Vake","Renovated, furnished, balcony with city view",,
+sale,flat,Tbilisi,Saburtalo,"Kazbegi Ave 25",2,1,65,8,16,98000,USD,"2-room new build in Saburtalo","White frame, metro 5 min",,
+rent,commercial,Batumi,"New Boulevard","Sherif Khimshiashvili St 7",0,0,120,1,20,2500,USD,"Commercial space on the boulevard","Street-front, glass facade",,

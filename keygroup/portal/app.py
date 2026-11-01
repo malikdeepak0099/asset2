@@ -6,6 +6,8 @@ Payment is manual for now: the owner orders a plan, pays by bank transfer / cash
 order paid and the plan starts. Data lives in SQLite + photo files under DATA_DIR.
 """
 import base64
+import csv
+import struct
 import hashlib
 import hmac
 import io
@@ -53,9 +55,13 @@ DEFAULT_SETTINGS = {
     "show_owner_phone": False,
     "company_phone": "+995577114118",
     "free_listing_limit": 2,
+    "role_limits": {"agent": 50, "agency": 200, "developer": 300},
+    "founding_days": 90,
     "reconfirm_days": 15,
 }
 CONSENT_VERSION = "2026-11-01"
+PARTNER_ROLES = ("agent", "agency", "developer")
+ROLES = ("owner",) + PARTNER_ROLES + ("admin",)
 VERIFY_LABELS = {0: "", 1: "Contact verified", 2: "Verified listing", 3: "Inspected"}
 
 DEALS = {"sale", "rent", "daily"}
@@ -107,12 +113,25 @@ def init_db():
         CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY, name TEXT, sid TEXT, page TEXT, props TEXT DEFAULT '{}', ts REAL);
         CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
+        CREATE TABLE IF NOT EXISTS leads (
+            id INTEGER PRIMARY KEY, listing_id INTEGER, owner_id INTEGER, name TEXT, phone TEXT, message TEXT, source TEXT,
+            consent_at REAL DEFAULT 0, stage TEXT DEFAULT 'new', note TEXT DEFAULT '', created REAL, updated REAL);
+        CREATE INDEX IF NOT EXISTS idx_leads_owner ON leads(owner_id);
+        CREATE TABLE IF NOT EXISTS partner_apps (
+            id INTEGER PRIMARY KEY, user_id INTEGER DEFAULT 0, name TEXT, company TEXT, phone TEXT, email TEXT, ptype TEXT, city TEXT,
+            listings_est TEXT, website TEXT, message TEXT, status TEXT DEFAULT 'new', consent_at REAL DEFAULT 0, created REAL, decided REAL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS imports (
+            id INTEGER PRIMARY KEY, user_id INTEGER, filename TEXT, total INTEGER, imported INTEGER, errors TEXT DEFAULT '[]',
+            status TEXT DEFAULT 'imported', created REAL);
         """)
         for table, col, typ in (("users", "consent_at", "REAL DEFAULT 0"), ("users", "consent_ver", "TEXT DEFAULT ''"),
                                 ("users", "contact_verified", "INTEGER DEFAULT 0"),
                                 ("listings", "verify_level", "INTEGER DEFAULT 0"), ("listings", "confirmed", "REAL DEFAULT 0"),
                                 ("listings", "dup_of", "TEXT DEFAULT ''"), ("listings", "photo_hashes", "TEXT DEFAULT '{}'"),
-                                ("chats", "consent_at", "REAL DEFAULT 0")):
+                                ("chats", "consent_at", "REAL DEFAULT 0"),
+                                ("users", "company", "TEXT DEFAULT ''"), ("users", "partner_until", "REAL DEFAULT 0"),
+                                ("users", "listing_limit", "INTEGER DEFAULT 0"), ("users", "totp_secret", "TEXT DEFAULT ''"),
+                                ("users", "totp_on", "INTEGER DEFAULT 0"), ("listings", "batch_id", "INTEGER DEFAULT 0")):
             have = [r[1] for r in con.execute(f"PRAGMA table_info({table})")]
             if col not in have:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
@@ -131,6 +150,8 @@ def get_settings():
                 for p, cfg in v.items():
                     if p in s["plans"]:
                         s["plans"][p].update(cfg)
+            elif k == "role_limits" and isinstance(v, dict):
+                s["role_limits"].update(v)
             else:
                 s[k] = v
     return s
@@ -285,6 +306,38 @@ def find_duplicates(con, lid):
     return found
 
 
+def listing_limit(u, s=None):
+    s = s or get_settings()
+    if u.get("listing_limit"):
+        return int(u["listing_limit"])
+    if u["role"] in PARTNER_ROLES:
+        return int(s["role_limits"].get(u["role"], 50))
+    return int(s.get("free_listing_limit", 2) or 0)
+
+
+def live_count(con, uid):
+    now = time.time()
+    return con.execute("""SELECT COUNT(*) FROM listings WHERE user_id=? AND status IN ('pending','active','paused','changes')
+                          AND vip_until<? AND super_until<?""", (uid, now, now)).fetchone()[0]
+
+
+# ---- TOTP (RFC 6238) for admin 2-step login
+def totp_code(secret_b32, t=None, step=30):
+    key = base64.b32decode(secret_b32.upper() + "=" * (-len(secret_b32) % 8))
+    counter = int((t or time.time()) // step)
+    h = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
+    o = h[-1] & 15
+    return "%06d" % ((struct.unpack(">I", h[o:o + 4])[0] & 0x7FFFFFFF) % 1000000)
+
+
+def totp_ok(secret_b32, code):
+    code = re.sub(r"\D", "", str(code or ""))
+    if len(code) != 6 or not secret_b32:
+        return False
+    now = time.time()
+    return any(hmac.compare_digest(totp_code(secret_b32, now + d * 30), code) for d in (-1, 0, 1))
+
+
 def esc(s):
     return str(s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
@@ -421,6 +474,11 @@ async def login(request):
         return err("Wrong phone or password", 401)
     if u["blocked"]:
         return err("This account is blocked. Contact KEY GROUP.", 403)
+    if u["totp_on"]:
+        if not d.get("code"):
+            return JSONResponse({"ok": False, "need_code": True, "error": "Enter the 6-digit code from your authenticator app"}, status_code=401)
+        if not totp_ok(u["totp_secret"], d.get("code")):
+            return JSONResponse({"ok": False, "need_code": True, "error": "Wrong code — check the time on your phone and try again"}, status_code=401)
     return with_session(ok(user={"id": u["id"], "name": u["name"], "phone": u["phone"], "role": u["role"]}), new_session(u["id"]))
 
 
@@ -438,7 +496,12 @@ async def me(request):
     u = current_user(request)
     if not u:
         return ok(user=None, settings=public_settings())
-    return ok(user={k: u[k] for k in ("id", "name", "phone", "role")}, settings=public_settings())
+    out = {k: u[k] for k in ("id", "name", "phone", "role", "company", "partner_until", "totp_on")}
+    out["limit"] = listing_limit(u)
+    with db() as con:
+        out["live"] = live_count(con, u["id"])
+        out["new_leads"] = con.execute("SELECT COUNT(*) FROM leads WHERE owner_id=? AND stage='new'", (u["id"],)).fetchone()[0]
+    return ok(user=out, settings=public_settings())
 
 
 async def change_password(request):
@@ -475,13 +538,14 @@ async def my_listings(request):
             return err(msg)
         now = time.time()
         s = get_settings()
-        limit = int(s.get("free_listing_limit", 2) or 0)
+        limit = listing_limit(u, s)
         with _LOCK, db() as con:
             if limit and u["role"] != "admin":
-                n = con.execute("""SELECT COUNT(*) FROM listings WHERE user_id=? AND status IN ('pending','active','paused','changes')
-                                   AND vip_until<? AND super_until<?""", (u["id"], now, now)).fetchone()[0]
+                n = live_count(con, u["id"])
                 if n >= limit:
-                    return err(f"A free account can have up to {limit} active listings. Delete or promote one (VIP), or contact us for an agent account.")
+                    if u["role"] in PARTNER_ROLES:
+                        return err(f"Your plan allows {limit} active listings. Contact KEY GROUP to raise the limit.")
+                    return err(f"A free account can have up to {limit} active listings. Delete or promote one (VIP), or join as an agent / agency partner.")
             cols = ",".join(f.keys())
             cur = con.execute(f"INSERT INTO listings (user_id,{cols},status,created,updated,confirmed,verify_level) VALUES (?,{','.join('?' * len(f))},'pending',?,?,?,?)",
                               (u["id"], *f.values(), now, now, now, 1 if u.get("contact_verified") else 0))
@@ -686,6 +750,285 @@ async def public_listing(request):
     return ok(listing=listing_out(row), settings=public_settings())
 
 
+async def listing_enquiry(request):
+    """A buyer / tenant asks about a listing: saved as a lead for the listing's owner or agent, plus a Telegram alert."""
+    if too_many(request, "enq", 8, 600):
+        return err("Too many requests, try again later", 429)
+    lid = int(request.path_params["lid"])
+    d = await body_json(request)
+    if d.get("website"):
+        return ok()
+    phone = str(d.get("phone") or "").strip()[:40]
+    if len(re.sub(r"\D", "", phone)) < 9:
+        return err("Enter your phone number")
+    if not d.get("consent"):
+        return err("Please agree to be contacted")
+    with _LOCK, db() as con:
+        row = con.execute("SELECT * FROM listings WHERE id=? AND status='active'", (lid,)).fetchone()
+        if not row:
+            return err("This listing is not available", 404)
+        now = time.time()
+        con.execute("INSERT INTO leads (listing_id, owner_id, name, phone, message, source, consent_at, created, updated) VALUES (?,?,?,?,?,?,?,?,?)",
+                    (lid, row["user_id"], str(d.get("name") or "")[:80], phone, str(d.get("message") or "")[:1000], str(d.get("source") or "callback")[:20], now, now, now))
+        track(con, "viewing_requested", f"/p/?id={lid}", {"listing_id": lid})
+    notify(f"📞 New enquiry for listing #{lid} ({esc(row['district'] or row['address'])})\n{esc(d.get('name'))} {esc(phone)}\n{esc(str(d.get('message') or '')[:300])}\n{SITE}/admin/#leads")
+    return ok()
+
+
+async def my_leads(request):
+    u, e = need_user(request)
+    if e:
+        return e
+    if request.method == "POST":
+        d = await body_json(request)
+        lid = int(d.get("id") or 0)
+        stage = d.get("stage")
+        with _LOCK, db() as con:
+            row = con.execute("SELECT * FROM leads WHERE id=?", (lid,)).fetchone()
+            if not row or (row["owner_id"] != u["id"] and u["role"] != "admin"):
+                return err("Not found", 404)
+            if stage in ("new", "contacted", "viewing", "offer", "closed", "lost"):
+                con.execute("UPDATE leads SET stage=?, updated=? WHERE id=?", (stage, time.time(), lid))
+            if "note" in d:
+                con.execute("UPDATE leads SET note=?, updated=? WHERE id=?", (str(d["note"])[:1000], time.time(), lid))
+        return ok()
+    with db() as con:
+        rows = con.execute("""SELECT d.*, l.title, l.district, l.address, l.price, l.currency, l.deal FROM leads d
+                              LEFT JOIN listings l ON l.id=d.listing_id WHERE d.owner_id=? ORDER BY d.id DESC LIMIT 500""", (u["id"],)).fetchall()
+    return ok(leads=[dict(r) for r in rows])
+
+
+async def admin_leads(request):
+    u, e = need_user(request, admin=True)
+    if e:
+        return e
+    with db() as con:
+        rows = con.execute("""SELECT d.*, l.title, l.district, l.address, l.price, l.currency, l.deal, o.name AS owner_name, o.phone AS owner_phone
+                              FROM leads d LEFT JOIN listings l ON l.id=d.listing_id LEFT JOIN users o ON o.id=d.owner_id
+                              ORDER BY d.id DESC LIMIT 1000""").fetchall()
+    return ok(leads=[dict(r) for r in rows])
+
+
+# ---------------------------------------------------------------- partners (agents, agencies, developers)
+
+async def partner_apply(request):
+    if too_many(request, "papply", 5, 3600):
+        return err("Too many applications, try again later", 429)
+    d = await body_json(request)
+    if d.get("website_hp"):
+        return ok()
+    f = {k: str(d.get(k) or "").strip()[:n] for k, n in (("name", 80), ("company", 120), ("email", 120), ("city", 60),
+                                                         ("listings_est", 20), ("website", 200), ("message", 1500))}
+    phone = norm_phone(d.get("phone"))
+    ptype = d.get("ptype") if d.get("ptype") in PARTNER_ROLES else ""
+    if not f["name"] or len(phone) < 10 or not ptype:
+        return err("Enter your name, phone and partner type")
+    if not d.get("consent"):
+        return err("Please accept the partner terms and privacy policy")
+    with _LOCK, db() as con:
+        urow = con.execute("SELECT id FROM users WHERE phone=?", (phone,)).fetchone()
+        cur = con.execute("""INSERT INTO partner_apps (user_id, name, company, phone, email, ptype, city, listings_est, website, message, consent_at, created)
+                             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", (urow["id"] if urow else 0, f["name"], f["company"], phone, f["email"], ptype, f["city"],
+                                                                  f["listings_est"], f["website"], f["message"], time.time(), time.time()))
+        aid = cur.lastrowid
+        track(con, "partner_application", "/partners/", {"ptype": ptype, "city": f["city"]})
+    notify(f"🤝 New Founding Partner application #{aid}: <b>{esc(ptype)}</b>\n{esc(f['name'])} — {esc(f['company'])}\n{esc(phone)} {esc(f['email'])}\n"
+           f"City: {esc(f['city'])} · listings: {esc(f['listings_est'])}\n{SITE}/admin/#partners")
+    return ok(id=aid)
+
+
+async def admin_partners(request):
+    u, e = need_user(request, admin=True)
+    if e:
+        return e
+    with db() as con:
+        apps = con.execute("SELECT * FROM partner_apps ORDER BY (status='new') DESC, id DESC LIMIT 500").fetchall()
+        imps = con.execute("""SELECT i.*, u.name AS user_name, u.company, u.phone,
+                                     (SELECT COUNT(*) FROM listings l WHERE l.batch_id=i.id AND l.status='pending') AS pending
+                              FROM imports i LEFT JOIN users u ON u.id=i.user_id ORDER BY i.id DESC LIMIT 200""").fetchall()
+        partners = con.execute(f"""SELECT u.id, u.name, u.company, u.phone, u.role, u.partner_until, u.listing_limit, u.created,
+                                          (SELECT COUNT(*) FROM listings l WHERE l.user_id=u.id AND l.status='active') AS live
+                                   FROM users u WHERE u.role IN ({','.join('?' * len(PARTNER_ROLES))}) ORDER BY u.id DESC""", PARTNER_ROLES).fetchall()
+    return ok(applications=[dict(r) for r in apps], imports=[dict(r) for r in imps], partners=[dict(r) for r in partners])
+
+
+async def admin_partner_action(request):
+    u, e = need_user(request, admin=True)
+    if e:
+        return e
+    aid = int(request.path_params["aid"])
+    d = await body_json(request)
+    action = d.get("action")
+    s = get_settings()
+    password = None
+    with _LOCK, db() as con:
+        a = con.execute("SELECT * FROM partner_apps WHERE id=?", (aid,)).fetchone()
+        if not a:
+            return err("Not found", 404)
+        if action == "approve":
+            urow = con.execute("SELECT * FROM users WHERE phone=?", (a["phone"],)).fetchone()
+            until = time.time() + int(s.get("founding_days", 90)) * 86400
+            if urow:
+                if urow["role"] == "admin":
+                    return err("This phone belongs to an admin account")
+                uid = urow["id"]
+                con.execute("UPDATE users SET role=?, company=?, partner_until=? WHERE id=?", (a["ptype"], a["company"], until, uid))
+            else:
+                password = secrets.token_urlsafe(6)
+                cur = con.execute("""INSERT INTO users (phone, name, pw, role, company, partner_until, created, consent_at, consent_ver)
+                                     VALUES (?,?,?,?,?,?,?,?,?)""", (a["phone"], a["name"], hash_pw(password), a["ptype"], a["company"], until,
+                                                                    time.time(), a["consent_at"], CONSENT_VERSION))
+                uid = cur.lastrowid
+            con.execute("UPDATE partner_apps SET status='approved', user_id=?, decided=? WHERE id=?", (uid, time.time(), aid))
+        elif action == "reject":
+            con.execute("UPDATE partner_apps SET status='rejected', decided=? WHERE id=?", (time.time(), aid))
+        else:
+            return err("Unknown action")
+        audit(con, u, "partner_" + action, "partner_app", aid, f"{a['ptype']} {a['name']} {a['phone']}")
+    return ok(password=password, phone=a["phone"])
+
+
+# ---------------------------------------------------------------- CSV bulk import (partners)
+
+IMPORT_COLS = ["deal", "type", "city", "district", "address", "rooms", "bedrooms", "area", "floor", "total_floors", "price", "currency",
+               "title", "description", "contact_name", "contact_phone"]
+DEAL_ALIASES = {"sale": "sale", "sell": "sale", "buy": "sale", "rent": "rent", "lease": "rent", "daily": "daily",
+                "იყიდება": "sale", "ქირავდება": "rent", "продажа": "sale", "аренда": "rent"}
+TYPE_ALIASES = {"flat": "flat", "apartment": "flat", "house": "house", "villa": "house", "commercial": "commercial", "office": "commercial",
+                "shop": "commercial", "land": "land", "plot": "land", "hotel": "hotel", "ბინა": "flat", "სახლი": "house", "квартира": "flat", "дом": "house"}
+
+
+def parse_csv(raw):
+    text = raw.decode("utf-8-sig", errors="replace")
+    sample = text[:4000]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+    except csv.Error:
+        dialect = csv.excel
+    rows = list(csv.DictReader(io.StringIO(text), dialect=dialect))
+    out = []
+    for r in rows[:1000]:
+        r = {str(k or "").strip().lower().replace(" ", "_"): (v or "").strip() for k, v in r.items()}
+        if not any(r.values()):
+            continue
+        r["deal"] = DEAL_ALIASES.get(r.get("deal", "").lower(), r.get("deal", "").lower())
+        r["type"] = TYPE_ALIASES.get(r.get("type", "").lower(), r.get("type", "").lower())
+        out.append(r)
+    return out
+
+
+async def my_import(request):
+    u, e = need_user(request)
+    if e:
+        return e
+    if u["role"] not in PARTNER_ROLES + ("admin",):
+        return err("Bulk upload is for agent, agency and developer accounts. Apply at keygroup.ge/partners", 403)
+    if request.method == "GET":
+        with db() as con:
+            rows = con.execute("SELECT * FROM imports WHERE user_id=? ORDER BY id DESC LIMIT 50", (u["id"],)).fetchall()
+        return ok(imports=[dict(r) for r in rows], columns=IMPORT_COLS)
+    form = await request.form(max_files=1, max_part_size=5 * 1024 * 1024)
+    f = form.get("csv")
+    if not f:
+        return err("Choose a CSV file")
+    raw = await f.read()
+    rows = parse_csv(raw)
+    if not rows:
+        return err("The file is empty or not a CSV")
+    mode = form.get("mode") or "preview"
+    good, errors = [], []
+    for i, r in enumerate(rows, start=2):
+        if not r.get("contact_phone"):
+            r["contact_phone"] = u["phone"]
+        if not r.get("contact_name"):
+            r["contact_name"] = u.get("company") or u["name"]
+        fields, msg = clean_listing(r)
+        if msg:
+            errors.append({"row": i, "error": msg})
+        else:
+            good.append(fields)
+    s = get_settings()
+    limit = listing_limit(u, s)
+    with _LOCK, db() as con:
+        room = (limit - live_count(con, u["id"])) if limit and u["role"] != "admin" else 10 ** 6
+        if mode == "preview":
+            return ok(total=len(rows), valid=len(good), errors=errors[:100], room=max(0, room),
+                      sample=[{k: g[k] for k in ("deal", "type", "district", "address", "rooms", "area", "price", "currency")} for g in good[:5]])
+        if not good:
+            return err("No valid rows to import")
+        if len(good) > room:
+            return err(f"Your plan has room for {max(0, room)} more listings; the file has {len(good)} valid rows.")
+        now = time.time()
+        cur = con.execute("INSERT INTO imports (user_id, filename, total, imported, errors, created) VALUES (?,?,?,?,?,?)",
+                          (u["id"], str(getattr(f, "filename", "") or "upload.csv")[:120], len(rows), len(good), json.dumps(errors[:200]), now))
+        bid = cur.lastrowid
+        level = 1 if u.get("contact_verified") else 0
+        for g in good:
+            cols = ",".join(g.keys())
+            c2 = con.execute(f"INSERT INTO listings (user_id,{cols},status,created,updated,confirmed,verify_level,batch_id) VALUES (?,{','.join('?' * len(g))},'pending',?,?,?,?,?)",
+                             (u["id"], *g.values(), now, now, now, level, bid))
+            find_duplicates(con, c2.lastrowid)
+        audit(con, u, "bulk_import", "import", bid, f"{len(good)} listings, {len(errors)} rows with errors")
+    notify(f"📦 Bulk upload #{bid}: {len(good)} listings from {esc(u.get('company') or u['name'])} ({esc(u['role'])}) waiting for review\n{SITE}/admin/#partners")
+    return ok(batch=bid, imported=len(good), errors=errors[:100])
+
+
+async def admin_import_action(request):
+    u, e = need_user(request, admin=True)
+    if e:
+        return e
+    bid = int(request.path_params["bid"])
+    d = await body_json(request)
+    action = d.get("action")
+    s = get_settings()
+    now = time.time()
+    with _LOCK, db() as con:
+        imp = con.execute("SELECT * FROM imports WHERE id=?", (bid,)).fetchone()
+        if not imp:
+            return err("Not found", 404)
+        if action == "approve_all":
+            exp = now + s["plans"]["free"]["days"] * 86400
+            n = con.execute("UPDATE listings SET status='active', approved=?, expires=?, reject_reason='' WHERE batch_id=? AND status='pending' AND dup_of=''",
+                            (now, exp, bid)).rowcount
+            con.execute("UPDATE imports SET status='approved' WHERE id=?", (bid,))
+        elif action == "rollback":
+            n = con.execute("UPDATE listings SET status='deleted', updated=? WHERE batch_id=? AND status!='deleted'", (now, bid)).rowcount
+            con.execute("UPDATE imports SET status='rolled_back' WHERE id=?", (bid,))
+        else:
+            return err("Unknown action")
+        audit(con, u, "import_" + action, "import", bid, f"{n} listings")
+    return ok(count=n)
+
+
+# ---------------------------------------------------------------- admin 2-step login
+
+async def admin_2fa(request):
+    u, e = need_user(request, admin=True)
+    if e:
+        return e
+    d = await body_json(request)
+    action = d.get("action")
+    with _LOCK, db() as con:
+        if action == "setup":
+            secret = base64.b32encode(secrets.token_bytes(20)).decode().rstrip("=")
+            con.execute("UPDATE users SET totp_secret=?, totp_on=0 WHERE id=?", (secret, u["id"]))
+            label = urllib.parse.quote(f"KEY GROUP admin:{u['phone']}")
+            return ok(secret=secret, uri=f"otpauth://totp/{label}?secret={secret}&issuer=KEY%20GROUP&digits=6&period=30")
+        if action == "enable":
+            if not totp_ok(u["totp_secret"], d.get("code")):
+                return err("Wrong code — scan again and enter the current 6-digit code")
+            con.execute("UPDATE users SET totp_on=1 WHERE id=?", (u["id"],))
+            audit(con, u, "2fa_enabled", "user", u["id"])
+            return ok()
+        if action == "disable":
+            if u["totp_on"] and not totp_ok(u["totp_secret"], d.get("code")):
+                return err("Enter the current code from your app to turn it off")
+            con.execute("UPDATE users SET totp_on=0, totp_secret='' WHERE id=?", (u["id"],))
+            audit(con, u, "2fa_disabled", "user", u["id"])
+            return ok()
+    return err("Unknown action")
+
+
 async def report_listing(request):
     if too_many(request, "report", 10, 3600):
         return err("Too many reports, try later", 429)
@@ -726,10 +1069,13 @@ async def admin_stats(request):
         paid_30 = con.execute("SELECT COALESCE(SUM(amount),0) FROM orders WHERE status='paid' AND paid>?", (now - 30 * 86400,)).fetchone()[0]
         reports = con.execute("SELECT COUNT(*) FROM reports WHERE status='open'").fetchone()[0]
         vip = con.execute("SELECT COUNT(*) FROM listings WHERE status='active' AND (vip_until>? OR super_until>?)", (now, now)).fetchone()[0]
+        leads_new = con.execute("SELECT COUNT(*) FROM leads WHERE stage='new'").fetchone()[0]
+        apps_new = con.execute("SELECT COUNT(*) FROM partner_apps WHERE status='new'").fetchone()[0]
+        partners = con.execute(f"SELECT COUNT(*) FROM users WHERE role IN ({','.join('?' * len(PARTNER_ROLES))})", PARTNER_ROLES).fetchone()[0]
         dups = con.execute("SELECT COUNT(*) FROM listings WHERE dup_of!='' AND status IN ('pending','active','changes')").fetchone()[0]
         chats_waiting = con.execute("SELECT COUNT(*) FROM chats WHERE status IN ('waiting','agent') AND unread>0").fetchone()[0]
         chats_today = con.execute("SELECT COUNT(DISTINCT chat_id) FROM chat_msgs WHERE who='visitor' AND ts>?", (now - 86400,)).fetchone()[0]
-    return ok(stats={"duplicates": dups, "chats_waiting": chats_waiting, "chats_today": chats_today, "listings": by_status, "owners": users, "orders_waiting": await_pay, "revenue_30d": paid_30,
+    return ok(stats={"leads_new": leads_new, "apps_new": apps_new, "partners": partners, "duplicates": dups, "chats_waiting": chats_waiting, "chats_today": chats_today, "listings": by_status, "owners": users, "orders_waiting": await_pay, "revenue_30d": paid_30,
                      "vip_active": vip, "reports_open": reports, "currency": get_settings()["currency"]})
 
 
@@ -877,6 +1223,13 @@ async def admin_users(request):
                 con.execute("UPDATE users SET pw=? WHERE id=? AND role!='admin'", (hash_pw(pw), uid))
                 audit(con, u, "reset_password", "user", uid)
                 return ok(password=pw)
+            elif action == "set_role":
+                role = d.get("role")
+                if role not in ("owner",) + PARTNER_ROLES:
+                    return err("Unknown role")
+                con.execute("UPDATE users SET role=? WHERE id=? AND role!='admin'", (role, uid))
+            elif action == "set_limit":
+                con.execute("UPDATE users SET listing_limit=? WHERE id=?", (max(0, min(100000, int(d.get("limit") or 0))), uid))
             elif action in ("verify_contact", "unverify_contact"):
                 on = action == "verify_contact"
                 con.execute("UPDATE users SET contact_verified=? WHERE id=?", (1 if on else 0, uid))
@@ -887,7 +1240,7 @@ async def admin_users(request):
             audit(con, u, action, "user", uid)
         return ok()
     with db() as con:
-        rows = con.execute("""SELECT u.id, u.phone, u.name, u.role, u.blocked, u.created, u.contact_verified, u.consent_at,
+        rows = con.execute("""SELECT u.id, u.phone, u.name, u.role, u.blocked, u.created, u.contact_verified, u.consent_at, u.company, u.listing_limit, u.partner_until,
                                      (SELECT COUNT(*) FROM listings l WHERE l.user_id=u.id AND l.status!='deleted') AS listings
                               FROM users u ORDER BY u.id DESC LIMIT 1000""").fetchall()
     return ok(users=[dict(r) for r in rows])
@@ -912,7 +1265,13 @@ async def admin_settings(request):
             s["payment_info"] = str(d["payment_info"])[:1000]
         if "show_owner_phone" in d:
             s["show_owner_phone"] = bool(d["show_owner_phone"])
-        for k in ("free_listing_limit", "reconfirm_days"):
+        for r, v in (d.get("role_limits") or {}).items():
+            if r in PARTNER_ROLES:
+                try:
+                    s["role_limits"][r] = max(0, min(100000, int(v)))
+                except (TypeError, ValueError):
+                    pass
+        for k in ("free_listing_limit", "reconfirm_days", "founding_days"):
             if k in d:
                 try:
                     s[k] = max(0, min(1000, int(d[k])))
@@ -1036,6 +1395,11 @@ async def chat_send(request):
                 con.execute("UPDATE chats SET status='waiting', name=?, phone=?, topic=?, unread=unread+1, consent_at=? WHERE id=?",
                             (state.get("name", ""), state.get("phone", ""), state.get("topic", ""), time.time(), chat["id"]))
                 track(con, "lead_submitted", chat["page"], {"channel": "chat", "topic": state.get("topic", "")[:60]})
+                m = re.search(r"/p/\?id=(\d+)", chat["page"] or "")
+                lrow = con.execute("SELECT id, user_id FROM listings WHERE id=?", (int(m.group(1)),)).fetchone() if m else None
+                if lrow:
+                    con.execute("INSERT INTO leads (listing_id, owner_id, name, phone, message, source, consent_at, created, updated) VALUES (?,?,?,?,?,?,?,?,?)",
+                                (lrow["id"], lrow["user_id"], state.get("name", ""), state.get("phone", ""), state.get("topic", ""), "chat", time.time(), time.time(), time.time()))
                 tr = transcript(con, chat["id"])
                 alert = (f"🙋 <b>Website chat #{chat['id']} — visitor wants an agent</b>\n"
                          f"Name: {esc(state.get('name'))}\nPhone: {esc(state.get('phone'))}\nTopic: {esc(state.get('topic'))}\n"
@@ -1229,6 +1593,15 @@ routes = [
     Route("/api/admin/settings", admin_settings, methods=["GET", "POST"]),
     Route("/api/chat/start", chat_start, methods=["POST"]),
     Route("/api/track", track_event, methods=["POST"]),
+    Route("/api/listings/{lid:int}/enquiry", listing_enquiry, methods=["POST"]),
+    Route("/api/my/leads", my_leads, methods=["GET", "POST"]),
+    Route("/api/my/import", my_import, methods=["GET", "POST"]),
+    Route("/api/partners/apply", partner_apply, methods=["POST"]),
+    Route("/api/admin/leads", admin_leads),
+    Route("/api/admin/partners", admin_partners),
+    Route("/api/admin/partners/{aid:int}", admin_partner_action, methods=["POST"]),
+    Route("/api/admin/imports/{bid:int}", admin_import_action, methods=["POST"]),
+    Route("/api/admin/2fa", admin_2fa, methods=["POST"]),
     Route("/api/admin/analytics", admin_analytics),
     Route("/api/admin/audit", admin_audit),
     Route("/api/my/listings/{lid:int}/confirm", confirm_listing, methods=["POST"]),

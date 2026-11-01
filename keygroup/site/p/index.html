@@ -135,7 +135,7 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
     $('#cb').onsubmit = function (e) {
       e.preventDefault();
       var f = e.target;
-      KG.track('viewing_requested', {listing_id: l.id});
+      KG.api('/api/listings/' + l.id + '/enquiry', {method: 'POST', json: {name: f.name.value, phone: f.phone.value, consent: f.consent.checked, website: f.website.value, source: 'callback', message: 'Call back request'}});
       lead({type: 'Call back: listing #' + l.id, name: f.name.value, phone: f.phone.value, listing: location.href, website: f.website.value, consent: 'yes ' + new Date().toISOString()}).then(function (okk) {
         $('#cbm').className = 'msg ' + (okk ? 'ok' : 'err');
         $('#cbm').textContent = okk ? t('Thank you! We will call you soon.', 'გმადლობთ! მალე დაგირეკავთ.') : t('Could not send — please use WhatsApp.', 'ვერ გაიგზავნა — მოგვწერეთ WhatsApp-ზე.');
