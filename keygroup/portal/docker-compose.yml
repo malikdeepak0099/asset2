@@ -1,0 +1,14 @@
+services:
+  portal:
+    build: .
+    container_name: kg-portal
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data
+    networks:
+      - web
+networks:
+  web:
+    external: true
+    name: ${CADDY_NETWORK}

@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Admin — KEY GROUP</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Noto+Sans+Georgian:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/assets/portal.css">
+<style>
+.pg{padding:24px 0 64px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:16px 0 20px}
+.tabs button{border:1px solid var(--line);background:#fff;border-radius:999px;padding:9px 16px;font:700 14px var(--display);cursor:pointer;display:inline-flex;gap:6px;align-items:center}
+.tabs button[aria-pressed="true"]{background:var(--navy);color:#fff;border-color:var(--navy)}
+.tabs .n{background:var(--coral);color:#fff;border-radius:999px;padding:0 7px;font-size:12px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}
+.kpis .card{padding:18px}.kpis b{display:block;font:800 30px var(--display)}.kpis span{color:var(--muted);font-size:13px}
+.item{display:grid;grid-template-columns:150px 1fr;gap:16px;padding:16px;border-bottom:1px solid var(--line)}
+.item:last-child{border-bottom:0}
+.item .th{height:110px;border-radius:12px;background:#DCE3EA center/cover}
+.item .acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.thumbs{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}.thumbs a{width:56px;height:42px;border-radius:6px;background:#DCE3EA center/cover;display:block}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;letter-spacing:.05em;background:var(--page)}
+.tablewrap{overflow-x:auto}
+.desc{white-space:pre-wrap;font-size:13px;color:#33465c;max-height:90px;overflow:auto;margin-top:6px;background:var(--page);border-radius:8px;padding:8px}
+@media (max-width:700px){.item{grid-template-columns:1fr}.item .th{height:180px}}
+</style>
+</head>
+<body>
+<main class="wrap pg" id="app"><div class="empty">…</div></main>
+<script src="/assets/portal.js"></script>
+<script>
+(function () {
+  KG.lang = 'en';
+  var esc = KG.esc, $ = KG.$, $$ = KG.$$, api = KG.api, TAB = 'dash', LSTAT = 'pending', STATS = {};
+  KG.header('admin');
+  var fmtDate = function (ts) { return ts ? new Date(ts * 1000).toLocaleString('en-GB', {day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'}) : '—'; };
+
+  function login() {
+    $('#app').innerHTML = '<form class="card" id="lf" style="max-width:420px;margin:30px auto;padding:28px;display:flex;flex-direction:column;gap:14px"><h1>Admin login</h1>' +
+      '<label class="f">Phone<input name="phone" type="tel" required autocomplete="username"></label><label class="f">Password<input name="password" type="password" required autocomplete="current-password"></label>' +
+      '<button class="btn b-navy" type="submit">Log in</button><div id="lm"></div></form>';
+    $('#lf').onsubmit = function (e) {
+      e.preventDefault();
+      api('/api/login', {method: 'POST', json: {phone: e.target.phone.value, password: e.target.password.value}}).then(function (j) {
+        if (!j.ok) { $('#lm').className = 'msg err'; $('#lm').textContent = j.error; return; }
+        if (j.user.role !== 'admin') { $('#lm').className = 'msg err'; $('#lm').textContent = 'This account is not an admin.'; return; }
+        shell();
+      });
+    };
+  }
+  function shell() {
+    api('/api/admin/stats').then(function (j) {
+      if (!j.ok) { login(); return; }
+      STATS = j.stats;
+      var pend = (STATS.listings || {}).pending || 0;
+      $('#app').innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"><h1>KEY GROUP admin</h1>' +
+        '<div style="display:flex;gap:8px"><a class="btn b-ghost" href="/account/">Owner view</a><button class="btn b-ghost" id="out">Log out</button></div></div>' +
+        '<div class="tabs">' + [['dash', 'Dashboard', 0], ['listings', 'Listings', pend], ['orders', 'Payments', STATS.orders_waiting], ['reports', 'Reports', STATS.reports_open], ['users', 'Users', 0], ['settings', 'Plans & settings', 0]].map(function (x) {
+          return '<button data-t="' + x[0] + '" aria-pressed="' + (TAB === x[0]) + '">' + x[1] + (x[2] ? ' <span class="n">' + x[2] + '</span>' : '') + '</button>';
+        }).join('') + '</div><div id="tab"></div>';
+      $$('[data-t]').forEach(function (b) { b.onclick = function () { TAB = b.dataset.t; shell(); }; });
+      $('#out').onclick = function () { api('/api/logout', {method: 'POST'}).then(login); };
+      ({dash: dash, listings: listings, orders: orders, reports: reports, users: users, settings: settings})[TAB]();
+    });
+  }
+  function dash() {
+    var L = STATS.listings || {}, cur = STATS.currency === 'GEL' ? '₾' : STATS.currency;
+    $('#tab').innerHTML = '<div class="kpis">' + [[L.pending || 0, 'Waiting for approval'], [L.active || 0, 'Live owner listings'], [STATS.vip_active, 'VIP / Super VIP live'], [STATS.orders_waiting, 'Payments to confirm'],
+      [cur + Math.round(STATS.revenue_30d), 'Paid in last 30 days'], [STATS.owners, 'Owner accounts'], [STATS.reports_open, 'Open reports'], [L.expired || 0, 'Expired']].map(function (k) {
+        return '<div class="card"><b>' + esc(k[0]) + '</b><span>' + esc(k[1]) + '</span></div>'; }).join('') + '</div>' +
+      '<p class="muted" style="margin-top:18px">New listings, plan orders and reports also come to the KEY GROUP Telegram bot.</p>';
+  }
+  function listings() {
+    api('/api/admin/listings?status=' + LSTAT).then(function (j) {
+      var L = j.listings || [];
+      $('#tab').innerHTML = '<div class="seg" style="max-width:640px;margin-bottom:14px">' + ['pending', 'active', 'rejected', 'expired', 'paused', 'all'].map(function (s) {
+        return '<button data-s="' + s + '" aria-pressed="' + (LSTAT === s) + '">' + s[0].toUpperCase() + s.slice(1) + '</button>'; }).join('') + '</div>' +
+        '<div class="card">' + (L.length ? L.map(item).join('') : '<div class="empty" style="border:0">Nothing here.</div>') + '</div>';
+      $$('[data-s]').forEach(function (b) { b.onclick = function () { LSTAT = b.dataset.s; listings(); }; });
+      $$('[data-a]').forEach(function (b) {
+        b.onclick = function () {
+          var a = b.dataset.a, id = b.dataset.id, body = {action: a};
+          if (a === 'reject') { var r = prompt('Reason shown to the owner (e.g. "add real photos", "price missing"):'); if (r === null) return; body.reason = r; }
+          if (a === 'delete' && !confirm('Delete listing #' + id + '?')) return;
+          api('/api/admin/listings/' + id, {method: 'POST', json: body}).then(function (r) { if (!r.ok) alert(r.error); shell(); });
+        };
+      });
+    });
+  }
+  function item(l) {
+    var ph = l.photos || [];
+    var tier = l.tier === 'super' ? '<span class="pill t-super">Super VIP</span>' : l.tier === 'vip' ? '<span class="pill t-vip">VIP</span>' : '';
+    var btn = function (a, label, cls) { return '<button class="btn sm ' + (cls || 'b-ghost') + '" data-a="' + a + '" data-id="' + l.id + '">' + label + '</button>'; };
+    return '<div class="item"><div class="th" style="' + (ph[0] ? 'background-image:url(' + KG.photo(ph[0], true) + ')' : '') + '"></div><div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span class="pill st-' + esc(l.status) + '">' + esc(l.status) + '</span>' + tier + (l.verified ? '<span class="pill t-ver">Verified</span>' : '') +
+      '<b>#' + l.id + ' · ' + esc(KG.DEAL(l.deal)) + ' · ' + esc(KG.TYPE(l.type)) + ' · ' + KG.money(l.price, l.currency) + '</b></div>' +
+      '<div style="margin-top:4px">' + esc(l.title || '') + ' <span class="muted">' + esc([l.city, l.district, l.address].filter(Boolean).join(', ')) + ' · ' + (l.rooms || '—') + ' rooms · ' + (l.area || '—') + ' m² · floor ' + esc(l.floor || '—') + '</span></div>' +
+      '<div class="muted" style="font-size:13px">Owner: <b>' + esc(l.owner_name || '') + '</b> ' + esc(l.owner_phone || '') + ' · contact ' + esc(l.contact_name || '') + ' ' + esc(l.contact_phone || '') + ' · created ' + fmtDate(l.created) + ' · ' + (l.views || 0) + ' views</div>' +
+      (l.description ? '<div class="desc">' + esc(l.description) + '</div>' : '') +
+      '<div class="thumbs">' + ph.map(function (p) { return '<a href="' + KG.photo(p) + '" target="_blank" style="background-image:url(' + KG.photo(p, true) + ')"></a>'; }).join('') + '</div>' +
+      '<div class="acts">' + (l.status !== 'active' ? btn('approve', '✓ Approve', 'b-teal') : '') + (l.status !== 'rejected' ? btn('reject', 'Reject', 'b-red') : '') +
+      (l.status === 'active' ? btn('pause', 'Pause') + '<a class="btn sm b-ghost" target="_blank" href="/p/?id=' + l.id + '">Open</a>' : '') + (l.status === 'expired' ? btn('renew', 'Renew 30 days') : '') +
+      btn(l.verified ? 'unverify' : 'verify', l.verified ? 'Remove verified' : 'Mark verified') + btn('vip', '+ VIP', 'b-ghost') + btn('super', '+ Super VIP', 'b-ghost') + btn('boost', 'Boost') +
+      (l.tier !== 'free' ? btn('clear_plan', 'Clear plan') : '') + btn('delete', 'Delete', 'b-red') + '</div></div></div>';
+  }
+  function orders() {
+    api('/api/admin/orders').then(function (j) {
+      var O = j.orders || [];
+      $('#tab').innerHTML = '<div class="card tablewrap"><table><thead><tr><th>Order</th><th>Owner</th><th>Listing</th><th>Plan</th><th>Amount</th><th>Status</th><th></th></tr></thead><tbody>' +
+        (O.length ? O.map(function (o) {
+          return '<tr><td>#' + o.id + '<br><span class="muted">' + fmtDate(o.created) + '</span></td><td>' + esc(o.owner_name || '') + '<br><span class="muted">' + esc(o.owner_phone || '') + '</span></td>' +
+            '<td><a href="/p/?id=' + o.listing_id + '" target="_blank" style="color:var(--blue)">#' + o.listing_id + '</a> ' + esc(o.district || o.address || '') + '</td><td>' + esc(o.plan) + '</td><td>' + esc(o.amount) + ' ' + esc(o.currency) + '</td>' +
+            '<td><span class="pill ' + (o.status === 'paid' ? 'st-active' : o.status === 'cancelled' ? 'st-expired' : 'st-pending') + '">' + esc(o.status.replace('_', ' ')) + '</span>' + (o.paid ? '<br><span class="muted">' + fmtDate(o.paid) + '</span>' : '') + '</td>' +
+            '<td>' + (o.status === 'awaiting_payment' ? '<button class="btn sm b-teal" data-o="paid" data-id="' + o.id + '">Mark paid → start plan</button> <button class="btn sm b-ghost" data-o="cancel" data-id="' + o.id + '">Cancel</button>' : esc(o.note || '')) + '</td></tr>';
+        }).join('') : '<tr><td colspan="7" class="muted">No orders yet.</td></tr>') + '</tbody></table></div>';
+      $$('[data-o]').forEach(function (b) {
+        b.onclick = function () {
+          var note = prompt(b.dataset.o === 'paid' ? 'Payment note (e.g. "TBC transfer 12 Nov"):' : 'Why cancelled?', '');
+          if (note === null) return;
+          api('/api/admin/orders/' + b.dataset.id, {method: 'POST', json: {action: b.dataset.o, note: note}}).then(function (r) { if (!r.ok) alert(r.error); shell(); });
+        };
+      });
+    });
+  }
+  function reports() {
+    api('/api/admin/reports').then(function (j) {
+      var R = j.reports || [];
+      $('#tab').innerHTML = '<div class="card tablewrap"><table><thead><tr><th>When</th><th>Listing</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>' +
+        (R.length ? R.map(function (r) {
+          return '<tr><td>' + fmtDate(r.created) + '</td><td><a href="/p/?id=' + r.listing_id + '" target="_blank" style="color:var(--blue)">#' + r.listing_id + '</a> ' + esc(r.district || '') + ' <span class="muted">(' + esc(r.listing_status || '') + ')</span></td>' +
+            '<td>' + esc(r.reason) + '</td><td>' + esc(r.status) + '</td><td>' + (r.status === 'open' ? '<button class="btn sm b-ghost" data-r="' + r.id + '">Close</button>' : '') + '</td></tr>';
+        }).join('') : '<tr><td colspan="5" class="muted">No reports.</td></tr>') + '</tbody></table></div>';
+      $$('[data-r]').forEach(function (b) { b.onclick = function () { api('/api/admin/reports', {method: 'POST', json: {id: +b.dataset.r}}).then(shell); }; });
+    });
+  }
+  function users() {
+    api('/api/admin/users').then(function (j) {
+      var U = j.users || [];
+      $('#tab').innerHTML = '<div class="card tablewrap"><table><thead><tr><th>Name</th><th>Phone</th><th>Role</th><th>Listings</th><th>Joined</th><th></th></tr></thead><tbody>' +
+        U.map(function (u) {
+          return '<tr><td>' + esc(u.name) + (u.blocked ? ' <span class="pill st-rejected">blocked</span>' : '') + '</td><td>' + esc(u.phone) + '</td><td>' + esc(u.role) + '</td><td>' + u.listings + '</td><td>' + fmtDate(u.created) + '</td>' +
+            '<td>' + (u.role !== 'admin' ? '<button class="btn sm b-ghost" data-u="' + (u.blocked ? 'unblock' : 'block') + '" data-id="' + u.id + '">' + (u.blocked ? 'Unblock' : 'Block') + '</button> <button class="btn sm b-ghost" data-u="reset_password" data-id="' + u.id + '">Reset password</button>' : '') + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+      $$('[data-u]').forEach(function (b) {
+        b.onclick = function () {
+          if (b.dataset.u === 'block' && !confirm('Block this user? Their listings stay but they cannot log in.')) return;
+          api('/api/admin/users', {method: 'POST', json: {id: +b.dataset.id, action: b.dataset.u}}).then(function (r) {
+            if (r.password) alert('New password: ' + r.password + '\nSend it to the owner on WhatsApp.');
+            shell();
+          });
+        };
+      });
+    });
+  }
+  function settings() {
+    api('/api/admin/settings').then(function (j) {
+      var s = j.settings, P = s.plans;
+      $('#tab').innerHTML = '<form class="card" id="sf" style="padding:22px;display:flex;flex-direction:column;gap:16px;max-width:820px"><h2>Plans & prices</h2>' +
+        '<div class="tablewrap"><table><thead><tr><th>Plan</th><th>Price</th><th>Days</th><th>What it does</th></tr></thead><tbody>' +
+        [['free', 'How long a free listing stays live'], ['vip', 'Above free listings, VIP badge'], ['super', 'Top of everything + home page, Super VIP badge'], ['boost', 'One bump to the top (days not used)']].map(function (p) {
+          return '<tr><td><b>' + esc(P[p[0]].name) + '</b></td><td><input type="number" min="0" step="0.5" name="price_' + p[0] + '" value="' + P[p[0]].price + '" style="width:90px"' + (p[0] === 'free' ? ' disabled' : '') + '></td>' +
+            '<td><input type="number" min="0" name="days_' + p[0] + '" value="' + P[p[0]].days + '" style="width:80px"' + (p[0] === 'boost' ? ' disabled' : '') + '></td><td class="muted">' + p[1] + '</td></tr>';
+        }).join('') + '</tbody></table></div>' +
+        '<label class="f">Currency<select name="currency">' + ['GEL', 'USD', 'EUR'].map(function (c) { return '<option' + (s.currency === c ? ' selected' : '') + '>' + c + '</option>'; }).join('') + '</select></label>' +
+        '<label class="f">Payment instructions shown to owners (bank account, office address)<textarea name="payment_info">' + esc(s.payment_info) + '</textarea></label>' +
+        '<label style="display:flex;gap:8px;align-items:center;font:600 14px var(--display)"><input type="checkbox" name="show_owner_phone"' + (s.show_owner_phone ? ' checked' : '') + '> Show the owner\'s phone on listings (off = buyers contact KEY GROUP)</label>' +
+        '<button class="btn b-navy" type="submit" style="align-self:flex-start">Save settings</button><div id="sm"></div></form>' +
+        '<form class="card" id="pw" style="padding:22px;display:flex;flex-direction:column;gap:12px;max-width:420px;margin-top:18px"><h3>Change admin password</h3>' +
+        '<label class="f">Current password<input name="old" type="password" required></label><label class="f">New password<input name="new" type="password" minlength="6" required></label><button class="btn b-ghost" type="submit">Change password</button><div id="pm"></div></form>';
+      $('#sf').onsubmit = function (e) {
+        e.preventDefault();
+        var f = e.target, plans = {};
+        ['free', 'vip', 'super', 'boost'].forEach(function (p) { plans[p] = {}; if (f['price_' + p] && !f['price_' + p].disabled) plans[p].price = f['price_' + p].value; if (f['days_' + p] && !f['days_' + p].disabled) plans[p].days = f['days_' + p].value; });
+        api('/api/admin/settings', {method: 'POST', json: {plans: plans, currency: f.currency.value, payment_info: f.payment_info.value, show_owner_phone: f.show_owner_phone.checked}}).then(function (r) {
+          $('#sm').className = 'msg ' + (r.ok ? 'ok' : 'err'); $('#sm').textContent = r.ok ? 'Saved.' : r.error; });
+      };
+      $('#pw').onsubmit = function (e) {
+        e.preventDefault();
+        api('/api/password', {method: 'POST', json: {old: e.target.old.value, new: e.target.new.value}}).then(function (r) {
+          $('#pm').className = 'msg ' + (r.ok ? 'ok' : 'err'); $('#pm').textContent = r.ok ? 'Password changed.' : r.error; if (r.ok) e.target.reset(); });
+      };
+    });
+  }
+  api('/api/me').then(function (j) { j.user && j.user.role === 'admin' ? shell() : login(); });
+})();
+</script>
+</body>
+</html>

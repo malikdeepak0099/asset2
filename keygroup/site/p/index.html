@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="ka">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Property — KEY GROUP Real Estate</title>
+<meta name="description" content="Property for rent or sale in Tbilisi and Batumi — KEY GROUP Real Estate.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Noto+Sans+Georgian:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/assets/portal.css">
+<style>
+.pg{padding:24px 0 64px}
+.crumbs{font-size:13px;color:var(--muted);margin-bottom:14px}
+.head{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:18px}
+.price{font:800 36px var(--display);text-align:right}.price small{font:500 15px var(--body);color:var(--muted)}
+.gal{display:grid;grid-template-columns:2fr 1fr;gap:10px;border-radius:20px;overflow:hidden;height:min(480px,60vw)}
+.gal .main{background:#DCE3EA center/cover;cursor:zoom-in;position:relative}
+.gal .side{display:grid;grid-template-rows:1fr 1fr;gap:10px}
+.gal .side div{background:#DCE3EA center/cover;cursor:zoom-in;position:relative}
+.gal .cnt{position:absolute;right:12px;bottom:12px;background:rgba(8,26,48,.8);color:#fff;border-radius:8px;padding:6px 10px;font:600 13px var(--display)}
+.noph{height:300px;border-radius:20px;display:grid;place-items:center;color:#fff;font:800 28px var(--display)}
+.body{display:grid;grid-template-columns:1fr 360px;gap:28px;margin-top:26px;align-items:start}
+.facts{display:flex;flex-wrap:wrap;background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden}
+.facts div{flex:1 1 130px;padding:14px 16px;box-shadow:1px 0 0 var(--line),0 1px 0 var(--line)}.facts span{display:block;font-size:12px;color:var(--muted)}.facts b{font:700 18px var(--display)}
+.sec{margin-top:26px}.sec h2{font-size:20px;margin-bottom:10px}
+.desc{white-space:pre-wrap;color:#33465c}
+aside .card{padding:20px;display:flex;flex-direction:column;gap:12px;position:sticky;top:16px}
+.share{display:flex;gap:8px;flex-wrap:wrap}
+.lb{position:fixed;inset:0;background:rgba(5,12,24,.92);display:flex;align-items:center;justify-content:center;z-index:50}
+.lb img{max-width:92vw;max-height:86vh;border-radius:10px}
+.lb button{position:absolute;background:rgba(255,255,255,.15);color:#fff;border:0;border-radius:50%;width:48px;height:48px;font-size:24px;cursor:pointer}
+.lb .x{top:16px;right:16px}.lb .pv{left:16px}.lb .nx{right:16px}
+.calc{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+dialog{border:0;border-radius:20px;padding:24px;max-width:440px;width:92vw}
+dialog::backdrop{background:rgba(5,12,24,.5)}
+@media (max-width:900px){.body{grid-template-columns:1fr}.gal{grid-template-columns:1fr;height:auto}.gal .main{height:62vw}.gal .side{display:none}.price{text-align:left}.calc{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main class="wrap pg" id="app"><div class="empty">…</div></main>
+<script src="/assets/portal.js"></script>
+<script>
+(function () {
+  var t = KG.t, esc = KG.esc, $ = KG.$;
+  var CRM_URL = 'https://script.google.com/macros/s/AKfycbxrhM71nw5yFyxWobNt1afBS2uhoq0CGEJguudYHT4ZQuRg809CxWIxEXJZvJDXslSA/exec';
+  KG.header('search');
+  document.documentElement.lang = KG.lang === 'en' ? 'en' : 'ka';
+  var id = new URLSearchParams(location.search).get('id');
+  function lead(data) {
+    if (!CRM_URL || CRM_URL.indexOf('http') !== 0) return Promise.resolve(false);
+    data.action = 'lead'; data.lang = KG.lang;
+    return fetch(CRM_URL, {method: 'POST', mode: 'no-cors', headers: {'Content-Type': 'text/plain;charset=utf-8'}, body: JSON.stringify(data)}).then(function () { return true; }, function () { return false; });
+  }
+  KG.api('/api/listings/' + encodeURIComponent(id || '0')).then(function (j) {
+    if (!j.ok) { $('#app').innerHTML = '<div class="empty"><h2>' + t('This listing is not available', 'განცხადება აღარ არის ხელმისაწვდომი') + '</h2><p><a class="btn b-navy" href="/search/">' + t('See other properties', 'სხვა განცხადებები') + '</a></p></div>'; return; }
+    var l = j.listing, s = j.settings || {}, photos = l.photos || [];
+    var title = l.title || (KG.TYPE(l.type) + ' · ' + (l.district || l.city));
+    document.title = title + ' — KEY GROUP';
+    var per = l.deal === 'sale' ? '' : (l.deal === 'daily' ? t(' / day', ' / დღე') : t(' / month', ' / თვე'));
+    var badges = '<span class="pill" style="background:var(--sky);color:var(--blue)">' + esc(KG.DEAL(l.deal)) + '</span>';
+    if (l.tier === 'super') badges += ' <span class="pill t-super">Super VIP</span>'; else if (l.tier === 'vip') badges += ' <span class="pill t-vip">VIP</span>';
+    if (l.verified) badges += ' <span class="pill t-ver">' + KG.icon('check') + t('Verified by KEY GROUP', 'შემოწმებულია KEY GROUP-ის მიერ') + '</span>';
+    var col = KG.COL[l.type === 'commercial' ? 'commercial' : l.deal] || KG.COL.rent;
+    var gal = photos.length ? '<div class="gal"><div class="main" data-i="0" style="background-image:url(' + KG.photo(photos[0]) + ')"><span class="cnt">' + KG.icon('image') + ' ' + photos.length + '</span></div>' +
+      (photos.length > 1 ? '<div class="side"><div data-i="1" style="background-image:url(' + KG.photo(photos[1], true) + ')"></div><div data-i="2" style="background-image:url(' + KG.photo(photos[2] || photos[1], true) + ')"></div></div>' : '<div class="side"></div>') + '</div>'
+      : '<div class="noph" style="background:linear-gradient(135deg,' + col[0] + ',' + col[1] + ')">' + esc(l.district || KG.TYPE(l.type)) + '</div>';
+    var facts = [[t('Type', 'ტიპი'), KG.TYPE(l.type)], [t('Area', 'ფართი'), l.area ? l.area + ' m²' : ''], [t('Rooms', 'ოთახები'), l.rooms || ''], [t('Bedrooms', 'საძინებელი'), l.bedrooms || ''],
+      [t('Floor', 'სართული'), l.floor ? l.floor + (l.total_floors ? ' / ' + l.total_floors : '') : ''], [t('Price per m²', 'ფასი მ²-ზე'), l.area && l.deal === 'sale' ? KG.money(l.price / l.area, l.currency) : ''],
+      [t('Views', 'ნახვები'), (l.views || 0) + 1], ['ID', l.id]].filter(function (f) { return f[1] !== '' && f[1] !== 0; });
+    var mapQ = encodeURIComponent([l.address, l.district, l.city || 'Tbilisi'].filter(Boolean).join(', '));
+    var waText = encodeURIComponent(t('Hello KEY GROUP! I am interested in listing #', 'გამარჯობა KEY GROUP! მაინტერესებს განცხადება #') + l.id + ' ' + location.href);
+    var phone = l.contact_phone, contact = phone ?
+      '<a class="btn b-wa" target="_blank" rel="noopener" href="https://wa.me/' + phone.replace(/\D/g, '') + '?text=' + waText + '">' + KG.icon('chat') + 'WhatsApp</a><a class="btn b-ghost" href="tel:' + esc(phone) + '">' + KG.icon('phone') + esc(phone) + '</a>' :
+      '<a class="btn b-wa" target="_blank" rel="noopener" href="https://wa.me/' + (s.company_phone || '+995577114118').replace(/\D/g, '') + '?text=' + waText + '">' + KG.icon('chat') + t('Ask on WhatsApp', 'კითხვა WhatsApp-ზე') + '</a>' +
+      '<a class="btn b-ghost" href="tel:' + esc(s.company_phone || '+995577114118') + '">' + KG.icon('phone') + '+995 577 114 118</a>';
+    var calc = l.deal === 'sale' ? '<section class="sec card" style="padding:20px"><h2>' + t('Mortgage calculator', 'იპოთეკის კალკულატორი') + '</h2><div class="calc">' +
+      '<label class="f">' + t('Down payment, %', 'პირველადი შენატანი, %') + '<input id="c-dp" type="number" value="20" min="0" max="90"></label>' +
+      '<label class="f">' + t('Interest, % a year', 'პროცენტი, წლიური') + '<input id="c-r" type="number" value="11" min="0" step="0.1"></label>' +
+      '<label class="f">' + t('Years', 'წლები') + '<input id="c-y" type="number" value="15" min="1" max="30"></label></div>' +
+      '<p style="margin:14px 0 0;font:700 20px var(--display)" id="c-out"></p><p class="muted" style="font-size:12px;margin:4px 0 0">' + t('Estimate only. Ask your bank for an exact offer.', 'სავარაუდო თანხაა. ზუსტი პირობები — ბანკში.') + '</p></section>' : '';
+    $('#app').innerHTML =
+      '<div class="crumbs"><a href="/">KEY GROUP</a> / <a href="/search/?deal=' + esc(l.deal) + '">' + esc(KG.DEAL(l.deal)) + '</a> / ' + esc(l.district || l.city) + '</div>' +
+      '<div class="head"><div><div style="display:flex;gap:6px;flex-wrap:wrap">' + badges + '</div><h1 style="margin-top:10px">' + esc(title) + '</h1>' +
+      '<div class="muted" style="display:flex;gap:6px;align-items:center;margin-top:4px">' + KG.icon('pin') + esc([l.address, l.district, l.city].filter(Boolean).join(', ')) + '</div></div>' +
+      '<div><div class="price">' + KG.money(l.price, l.currency) + '<small>' + per + '</small></div></div></div>' + gal +
+      '<div class="body"><div><div class="facts">' + facts.map(function (f) { return '<div><span>' + esc(f[0]) + '</span><b>' + esc(f[1]) + '</b></div>'; }).join('') + '</div>' +
+      (l.description ? '<section class="sec"><h2>' + t('Description', 'აღწერა') + '</h2><div class="desc">' + esc(l.description) + '</div></section>' : '') + calc +
+      '<section class="sec"><h2>' + t('Location', 'მდებარეობა') + '</h2><a class="btn b-ghost" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=' + mapQ + '">' + KG.icon('pin') + t('Open in Google Maps', 'Google Maps-ზე ნახვა') + '</a></section>' +
+      '<section class="sec"><h2>' + t('Similar properties', 'მსგავსი განცხადებები') + '</h2><div class="lgrid" id="sim"></div></section></div>' +
+      '<aside><div class="card"><h3>' + (phone ? esc(l.contact_name || t('Owner', 'მესაკუთრე')) : 'KEY GROUP Real Estate') + '</h3><span class="muted" style="font-size:13px">' + t('Mention listing #', 'ახსენე განცხადება #') + l.id + '</span>' + contact +
+      '<form id="cb" style="display:flex;flex-direction:column;gap:10px;border-top:1px solid var(--line);padding-top:12px"><b>' + t('Request a call back', 'დამირეკეთ') + '</b>' +
+      '<label class="f">' + t('Your name', 'თქვენი სახელი') + '<input name="name" autocomplete="name"></label><label class="f">' + t('Phone / WhatsApp', 'ტელეფონი / WhatsApp') + '<input name="phone" type="tel" required autocomplete="tel"></label>' +
+      '<input name="website" class="hidden" tabindex="-1" autocomplete="off"><button class="btn b-coral" type="submit">' + t('Call me back', 'დამირეკეთ') + '</button><div id="cbm"></div></form>' +
+      '<div class="share"><button class="btn sm b-ghost" type="button" id="cp">' + KG.icon('share') + t('Copy link', 'ბმულის კოპირება') + '</button>' +
+      '<a class="btn sm b-ghost" target="_blank" rel="noopener" href="https://wa.me/?text=' + encodeURIComponent(location.href) + '">WhatsApp</a>' +
+      '<a class="btn sm b-ghost" target="_blank" rel="noopener" href="https://www.facebook.com/sharer/sharer.php?u=' + encodeURIComponent(location.href) + '">Facebook</a>' +
+      '<button class="btn sm b-ghost" type="button" id="fv" aria-pressed="' + KG.isFav('o' + l.id) + '">' + KG.icon('heart') + t('Save', 'შენახვა') + '</button></div>' +
+      '<button class="btn sm b-red" type="button" id="rp">' + KG.icon('flag') + t('Report this listing', 'განცხადების გასაჩივრება') + '</button></div></aside></div>' +
+      '<dialog id="rd"><form method="dialog" id="rf" style="display:flex;flex-direction:column;gap:12px"><h3>' + t('What is wrong with this listing?', 'რა არის არასწორი?') + '</h3>' +
+      '<label class="f">' + t('Reason', 'მიზეზი') + '<select name="reason"><option>' + t('Already rented or sold', 'უკვე გაქირავებულია/გაყიდულია') + '</option><option>' + t('Wrong price or details', 'არასწორი ფასი ან ინფორმაცია') + '</option><option>' + t('Fake or spam', 'ყალბი ან სპამი') + '</option><option>' + t('Other', 'სხვა') + '</option></select></label>' +
+      '<label class="f">' + t('Details (optional)', 'დეტალები') + '<textarea name="more" style="min-height:80px"></textarea></label>' +
+      '<div style="display:flex;gap:8px"><button class="btn b-coral" value="send">' + t('Send report', 'გაგზავნა') + '</button><button class="btn b-ghost" value="cancel">' + t('Cancel', 'გაუქმება') + '</button></div></form></dialog>';
+    // gallery lightbox
+    var idx = 0;
+    function lb(i) {
+      idx = (i + photos.length) % photos.length;
+      var box = $('.lb') || document.body.appendChild(Object.assign(document.createElement('div'), {className: 'lb', innerHTML: '<img alt=""><button class="x" aria-label="Close">×</button><button class="pv" aria-label="Previous">‹</button><button class="nx" aria-label="Next">›</button>'}));
+      box.querySelector('img').src = KG.photo(photos[idx]);
+      box.querySelector('.x').onclick = function () { box.remove(); };
+      box.querySelector('.pv').onclick = function () { lb(idx - 1); };
+      box.querySelector('.nx').onclick = function () { lb(idx + 1); };
+    }
+    KG.$$('[data-i]').forEach(function (d) { d.onclick = function () { lb(+d.dataset.i); }; });
+    document.addEventListener('keydown', function (e) { if (!$('.lb')) return; if (e.key === 'Escape') $('.lb').remove(); if (e.key === 'ArrowRight') lb(idx + 1); if (e.key === 'ArrowLeft') lb(idx - 1); });
+    // mortgage
+    function calcRun() {
+      var dp = +$('#c-dp').value || 0, r = (+$('#c-r').value || 0) / 1200, n = (+$('#c-y').value || 1) * 12, P = l.price * (1 - dp / 100);
+      var m = r ? P * r / (1 - Math.pow(1 + r, -n)) : P / n;
+      $('#c-out').textContent = t('About ', 'დაახლოებით ') + KG.money(m, l.currency) + t(' a month', ' თვეში') + ' · ' + t('loan ', 'სესხი ') + KG.money(P, l.currency);
+    }
+    if (calc) { ['#c-dp', '#c-r', '#c-y'].forEach(function (s) { $(s).oninput = calcRun; }); calcRun(); }
+    // actions
+    $('#cp').onclick = function () { (navigator.clipboard ? navigator.clipboard.writeText(location.href) : Promise.reject()).then(function () { $('#cp').lastChild.textContent = t('Copied', 'დაკოპირდა'); }, function () {}); };
+    $('#fv').onclick = function () { $('#fv').setAttribute('aria-pressed', KG.toggleFav('o' + l.id)); };
+    $('#rp').onclick = function () { $('#rd').showModal(); };
+    $('#rd').addEventListener('close', function () {
+      if ($('#rd').returnValue !== 'send') return;
+      KG.api('/api/listings/' + l.id + '/report', {method: 'POST', json: {reason: $('#rf').reason.value + (($('#rf').more.value || '').trim() ? ': ' + $('#rf').more.value.trim() : '')}})
+        .then(function (r) { alert(r.ok ? t('Thank you — our team will check it.', 'გმადლობთ — შევამოწმებთ.') : r.error); });
+    });
+    $('#cb').onsubmit = function (e) {
+      e.preventDefault();
+      var f = e.target;
+      lead({type: 'Call back: listing #' + l.id, name: f.name.value, phone: f.phone.value, listing: location.href, website: f.website.value}).then(function (okk) {
+        $('#cbm').className = 'msg ' + (okk ? 'ok' : 'err');
+        $('#cbm').textContent = okk ? t('Thank you! We will call you soon.', 'გმადლობთ! მალე დაგირეკავთ.') : t('Could not send — please use WhatsApp.', 'ვერ გაიგზავნა — მოგვწერეთ WhatsApp-ზე.');
+        if (okk) f.reset();
+      });
+    };
+    KG.bindFavs($('#sim'));
+    KG.api('/api/listings?limit=6&exclude=' + l.id + '&deal=' + l.deal + '&type=' + l.type).then(function (r) {
+      var items = (r.ok ? r.listings : []).map(KG.fromOwner).slice(0, 3);
+      $('#sim').innerHTML = items.length ? items.map(KG.card).join('') : '<div class="empty">' + t('No similar owner listings yet. ', 'მსგავსი განცხადებები ჯერ არ არის. ') + '<a href="/search/?deal=' + l.deal + '" style="color:var(--blue)">' + t('Browse all', 'ყველა') + '</a></div>';
+    });
+  });
+})();
+</script>
+</body>
+</html>

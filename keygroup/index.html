@@ -128,7 +128,7 @@ nav.main{display:flex;justify-content:space-between;align-items:center;gap:20px;
 .plate .top{display:flex;gap:8px;position:relative}
 .plate .verified{background:#fff;color:var(--ink)}
 .plate .verified .ic{width:14px;height:14px;color:var(--teal)}
-.plate .dist{position:relative;font:800 28px/1.1 var(--display);letter-spacing:-.01em}
+.plate .dist{position:relative;font:800 28px/1.1 var(--display);letter-spacing:-.01em;text-shadow:0 2px 12px rgba(0,0,0,.45)}
 .plate .dist small{display:block;font:500 13px var(--body);opacity:.85;margin-top:4px;letter-spacing:0}
 .card .body{padding:20px 22px;display:flex;flex-direction:column;gap:14px;flex:1}
 .price{font:800 28px var(--display);letter-spacing:-.02em}
@@ -343,13 +343,14 @@ footer{background:var(--navy-deep);color:#fff;padding:96px 0 40px}
         <a href="#listings" data-t="nav_buy">Buy</a>
         <a href="#listings" data-t="nav_rent">Rent</a>
         <a href="#listings" data-t="nav_com">Commercial</a>
+        <a href="/search/" data-t="nav_search">Search</a>
         <a href="#map" data-t="nav_map">Map</a>
         <a href="#districts" data-t="nav_dist">Districts</a>
         <a href="#agents" data-t="nav_agents">Agents</a>
         <a href="#owners" data-t="nav_owners">Owners</a>
       </div>
       <div class="nav-actions">
-        <a class="btn btn-outline-gold" href="#owners"><svg class="ic" style="color:var(--gold)"><use href="#i-plus"/></svg><span data-t="list_prop">List your property</span></a>
+        <a class="btn btn-outline-gold" href="/account/"><svg class="ic" style="color:var(--gold)"><use href="#i-plus"/></svg><span data-t="list_prop">List your property</span></a>
         <a class="btn btn-wa" href="https://wa.me/995577114118" target="_blank" rel="noopener"><svg class="ic"><use href="#i-chat"/></svg><span>WhatsApp</span></a>
         <button class="menu-btn" type="button" aria-label="Menu" aria-expanded="false"><svg class="ic"><use href="#i-menu"/></svg></button>
       </div>
@@ -421,7 +422,7 @@ footer{background:var(--navy-deep);color:#fff;padding:96px 0 40px}
     </div>
     <div class="grid" id="grid" aria-live="polite"></div>
     <div class="count-note" id="count-note"></div>
-    <div class="showmore"><button class="btn btn-ghost" id="show-more" type="button" hidden><span data-t="show_more">Show more</span></button><a class="btn btn-ghost" id="more-wa" href="https://wa.me/995577114118" target="_blank" rel="noopener"><span data-t="more">Get the full list on WhatsApp</span><svg class="ic"><use href="#i-arrow"/></svg></a></div>
+    <div class="showmore"><button class="btn btn-ghost" id="show-more" type="button" hidden><span data-t="show_more">Show more</span></button><a class="btn btn-coral" href="/search/"><svg class="ic"><use href="#i-search"/></svg><span data-t="all_search">Search all listings</span></a><a class="btn btn-ghost" id="more-wa" href="https://wa.me/995577114118" target="_blank" rel="noopener"><span data-t="more">Get the full list on WhatsApp</span><svg class="ic"><use href="#i-arrow"/></svg></a></div>
   </div>
 </section>
 
@@ -478,6 +479,7 @@ footer{background:var(--navy-deep);color:#fff;padding:96px 0 40px}
           <li><span><svg class="ic"><use href="#i-check"/></svg></span><b data-t="o2">Listed on MyHome.ge and SS.ge under KEY GROUP</b></li>
           <li><span><svg class="ic"><use href="#i-check"/></svg></span><b data-t="o3">Regular updates on views and calls</b></li>
         </ul>
+        <a class="btn" style="background:var(--gold);color:var(--navy-deep);margin-top:26px" href="/account/"><svg class="ic"><use href="#i-plus"/></svg><span data-t="add_free">Add your listing — free</span></a>
       </div>
       <form class="vform" id="vform">
         <h3 data-t="v_h">Get a free valuation</h3>
@@ -623,7 +625,7 @@ footer{background:var(--navy-deep);color:#fff;padding:96px 0 40px}
   ];
   var AGENTS = [['Demetre','a_sales_didube','coral','blush'],['Nini','a_rent_sab','teal','mint'],['Giorgi','a_com','amber','lemon'],['Nika','a_rent_wh','blue','sky'],['Ana','a_rent','violet','lavender'],['Dato','a_rent','coral','cream'],['Zura','a_mix','lime','limebg'],['Amiko','a_mix','teal','sky']];
   var T = {
-    en:{address:'Richard Holbrooke St. 4, Tbilisi',nav_buy:'Buy',nav_rent:'Rent',nav_com:'Commercial',nav_map:'Map',nav_dist:'Districts',nav_agents:'Agents',nav_owners:'Owners',list_prop:'List your property',badge:'Tbilisi · Batumi',
+    en:{address:'Richard Holbrooke St. 4, Tbilisi',nav_buy:'Buy',nav_rent:'Rent',nav_com:'Commercial',nav_map:'Map',nav_search:'Search',add_free:'Add your listing — free',all_search:'Search all listings',owner_l:'Owner listing',nav_dist:'Districts',nav_agents:'Agents',nav_owners:'Owners',list_prop:'List your property',badge:'Tbilisi · Batumi',
       hero_h:'Find your place in<br><em>Tbilisi &amp; Batumi</em>',hero_p:'480+ apartments, houses and commercial spaces — with local agents who answer on WhatsApp in English, Georgian and Russian.',
       tab_rent:'Rent',tab_buy:'Buy',tab_com:'Commercial',tab_all:'All',f_loc:'Location',ph_loc:'Vake, Saburtalo, Batumi…',f_type:'Property type',opt_any:'Any type',opt_flat:'Apartment',opt_house:'House',opt_com:'Commercial',opt_land:'Land',f_budget:'Max budget, USD',ph_budget:'e.g. 1000',f_rooms:'Rooms',opt_any2:'Any',search:'Search',popular:'Popular:',
       st1:'Active listings',st2:'Local agents',st3:'We speak your language',st4b:'Same day',st4:'WhatsApp replies',
@@ -638,7 +640,7 @@ footer{background:var(--navy-deep);color:#fff;padding:96px 0 40px}
       a_e:'Our team',a_h:'Talk to a local expert',a_sales_didube:'Sales · Didube',a_rent_sab:'Rentals · Saburtalo',a_com:'Commercial',a_rent_wh:'Rentals · Warehouses',a_rent:'Rentals',a_mix:'Sales & rentals',call:'Call',
       pub_on:'Our listings are published on',fc_h:'Ready to find your next place?',fc_p:'Message us now — an agent replies today.',fc_wa:'WhatsApp us',f_about:'Real estate agency in Tbilisi and Batumi. Rent, buy, sell and commercial — in Georgian, English and Russian.',fh1:'Properties',fh2:'Company',fh3:'Contact',all_links:'All our links',
       wa_hello:'Hello KEY GROUP! ',v_phone:'Phone / WhatsApp',v_note2:'Your request goes straight to our team. We also open WhatsApp so you can chat right away.',sent:'Thank you! Your request is with our team — an agent will contact you soon.',senterr:'Could not send right now — please message us on WhatsApp.',cb_e:'Call back',cb_h:'Tell us what you need — we call you back',cb_p:'Leave your number and an agent calls you, usually within an hour during working time (Mon–Sat, 10:00–19:00).',cb_need:'I want to',cb_o1:'Rent a property',cb_o2:'Buy a property',cb_o3:'Rent or buy commercial space',cb_o4:'Sell or rent out my property',cb_msg:'Details (district, budget, rooms)',ph_cb:'Vake, up to $900, 2 rooms',cb_btn:'Request a call back',show_more:'Show more',showing:'Showing {n} of {t} listings',wa_listing:'I am interested in this property: ',wa_search:'I am looking for: ',wa_dist:'I am looking for a property in ',wa_val:'Please value my property. ',wa_agent:'I would like to talk to '},
-    ka:{address:'რიჩარდ ჰოლბრუკის ქ. 4, თბილისი',nav_buy:'ყიდვა',nav_rent:'ქირა',nav_com:'კომერციული',nav_map:'რუკა',nav_dist:'უბნები',nav_agents:'აგენტები',nav_owners:'მესაკუთრეებს',list_prop:'განათავსე ქონება',badge:'თბილისი · ბათუმი',
+    ka:{address:'რიჩარდ ჰოლბრუკის ქ. 4, თბილისი',nav_buy:'ყიდვა',nav_rent:'ქირა',nav_com:'კომერციული',nav_map:'რუკა',nav_search:'ძიება',add_free:'დაამატე განცხადება უფასოდ',all_search:'ყველა განცხადების ძიება',owner_l:'მესაკუთრის განცხადება',nav_dist:'უბნები',nav_agents:'აგენტები',nav_owners:'მესაკუთრეებს',list_prop:'განათავსე ქონება',badge:'თბილისი · ბათუმი',
       hero_h:'იპოვე შენი ადგილი<br><em>თბილისსა და ბათუმში</em>',hero_p:'480+ ბინა, სახლი და კომერციული ფართი — ადგილობრივი აგენტებით, რომლებიც WhatsApp-ზე ქართულად, ინგლისურად და რუსულად გპასუხობენ.',
       tab_rent:'ქირა',tab_buy:'ყიდვა',tab_com:'კომერციული',tab_all:'ყველა',f_loc:'მდებარეობა',ph_loc:'ვაკე, საბურთალო, ბათუმი…',f_type:'ქონების ტიპი',opt_any:'ნებისმიერი',opt_flat:'ბინა',opt_house:'სახლი',opt_com:'კომერციული',opt_land:'მიწა',f_budget:'მაქს. ბიუჯეტი, USD',ph_budget:'მაგ. 1000',f_rooms:'ოთახები',opt_any2:'ნებისმიერი',search:'ძიება',popular:'პოპულარული:',
       st1:'აქტიური განცხადება',st2:'ადგილობრივი აგენტი',st3:'ვსაუბრობთ თქვენს ენაზე',st4b:'იმავე დღეს',st4:'პასუხი WhatsApp-ზე',
@@ -653,7 +655,7 @@ footer{background:var(--navy-deep);color:#fff;padding:96px 0 40px}
       a_e:'ჩვენი გუნდი',a_h:'დაელაპარაკე ადგილობრივ ექსპერტს',a_sales_didube:'გაყიდვები · დიდუბე',a_rent_sab:'ქირა · საბურთალო',a_com:'კომერციული',a_rent_wh:'ქირა · საწყობები',a_rent:'ქირა',a_mix:'გაყიდვა და ქირა',call:'ზარი',
       pub_on:'ჩვენი განცხადებები ქვეყნდება',fc_h:'მზად ხარ ახალი ადგილის საპოვნელად?',fc_p:'მოგვწერე ახლავე — აგენტი დღესვე გიპასუხებს.',fc_wa:'მოგვწერე WhatsApp-ზე',f_about:'უძრავი ქონების სააგენტო თბილისსა და ბათუმში. ქირა, ყიდვა, გაყიდვა და კომერციული.',fh1:'ქონება',fh2:'კომპანია',fh3:'კონტაქტი',all_links:'ყველა ბმული',
       wa_hello:'გამარჯობა KEY GROUP! ',v_phone:'ტელეფონი / WhatsApp',v_note2:'მოთხოვნა პირდაპირ ჩვენს გუნდს მიდის. ასევე გაიხსნება WhatsApp სასაუბროდ.',sent:'გმადლობთ! მოთხოვნა მიღებულია — აგენტი მალე დაგიკავშირდებათ.',senterr:'ახლა ვერ გაიგზავნა — მოგვწერეთ WhatsApp-ზე.',cb_e:'უკუზარი',cb_h:'გვითხარით რა გჭირდებათ — დაგირეკავთ',cb_p:'დატოვეთ ნომერი და აგენტი დაგირეკავთ, სამუშაო საათებში ჩვეულებრივ ერთ საათში (ორშ–შაბ, 10:00–19:00).',cb_need:'მსურს',cb_o1:'ქონების ქირაობა',cb_o2:'ქონების ყიდვა',cb_o3:'კომერციული ფართი',cb_o4:'ჩემი ქონების გაყიდვა ან გაქირავება',cb_msg:'დეტალები (უბანი, ბიუჯეტი, ოთახები)',ph_cb:'ვაკე, $900-მდე, 2 ოთახი',cb_btn:'დამირეკეთ',show_more:'მეტის ნახვა',showing:'ნაჩვენებია {n} / {t} განცხადება',wa_listing:'მაინტერესებს ეს ქონება: ',wa_search:'ვეძებ: ',wa_dist:'ვეძებ ქონებას უბანში: ',wa_val:'გთხოვთ შეაფასოთ ჩემი ქონება. ',wa_agent:'მსურს დავუკავშირდე: '},
-    ru:{address:'ул. Ричарда Холбрука 4, Тбилиси',nav_buy:'Купить',nav_rent:'Аренда',nav_com:'Коммерция',nav_map:'Карта',nav_dist:'Районы',nav_agents:'Агенты',nav_owners:'Владельцам',list_prop:'Разместить объект',badge:'Тбилиси · Батуми',
+    ru:{address:'ул. Ричарда Холбрука 4, Тбилиси',nav_buy:'Купить',nav_rent:'Аренда',nav_com:'Коммерция',nav_map:'Карта',nav_search:'Поиск',add_free:'Добавить объявление бесплатно',all_search:'Искать все объявления',owner_l:'Объявление владельца',nav_dist:'Районы',nav_agents:'Агенты',nav_owners:'Владельцам',list_prop:'Разместить объект',badge:'Тбилиси · Батуми',
       hero_h:'Найдите своё место<br><em>в Тбилиси и Батуми</em>',hero_p:'480+ квартир, домов и коммерческих помещений — с местными агентами, которые отвечают в WhatsApp на русском, английском и грузинском.',
       tab_rent:'Аренда',tab_buy:'Купить',tab_com:'Коммерция',tab_all:'Все',f_loc:'Район',ph_loc:'Ваке, Сабуртало, Батуми…',f_type:'Тип объекта',opt_any:'Любой',opt_flat:'Квартира',opt_house:'Дом',opt_com:'Коммерция',opt_land:'Земля',f_budget:'Макс. бюджет, USD',ph_budget:'напр. 1000',f_rooms:'Комнаты',opt_any2:'Любое',search:'Найти',popular:'Популярное:',
       st1:'активных объявлений',st2:'местных агентов',st3:'Говорим на вашем языке',st4b:'В тот же день',st4:'ответ в WhatsApp',
@@ -696,16 +698,18 @@ footer{background:var(--navy-deep);color:#fff;padding:96px 0 40px}
     var specs = [];
     if (l.rooms) specs.push('<span><svg class="ic" style="color:' + c[0] + '"><use href="#i-bed"/></svg>' + l.rooms + ' ' + esc(t.rooms) + '</span>');
     if (l.area) specs.push('<span><svg class="ic" style="color:' + c[0] + '"><use href="#i-area"/></svg>' + l.area + ' ' + esc(t.m2) + '</span>');
-    specs.push('<span>' + esc(t.photos) + '</span>');
+    if (!l.photo) specs.push('<span>' + esc(t.photos) + '</span>');
     var label = k === 'com' ? t.com + ' · ' + (l.deal === 'Rent' ? t.rent : t.sale) : t[k];
     var title = l.cat === 'Commercial' ? t.opt_com : l.cat === 'House' ? t.opt_house : l.cat === 'Land' ? t.opt_land : !l.rooms ? t.opt_flat : (l.rooms + '-' + (lang === 'en' ? 'room apartment' : lang === 'ka' ? 'ოთახიანი ბინა' : 'комн. квартира'));
-    return '<article class="card"><div class="plate" style="background:linear-gradient(135deg,' + c[1] + ',' + c[2] + ')">' +
-      '<svg class="ic big" aria-hidden="true"><use href="#' + ICON[k] + '"/></svg>' +
-      '<div class="top"><span class="pill" style="background:' + c[0] + ';color:#fff">' + esc(label) + '</span><span class="pill verified"><svg class="ic"><use href="#i-check"/></svg>' + esc(t.verified) + '</span></div>' +
+    var plateBg = l.photo ? 'background:#0D2847 url(' + l.photo + ') center/cover' : 'background:linear-gradient(135deg,' + c[1] + ',' + c[2] + ')';
+    var tierB = l.tier === 'super' ? '<span class="pill" style="background:linear-gradient(90deg,#F45D48,#D4A853);color:#fff">★ Super VIP</span>' : l.tier === 'vip' ? '<span class="pill" style="background:var(--violet);color:#fff">★ VIP</span>' : '';
+    return '<article class="card"><div class="plate" style="' + plateBg + '">' +
+      (l.photo ? '' : '<svg class="ic big" aria-hidden="true"><use href="#' + ICON[k] + '"/></svg>') +
+      '<div class="top">' + tierB + '<span class="pill" style="background:' + c[0] + ';color:#fff">' + esc(label) + '</span>' + (l.owner ? '' : '<span class="pill verified"><svg class="ic"><use href="#i-check"/></svg>' + esc(t.verified) + '</span>') + '</div>' +
       '<div class="dist">' + esc(dname(l)) + '<small>' + esc(l.city && !/თბილ|tbilisi/i.test(l.city) ? l.city : (lang === 'ka' ? 'თბილისი' : lang === 'ru' ? 'Тбилиси' : 'Tbilisi')) + '</small></div></div>' +
       '<div class="body"><div class="price">' + money(l.price, l.cur) + (l.deal === 'Rent' ? ' <small>' + esc(t.mo) + '</small>' : '') + '</div>' +
       '<div><h3 class="ttl">' + esc(title) + '</h3><div class="loc"><svg class="ic"><use href="#i-pin"/></svg>' + esc(dname(l) + ' · ' + addr(l)) + '</div></div>' +
-      '<div class="specs">' + specs.join('') + '</div>' +
+      '<div class="specs">' + specs.join('') + (l.owner ? '<span>' + esc(t.owner_l) + '</span>' : '') + '</div>' +
       '<div class="row"><a class="more" href="' + esc(l.link || wa(t.wa_listing + dname(l) + ', ' + addr(l) + ', ' + money(l.price, l.cur))) + '" target="_blank" rel="noopener">' + esc(l.link ? t.view : t.ask_d) + '<svg class="ic"><use href="#i-arrow"/></svg></a>' +
       '<div class="acts"><a class="sq" style="background:var(--sky);color:var(--blue)" href="tel:+995577114118" aria-label="' + esc(t.call) + '"><svg class="ic"><use href="#i-phone"/></svg></a>' +
       '<a class="sq wa-click" data-link="' + esc(l.link || (dname(l) + ', ' + addr(l))) + '" style="background:var(--green);color:#fff" href="' + esc(wa(t.wa_listing + (l.link || dname(l) + ', ' + addr(l) + ', ' + money(l.price, l.cur)))) + '" target="_blank" rel="noopener" aria-label="WhatsApp"><svg class="ic"><use href="#i-chat"/></svg></a></div></div></div></article>';
@@ -805,10 +809,22 @@ footer{background:var(--navy-deep);color:#fff;padding:96px 0 40px}
     if (a) sendLead({type: 'WhatsApp click', listing: a.dataset.link});
   });
   $('#show-more').addEventListener('click', function () { shown += PAGE; renderGrid(); });
+  function loadOwner() {
+    return fetch('/api/listings?limit=40', {credentials: 'same-origin'}).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      return (j && j.listings || []).map(function (r) {
+        var di = distInfo(r.district) || [r.district || r.city, -1, -1];
+        return {cat: r.type === 'commercial' ? 'Commercial' : r.type === 'house' ? 'House' : r.type === 'land' ? 'Land' : 'Flat',
+          deal: r.deal === 'sale' ? 'Sale' : 'Rent', d: di[0] || r.district || '', dka: r.district || '', a: r.address || '', aka: r.address || '',
+          rooms: r.rooms || 0, area: r.area || 0, price: r.price, cur: r.currency, link: '/p/?id=' + r.id, city: r.city,
+          photo: r.photos && r.photos[0] ? '/uploads/t_' + r.photos[0] : '', tier: r.tier, owner: true, x: -1, y: -1};
+      });
+    }).catch(function () { return []; });
+  }
+  var OWNER = [];
   function loadLive() {
     fetch('/listings.json?v=' + Math.floor(Date.now() / 600000), {cache: 'no-store'}).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
       if (!j || !j.listings || j.listings.length < 5) return;
-      LISTINGS = j.listings.filter(function (r) { return r.price > 0; }).map(fromFeed);
+      LISTINGS = OWNER.concat(j.listings.filter(function (r) { return r.price > 0; }).map(fromFeed));
       $('#live-count').textContent = LISTINGS.length;
       renderGrid(); renderMap();
     }).catch(function () {});
@@ -817,7 +833,11 @@ footer{background:var(--navy-deep);color:#fff;padding:96px 0 40px}
   mb.addEventListener('click', function () { var o = nav.classList.toggle('open'); mb.setAttribute('aria-expanded', o ? 'true' : 'false'); });
   $$('.links a').forEach(function (a) { a.addEventListener('click', function () { nav.classList.remove('open'); mb.setAttribute('aria-expanded', 'false'); }); });
   setLang(lang);
-  loadLive();
+  loadOwner().then(function (o) {
+    OWNER = o.sort(function (a, b) { return (b.tier === 'super') - (a.tier === 'super') || (b.tier === 'vip') - (a.tier === 'vip'); });
+    if (OWNER.length) { LISTINGS = OWNER.concat(LISTINGS.filter(function (l) { return !l.owner; })); renderGrid(); }
+    loadLive();
+  });
 })();
 </script>
 </body>

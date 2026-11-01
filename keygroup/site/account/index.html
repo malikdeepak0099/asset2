@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="ka">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My listings — KEY GROUP Real Estate</title>
+<meta name="description" content="Add your apartment, house or commercial property for sale or rent on keygroup.ge.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Noto+Sans+Georgian:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/assets/portal.css">
+<style>
+.pg{padding:28px 0 64px}
+.auth{max-width:460px;margin:20px auto;padding:28px;display:flex;flex-direction:column;gap:14px}
+.dash-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
+.stats .card{padding:16px 18px}.stats b{display:block;font:800 26px var(--display)}.stats span{font-size:13px;color:var(--muted)}
+.row{display:grid;grid-template-columns:120px 1fr auto;gap:16px;padding:14px;align-items:center;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:0}
+.row .th{width:120px;height:86px;border-radius:12px;background:#DCE3EA center/cover}
+.row .acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.formcard{padding:24px;display:flex;flex-direction:column;gap:16px}
+.photos{display:flex;gap:10px;flex-wrap:wrap}
+.photos .p{width:120px;height:90px;border-radius:12px;background:#DCE3EA center/cover;position:relative}
+.photos .p button{position:absolute;top:4px;right:4px;width:28px;height:28px;border-radius:50%;border:0;background:rgba(8,26,48,.8);color:#fff;cursor:pointer}
+.photos .p .main{position:absolute;left:4px;bottom:4px;font:700 10px var(--display);background:var(--gold);color:var(--navy-deep);border-radius:6px;padding:2px 6px}
+.drop{border:2px dashed var(--line);border-radius:14px;padding:18px;text-align:center;color:var(--muted);cursor:pointer;background:#fff}
+.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.plan{border:2px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:8px;cursor:pointer;background:#fff;text-align:left}
+.plan[aria-pressed="true"]{border-color:var(--coral);background:var(--blush)}
+.plan b{font:800 22px var(--display)}
+dialog{border:0;border-radius:20px;padding:24px;max-width:680px;width:94vw}
+dialog::backdrop{background:rgba(5,12,24,.5)}
+@media (max-width:760px){.stats{grid-template-columns:1fr 1fr}.row{grid-template-columns:80px 1fr}.row .th{width:80px;height:64px}.row .acts{grid-column:1/-1;justify-content:flex-start}.plans{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main class="wrap pg" id="app"><div class="empty">…</div></main>
+<dialog id="promo"></dialog>
+<script src="/assets/portal.js"></script>
+<script>
+(function () {
+  var t = KG.t, esc = KG.esc, $ = KG.$, $$ = KG.$$, api = KG.api;
+  KG.header('account');
+  document.documentElement.lang = KG.lang === 'en' ? 'en' : 'ka';
+  var ME = null, SETTINGS = null, DATA = {listings: [], orders: []};
+  var STATUS = function (s) { return {pending: t('Waiting for approval', 'მოლოდინში'), active: t('Live', 'აქტიური'), rejected: t('Rejected', 'უარყოფილი'), expired: t('Expired', 'ვადაგასული'), paused: t('Paused', 'შეჩერებული')}[s] || s; };
+
+  function boot() {
+    api('/api/me').then(function (j) { ME = j.user; SETTINGS = j.settings; ME ? dash() : auth('login'); });
+  }
+
+  // ---------------- login / register
+  function auth(mode) {
+    $('#app').innerHTML = '<form class="card auth" id="af"><h1>' + (mode === 'login' ? t('Log in', 'შესვლა') : t('Create account', 'რეგისტრაცია')) + '</h1>' +
+      '<p class="muted" style="margin:0">' + t('Add your apartment, house or commercial space for sale or rent. Free listing — VIP if you want more views.', 'დაამატე შენი ბინა, სახლი ან კომერციული ფართი გასაყიდად ან ქირით. უფასოდ — ან VIP მეტი ნახვისთვის.') + '</p>' +
+      '<div class="seg"><button type="button" data-m="login" aria-pressed="' + (mode === 'login') + '">' + t('Log in', 'შესვლა') + '</button><button type="button" data-m="register" aria-pressed="' + (mode === 'register') + '">' + t('Register', 'რეგისტრაცია') + '</button></div>' +
+      (mode === 'register' ? '<label class="f">' + t('Your name', 'სახელი') + '<input name="name" required autocomplete="name"></label>' : '') +
+      '<label class="f">' + t('Phone number', 'ტელეფონის ნომერი') + '<input name="phone" type="tel" required autocomplete="tel" placeholder="5__ __ __ __"></label>' +
+      '<label class="f">' + t('Password', 'პაროლი') + '<input name="password" type="password" required minlength="6" autocomplete="' + (mode === 'login' ? 'current-password' : 'new-password') + '"></label>' +
+      '<button class="btn b-coral" type="submit">' + (mode === 'login' ? t('Log in', 'შესვლა') : t('Create account', 'ანგარიშის შექმნა')) + '</button><div id="am"></div>' +
+      (mode === 'login' ? '<p class="muted" style="font-size:13px;margin:0">' + t('Forgot your password? WhatsApp us at +995 577 114 118 and we will reset it.', 'დაგავიწყდა პაროლი? მოგვწერე WhatsApp-ზე +995 577 114 118.') + '</p>' : '') + '</form>';
+    $$('[data-m]').forEach(function (b) { b.onclick = function () { auth(b.dataset.m); }; });
+    $('#af').onsubmit = function (e) {
+      e.preventDefault();
+      var f = e.target, data = {phone: f.phone.value, password: f.password.value};
+      if (f.name) data.name = f.name.value;
+      api('/api/' + mode, {method: 'POST', json: data}).then(function (j) {
+        if (!j.ok) { $('#am').className = 'msg err'; $('#am').textContent = j.error; return; }
+        ME = j.user; dash();
+      });
+    };
+  }
+
+  // ---------------- dashboard
+  function dash() {
+    api('/api/my/listings').then(function (j) {
+      if (!j.ok) { auth('login'); return; }
+      DATA = j;
+      var L = j.listings, views = L.reduce(function (a, l) { return a + (l.views || 0); }, 0);
+      var cnt = function (s) { return L.filter(function (l) { return l.status === s; }).length; };
+      var waiting = j.orders.filter(function (o) { return o.status === 'awaiting_payment'; });
+      $('#app').innerHTML = '<div class="dash-head"><div><h1>' + t('My listings', 'ჩემი განცხადებები') + '</h1><span class="muted">' + esc(ME.name) + ' · ' + esc(ME.phone) + '</span></div>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap">' + (ME.role === 'admin' ? '<a class="btn b-navy" href="/admin/">Admin panel</a>' : '') +
+        '<button class="btn b-coral" id="add">' + KG.icon('plus') + t('Add listing', 'განცხადების დამატება') + '</button><button class="btn b-ghost" id="out">' + t('Log out', 'გასვლა') + '</button></div></div>' +
+        '<div class="stats"><div class="card"><b>' + cnt('active') + '</b><span>' + t('Live', 'აქტიური') + '</span></div><div class="card"><b>' + cnt('pending') + '</b><span>' + t('Waiting for approval', 'მოლოდინში') + '</span></div>' +
+        '<div class="card"><b>' + views + '</b><span>' + t('Total views', 'ნახვები სულ') + '</span></div><div class="card"><b>' + L.filter(function (l) { return l.tier !== 'free'; }).length + '</b><span>VIP / Super VIP</span></div></div>' +
+        (waiting.length ? '<div class="msg info" style="margin-bottom:16px">' + t('Order waiting for payment: ', 'გადასახდელი შეკვეთა: ') + waiting.map(function (o) { return '#' + o.id + ' ' + esc(SETTINGS.plans[o.plan].name) + ' — ' + o.amount + ' ' + esc(o.currency); }).join(', ') + '<br>' + esc(SETTINGS.payment_info) + '</div>' : '') +
+        '<div class="card" id="list">' + (L.length ? L.map(row).join('') : '<div class="empty" style="border:0">' + t('No listings yet. Add your first property — it is free.', 'განცხადებები ჯერ არ გაქვს. დაამატე პირველი — უფასოა.') + '</div>') + '</div>';
+      $('#add').onclick = function () { form(null); };
+      $('#out').onclick = function () { api('/api/logout', {method: 'POST'}).then(function () { ME = null; auth('login'); }); };
+      $$('[data-act]').forEach(function (b) { b.onclick = function () { act(b.dataset.act, +b.dataset.id); }; });
+    });
+  }
+  function row(l) {
+    var ph = (l.photos || [])[0];
+    var tierB = l.tier === 'super' ? '<span class="pill t-super">Super VIP</span>' : l.tier === 'vip' ? '<span class="pill t-vip">VIP</span>' : '';
+    var until = l.tier === 'super' ? l.super_until : l.tier === 'vip' ? l.vip_until : l.expires;
+    return '<div class="row"><div class="th" style="' + (ph ? 'background-image:url(' + KG.photo(ph, true) + ')' : '') + '"></div><div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px"><span class="pill st-' + esc(l.status) + '">' + esc(STATUS(l.status)) + '</span>' + tierB + '</div>' +
+      '<b>' + esc(l.title || KG.TYPE(l.type) + ' · ' + (l.district || '')) + '</b><div class="muted" style="font-size:13px">' + esc(KG.DEAL(l.deal)) + ' · ' + KG.money(l.price, l.currency) + ' · ' + (l.photos || []).length + ' ' + t('photos', 'ფოტო') + ' · ' + KG.icon('eye') + ' ' + (l.views || 0) +
+      (until && l.status === 'active' ? ' · ' + t('until ', 'ვადა: ') + new Date(until * 1000).toLocaleDateString() : '') + '</div>' +
+      (l.status === 'rejected' && l.reject_reason ? '<div class="msg err" style="margin-top:6px;padding:8px 10px">' + esc(l.reject_reason) + '</div>' : '') + '</div>' +
+      '<div class="acts">' + (l.status === 'active' ? '<a class="btn sm b-ghost" href="/p/?id=' + l.id + '" target="_blank">' + t('View', 'ნახვა') + '</a>' : '') +
+      '<button class="btn sm b-ghost" data-act="edit" data-id="' + l.id + '">' + KG.icon('edit') + t('Edit', 'რედაქტირება') + '</button>' +
+      '<button class="btn sm b-gold" data-act="promo" data-id="' + l.id + '">' + KG.icon('rocket') + t('Promote', 'VIP / Boost') + '</button>' +
+      '<button class="btn sm b-red" data-act="del" data-id="' + l.id + '" aria-label="' + t('Delete', 'წაშლა') + '">' + KG.icon('trash') + '</button></div></div>';
+  }
+  function act(a, id) {
+    var l = DATA.listings.filter(function (x) { return x.id === id; })[0];
+    if (a === 'edit') form(l);
+    if (a === 'promo') promo(l);
+    if (a === 'del' && confirm(t('Delete this listing?', 'წავშალო განცხადება?'))) api('/api/my/listings/' + id, {method: 'DELETE'}).then(dash);
+  }
+
+  // ---------------- add / edit
+  function sel(name, opts, val) { return '<select name="' + name + '">' + opts.map(function (o) { return '<option value="' + o[0] + '"' + (String(val) === String(o[0]) ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('') + '</select>'; }
+  function form(l) {
+    l = l || {deal: 'rent', type: 'flat', currency: 'USD', city: 'Tbilisi', contact_name: ME.name, contact_phone: ME.phone, photos: []};
+    var v = function (k) { return esc(l[k] == null || l[k] === 0 ? '' : l[k]); };
+    $('#app').innerHTML = '<form class="card formcard" id="lf"><div class="dash-head" style="margin:0"><h1>' + (l.id ? t('Edit listing', 'რედაქტირება') + ' #' + l.id : t('New listing', 'ახალი განცხადება')) + '</h1><button type="button" class="btn b-ghost" id="back">' + t('Back', 'უკან') + '</button></div>' +
+      '<div class="grid3"><label class="f">' + t('Deal', 'გარიგება') + sel('deal', [['rent', KG.DEAL('rent')], ['sale', KG.DEAL('sale')], ['daily', KG.DEAL('daily')]], l.deal) + '</label>' +
+      '<label class="f">' + t('Property type', 'ქონების ტიპი') + sel('type', [['flat', KG.TYPE('flat')], ['house', KG.TYPE('house')], ['commercial', KG.TYPE('commercial')], ['land', KG.TYPE('land')], ['hotel', KG.TYPE('hotel')]], l.type) + '</label>' +
+      '<label class="f">' + t('City', 'ქალაქი') + sel('city', [['Tbilisi', t('Tbilisi', 'თბილისი')], ['Batumi', t('Batumi', 'ბათუმი')], ['Kutaisi', t('Kutaisi', 'ქუთაისი')], ['Other', t('Other', 'სხვა')]], l.city) + '</label></div>' +
+      '<div class="grid2"><label class="f">' + t('District', 'უბანი') + '<input name="district" value="' + v('district') + '" placeholder="' + t('Vake, Saburtalo…', 'ვაკე, საბურთალო…') + '" required></label>' +
+      '<label class="f">' + t('Street and number', 'ქუჩა და ნომერი') + '<input name="address" value="' + v('address') + '"></label></div>' +
+      '<div class="grid4"><label class="f">' + t('Rooms', 'ოთახები') + '<input name="rooms" type="number" min="0" value="' + v('rooms') + '"></label><label class="f">' + t('Bedrooms', 'საძინებელი') + '<input name="bedrooms" type="number" min="0" value="' + v('bedrooms') + '"></label>' +
+      '<label class="f">' + t('Area, m²', 'ფართი, მ²') + '<input name="area" type="number" min="0" step="0.1" value="' + v('area') + '"></label><label class="f">' + t('Floor / of', 'სართული / სულ') + '<span style="display:flex;gap:6px"><input name="floor" value="' + v('floor') + '" style="width:50%"><input name="total_floors" value="' + v('total_floors') + '" style="width:50%"></span></label></div>' +
+      '<div class="grid3"><label class="f">' + t('Price', 'ფასი') + '<input name="price" type="number" min="0" value="' + v('price') + '" required></label><label class="f">' + t('Currency', 'ვალუტა') + sel('currency', [['USD', '$ USD'], ['GEL', '₾ GEL'], ['EUR', '€ EUR']], l.currency) + '</label><span></span></div>' +
+      '<label class="f">' + t('Title (optional)', 'სათაური (არასავალდებულო)') + '<input name="title" maxlength="140" value="' + v('title') + '" placeholder="' + t('Renovated 3-room apartment near Vake Park', 'გარემონტებული 3 ოთახიანი ბინა ვაკის პარკთან') + '"></label>' +
+      '<label class="f">' + t('Description', 'აღწერა') + '<textarea name="description" maxlength="5000">' + v('description') + '</textarea></label>' +
+      '<div class="grid2"><label class="f">' + t('Contact name', 'საკონტაქტო პირი') + '<input name="contact_name" value="' + v('contact_name') + '"></label><label class="f">' + t('Contact phone', 'საკონტაქტო ტელეფონი') + '<input name="contact_phone" type="tel" value="' + v('contact_phone') + '" required></label></div>' +
+      '<div><b>' + t('Photos', 'ფოტოები') + '</b> <span class="muted" style="font-size:13px">' + t('up to 15, the first one is the main photo', 'მაქს. 15, პირველი მთავარია') + '</span>' +
+      '<div class="photos" id="phs" style="margin-top:10px"></div>' +
+      '<label class="drop" style="display:block;margin-top:10px">' + KG.icon('image') + ' ' + (l.id ? t('Add photos', 'ფოტოების დამატება') : t('Photos can be added after saving', 'ფოტოებს შენახვის შემდეგ დაამატებ')) + '<input type="file" id="pf" accept="image/*" multiple class="hidden"' + (l.id ? '' : ' disabled') + '></label></div>' +
+      '<p class="muted" style="font-size:13px;margin:0">' + t('Every new or edited listing is checked by KEY GROUP before it goes live (usually within a few hours).', 'ყველა ახალი ან შეცვლილი განცხადება მოწმდება KEY GROUP-ის მიერ (ჩვეულებრივ რამდენიმე საათში).') + '</p>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn b-coral" type="submit">' + (l.id ? t('Save changes', 'შენახვა') : t('Save and add photos', 'შენახვა და ფოტოები')) + '</button></div><div id="lm"></div></form>';
+    $('#back').onclick = dash;
+    function drawPhotos() {
+      $('#phs').innerHTML = (l.photos || []).map(function (p, i) { return '<div class="p" style="background-image:url(' + KG.photo(p, true) + ')">' + (i === 0 ? '<span class="main">' + t('MAIN', 'მთავარი') + '</span>' : '<button type="button" data-first="' + esc(p) + '" style="left:4px;right:auto" title="' + t('Make main', 'მთავარი') + '">★</button>') + '<button type="button" data-rm="' + esc(p) + '" aria-label="' + t('Remove', 'წაშლა') + '">×</button></div>'; }).join('');
+      $$('[data-rm]').forEach(function (b) { b.onclick = function () { api('/api/my/listings/' + l.id + '/photos?name=' + encodeURIComponent(b.dataset.rm), {method: 'DELETE'}).then(function (j) { if (j.ok) { l.photos = j.photos; drawPhotos(); } }); }; });
+      $$('[data-first]').forEach(function (b) { b.onclick = function () { api('/api/my/listings/' + l.id + '/photos', {method: 'PUT', json: {photos: [b.dataset.first]}}).then(function (j) { if (j.ok) { l.photos = j.photos; drawPhotos(); } }); }; });
+    }
+    drawPhotos();
+    $('#pf').onchange = function () {
+      var fd = new FormData(); Array.prototype.forEach.call($('#pf').files, function (f) { fd.append('photos', f); });
+      $('#lm').className = 'msg info'; $('#lm').textContent = t('Uploading…', 'იტვირთება…');
+      api('/api/my/listings/' + l.id + '/photos', {method: 'POST', form: fd}).then(function (j) {
+        $('#lm').className = 'msg ' + (j.ok ? 'ok' : 'err'); $('#lm').textContent = j.ok ? t('Photos uploaded', 'ფოტოები აიტვირთა') : j.error;
+        if (j.ok) { l.photos = j.photos; drawPhotos(); }
+        $('#pf').value = '';
+      });
+    };
+    $('#lf').onsubmit = function (e) {
+      e.preventDefault();
+      var data = {}; Array.prototype.forEach.call(e.target.elements, function (el) { if (el.name) data[el.name] = el.value; });
+      api(l.id ? '/api/my/listings/' + l.id : '/api/my/listings', {method: l.id ? 'PUT' : 'POST', json: data}).then(function (j) {
+        if (!j.ok) { $('#lm').className = 'msg err'; $('#lm').textContent = j.error; return; }
+        if (!l.id) { l.id = j.id; l.status = 'pending'; Object.assign(l, data); form(l); $('#lm').className = 'msg ok'; $('#lm').textContent = t('Saved! Now add photos, then go back to your listings.', 'შენახულია! ახლა დაამატე ფოტოები.'); return; }
+        $('#lm').className = 'msg ok'; $('#lm').textContent = t('Saved. It will be live again after a quick check.', 'შენახულია. შემოწმების შემდეგ გამოქვეყნდება.');
+      });
+    };
+  }
+
+  // ---------------- promote (VIP / Super VIP / Boost)
+  function promo(l) {
+    var P = SETTINGS.plans, cur = SETTINGS.currency === 'GEL' ? '₾' : SETTINGS.currency, choice = 'vip';
+    var d = $('#promo');
+    d.innerHTML = '<div style="display:flex;flex-direction:column;gap:14px"><h2>' + t('Get more views', 'მეტი ნახვა') + '</h2><p class="muted" style="margin:0">' + esc(l.title || KG.TYPE(l.type) + ' · ' + (l.district || '')) + '</p>' +
+      '<div class="plans">' + [['super', t('Top of the list and the home page, with the Super VIP badge', 'სიის თავში და მთავარ გვერდზე, Super VIP ნიშნით')], ['vip', t('Above free listings, with the VIP badge', 'უფასო განცხადებების ზემოთ, VIP ნიშნით')], ['boost', t('Moves your listing to the top once, like new', 'ერთხელ აიწევს სიის თავში, როგორც ახალი')]].map(function (p) {
+        var c = P[p[0]];
+        return '<button type="button" class="plan" data-p="' + p[0] + '" aria-pressed="' + (p[0] === choice) + '"><span class="pill ' + (p[0] === 'super' ? 't-super' : p[0] === 'vip' ? 't-vip' : 'st-pending') + '">' + esc(c.name) + '</span><b>' + cur + c.price + '</b><span class="muted" style="font-size:13px">' + (c.days ? c.days + ' ' + t('days', 'დღე') + ' · ' : '') + esc(p[1]) + '</span></button>';
+      }).join('') + '</div>' +
+      '<div class="msg info">' + esc(SETTINGS.payment_info) + '</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn b-coral" id="ord">' + t('Order', 'შეკვეთა') + '</button><button class="btn b-ghost" id="cl">' + t('Close', 'დახურვა') + '</button></div><div id="om"></div></div>';
+    d.showModal();
+    $$('.plan', d).forEach(function (b) { b.onclick = function () { choice = b.dataset.p; $$('.plan', d).forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); }); }; });
+    $('#cl').onclick = function () { d.close(); dash(); };
+    $('#ord').onclick = function () {
+      api('/api/my/listings/' + l.id + '/order', {method: 'POST', json: {plan: choice}}).then(function (j) {
+        if (!j.ok) { $('#om').className = 'msg err'; $('#om').textContent = j.error; return; }
+        $('#ord').disabled = true;
+        $('#om').className = 'msg ok';
+        $('#om').innerHTML = t('Order #', 'შეკვეთა #') + j.order.id + ' — ' + cur + j.order.amount + '. ' + t('Write the order number in your payment comment. The plan starts as soon as we receive the payment.', 'გადახდისას მიუთითე შეკვეთის ნომერი. პაკეტი ჩაირთვება გადახდის მიღებისთანავე.') +
+          ' <a class="btn sm b-wa" target="_blank" rel="noopener" href="https://wa.me/995577114118?text=' + encodeURIComponent('Order #' + j.order.id + ' (' + j.order.plan + ') listing #' + l.id) + '">WhatsApp</a>';
+      });
+    };
+  }
+  boot();
+})();
+</script>
+</body>
+</html>

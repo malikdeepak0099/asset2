@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ka">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Search properties — KEY GROUP Real Estate</title>
+<meta name="description" content="Search apartments, houses and commercial property for rent and sale in Tbilisi and Batumi — KEY GROUP and owner listings.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Noto+Sans+Georgian:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/assets/portal.css">
+<style>
+.layout{display:grid;grid-template-columns:300px 1fr;gap:28px;align-items:start;padding:28px 0 64px}
+.filters{position:sticky;top:16px;padding:20px;display:flex;flex-direction:column;gap:14px}
+.bar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+.more{display:flex;justify-content:center;margin-top:28px}
+@media (max-width:900px){.layout{grid-template-columns:1fr}.filters{position:static}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="layout">
+    <form class="card filters" id="f" role="search">
+      <h3 id="ftitle">ფილტრები</h3>
+      <div class="seg" role="group" aria-label="Deal">
+        <button type="button" data-deal="" aria-pressed="true" id="d-all">ყველა</button>
+        <button type="button" data-deal="rent" aria-pressed="false" id="d-rent">ქირა</button>
+        <button type="button" data-deal="sale" aria-pressed="false" id="d-sale">იყიდება</button>
+      </div>
+      <label class="f"><span id="l-type">ტიპი</span><select name="type"><option value=""></option><option value="flat"></option><option value="house"></option><option value="commercial"></option><option value="land"></option></select></label>
+      <label class="f"><span id="l-dist">უბანი / მისამართი</span><input name="district" placeholder="ვაკე, Saburtalo…"></label>
+      <div class="grid2"><label class="f"><span id="l-pmin">ფასი, დან</span><input name="min" type="number" min="0" inputmode="numeric"></label><label class="f"><span id="l-pmax">მდე</span><input name="max" type="number" min="0" inputmode="numeric"></label></div>
+      <div class="grid2"><label class="f"><span id="l-rooms">ოთახები</span><select name="rooms"><option value="">—</option><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option><option value="4">4+</option></select></label><label class="f"><span id="l-area">ფართი მ², დან</span><input name="area" type="number" min="0" inputmode="numeric"></label></div>
+      <label class="f"><span id="l-sort">დალაგება</span><select name="sort"><option value=""></option><option value="new"></option><option value="price_asc"></option><option value="price_desc"></option><option value="area_desc"></option></select></label>
+      <label style="display:flex;gap:8px;align-items:center;font:600 14px var(--display)"><input type="checkbox" name="photos"> <span id="l-photos">მხოლოდ ფოტოებით</span></label>
+      <button class="btn b-coral" type="submit" id="go">ძიება</button>
+      <button class="btn b-ghost" type="button" id="reset">გასუფთავება</button>
+    </form>
+    <section aria-live="polite">
+      <div class="bar"><h1 id="h">განცხადებები</h1><span class="muted" id="count"></span></div>
+      <div class="lgrid" id="grid"><div class="empty">…</div></div>
+      <div class="more"><button class="btn b-ghost hidden" id="moreBtn" type="button"></button></div>
+    </section>
+  </div>
+</main>
+<script src="/assets/portal.js"></script>
+<script>
+(function () {
+  var t = KG.t, $ = KG.$, $$ = KG.$$;
+  var params = new URLSearchParams(location.search), favMode = params.get('fav') === '1';
+  KG.header(favMode ? 'fav' : 'search');
+  document.documentElement.lang = KG.lang === 'en' ? 'en' : 'ka';
+  // texts
+  $('#ftitle').textContent = t('Filters', 'ფილტრები'); $('#d-all').textContent = t('All', 'ყველა'); $('#d-rent').textContent = t('Rent', 'ქირა'); $('#d-sale').textContent = t('Buy', 'ყიდვა');
+  $('#l-type').textContent = t('Property type', 'ქონების ტიპი'); $('#l-dist').textContent = t('District / address', 'უბანი / მისამართი');
+  $('#l-pmin').textContent = t('Price from', 'ფასი, დან'); $('#l-pmax').textContent = t('to', 'მდე'); $('#l-rooms').textContent = t('Rooms', 'ოთახები');
+  $('#l-area').textContent = t('Area from, m²', 'ფართი მ², დან'); $('#l-sort').textContent = t('Sort', 'დალაგება'); $('#l-photos').textContent = t('Only with photos', 'მხოლოდ ფოტოებით');
+  $('#go').textContent = t('Show results', 'ძიება'); $('#reset').textContent = t('Clear filters', 'გასუფთავება');
+  var ts = $('select[name=type]').options; ts[0].text = t('Any type', 'ყველა'); ts[1].text = KG.TYPE('flat'); ts[2].text = KG.TYPE('house'); ts[3].text = KG.TYPE('commercial'); ts[4].text = KG.TYPE('land');
+  var so = $('select[name=sort]').options; so[0].text = t('Recommended (VIP first)', 'რეკომენდებული (VIP პირველი)'); so[1].text = t('Newest', 'ახალი'); so[2].text = t('Price: low to high', 'ფასი: ზრდადობით'); so[3].text = t('Price: high to low', 'ფასი: კლებადობით'); so[4].text = t('Largest area', 'დიდი ფართი');
+  $('#h').textContent = favMode ? t('Saved listings', 'შენახული განცხადებები') : t('Properties', 'განცხადებები');
+
+  var ALL = [], shown = 24, deal = params.get('deal') || '';
+  var f = $('#f');
+  ['type', 'district', 'min', 'max', 'rooms', 'area', 'sort'].forEach(function (k) { if (params.get(k)) f[k].value = params.get(k); });
+  if (params.get('photos')) f.photos.checked = true;
+  function setDeal(d) { deal = d; $$('.seg button', f).forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.deal === d ? 'true' : 'false'); }); }
+  setDeal(deal);
+  $$('.seg button', f).forEach(function (b) { b.onclick = function () { setDeal(b.dataset.deal); run(true); }; });
+
+  function rank(l) { return l.tier === 'super' ? 2 : l.tier === 'vip' ? 1 : 0; }
+  function run(push) {
+    var q = (f.district.value || '').trim().toLowerCase(), min = +f.min.value || 0, max = +f.max.value || 0, rooms = +f.rooms.value || 0, area = +f.area.value || 0;
+    var favs = KG.favs();
+    var res = ALL.filter(function (l) {
+      if (favMode && favs.indexOf(l.key) < 0) return false;
+      if (deal && l.deal !== deal) return false;
+      if (f.type.value && l.type !== f.type.value) return false;
+      if (q && ((l.district || '') + ' ' + (l.districtKa || '') + ' ' + (l.address || '') + ' ' + (l.title || '')).toLowerCase().indexOf(q) < 0) return false;
+      if (min && l.price < min) return false;
+      if (max && l.price > max) return false;
+      if (rooms && (l.rooms || 0) < rooms) return false;
+      if (area && (l.area || 0) < area) return false;
+      if (f.photos.checked && !l.photo) return false;
+      return true;
+    });
+    var s = f.sort.value;
+    res.sort(function (a, b) {
+      if (s === 'price_asc') return a.price - b.price;
+      if (s === 'price_desc') return b.price - a.price;
+      if (s === 'area_desc') return (b.area || 0) - (a.area || 0);
+      if (s === 'new') return (b.created || 0) - (a.created || 0);
+      return rank(b) - rank(a) || (b.src === 'owner') - (a.src === 'owner') || (b.created || 0) - (a.created || 0);
+    });
+    if (push) {
+      shown = 24;
+      var p = new URLSearchParams();
+      if (favMode) p.set('fav', '1');
+      if (deal) p.set('deal', deal);
+      ['type', 'district', 'min', 'max', 'rooms', 'area', 'sort'].forEach(function (k) { if (f[k].value) p.set(k, f[k].value); });
+      if (f.photos.checked) p.set('photos', '1');
+      history.replaceState(null, '', '?' + p.toString());
+    }
+    $('#count').textContent = res.length + ' ' + t('listings', 'განცხადება');
+    $('#grid').innerHTML = res.length ? res.slice(0, shown).map(KG.card).join('') :
+      '<div class="empty">' + (favMode ? t('No saved listings yet. Tap ♥ on any listing to save it here.', 'შენახული განცხადებები ჯერ არ არის. დააჭირე ♥-ს განცხადებაზე.') :
+        t('Nothing matches these filters. Try a wider price or another district — or message us on WhatsApp and we will search for you.', 'ამ ფილტრებით ვერაფერი მოიძებნა. შეცვალე ფილტრები ან მოგვწერე WhatsApp-ზე.')) +
+        '<div style="margin-top:14px"><a class="btn b-wa" target="_blank" rel="noopener" href="https://wa.me/995577114118">' + KG.icon('chat') + 'WhatsApp</a></div></div>';
+    var mb = $('#moreBtn');
+    mb.classList.toggle('hidden', res.length <= shown);
+    mb.textContent = t('Show more', 'მეტის ნახვა') + ' (' + (res.length - shown) + ')';
+  }
+  f.onsubmit = function (e) { e.preventDefault(); run(true); };
+  f.addEventListener('change', function () { run(true); });
+  $('#reset').onclick = function () { f.reset(); setDeal(''); run(true); };
+  $('#moreBtn').onclick = function () { shown += 24; run(false); };
+  KG.bindFavs(document, function () { if (favMode) run(false); });
+  KG.loadAll().then(function (all) { ALL = all; run(false); });
+})();
+</script>
+</body>
+</html>
