@@ -26,12 +26,15 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Route
 
+import chatbot
+
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 UPLOADS = os.path.join(DATA_DIR, "uploads")
 DB_PATH = os.path.join(DATA_DIR, "portal.db")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 ALERT_CHATS = [c.strip() for c in os.environ.get("ALERT_CHATS", "").split(",") if c.strip()]
 SITE = os.environ.get("SITE_URL", "https://keygroup.ge")
+CRM_URL = os.environ.get("CRM_URL", "")
 MAX_PHOTOS = 15
 MAX_PHOTO_BYTES = 12 * 1024 * 1024
 SESSION_DAYS = 30
@@ -88,6 +91,13 @@ def init_db():
         CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER, expires REAL);
         CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT);
         CREATE INDEX IF NOT EXISTS idx_listings_status ON listings(status);
+        CREATE TABLE IF NOT EXISTS chats (
+            id INTEGER PRIMARY KEY, token TEXT, status TEXT DEFAULT 'bot', name TEXT DEFAULT '', phone TEXT DEFAULT '',
+            lang TEXT DEFAULT 'en', topic TEXT DEFAULT '', page TEXT DEFAULT '', state TEXT DEFAULT '{}', ip TEXT DEFAULT '',
+            unread INTEGER DEFAULT 0, created REAL, updated REAL);
+        CREATE TABLE IF NOT EXISTS chat_msgs (
+            id INTEGER PRIMARY KEY, chat_id INTEGER, who TEXT, text TEXT, data TEXT DEFAULT '{}', ts REAL);
+        CREATE INDEX IF NOT EXISTS idx_chat_msgs ON chat_msgs(chat_id, id);
         """)
 
 
@@ -594,7 +604,9 @@ async def admin_stats(request):
         paid_30 = con.execute("SELECT COALESCE(SUM(amount),0) FROM orders WHERE status='paid' AND paid>?", (now - 30 * 86400,)).fetchone()[0]
         reports = con.execute("SELECT COUNT(*) FROM reports WHERE status='open'").fetchone()[0]
         vip = con.execute("SELECT COUNT(*) FROM listings WHERE status='active' AND (vip_until>? OR super_until>?)", (now, now)).fetchone()[0]
-    return ok(stats={"listings": by_status, "owners": users, "orders_waiting": await_pay, "revenue_30d": paid_30,
+        chats_waiting = con.execute("SELECT COUNT(*) FROM chats WHERE status IN ('waiting','agent') AND unread>0").fetchone()[0]
+        chats_today = con.execute("SELECT COUNT(DISTINCT chat_id) FROM chat_msgs WHERE who='visitor' AND ts>?", (now - 86400,)).fetchone()[0]
+    return ok(stats={"chats_waiting": chats_waiting, "chats_today": chats_today, "listings": by_status, "owners": users, "orders_waiting": await_pay, "revenue_30d": paid_30,
                      "vip_active": vip, "reports_open": reports, "currency": get_settings()["currency"]})
 
 
@@ -765,6 +777,194 @@ async def admin_settings(request):
     return ok(settings=s)
 
 
+
+# ---------------------------------------------------------------- website chat (assistant + human agents)
+
+def client_ip(request):
+    return request.headers.get("x-forwarded-for", request.client.host if request.client else "?").split(",")[0].strip()
+
+
+def msg_out(r):
+    d = json.loads(r["data"] or "{}")
+    return {"id": r["id"], "who": r["who"], "text": r["text"], "buttons": d.get("buttons", []), "cards": d.get("cards", []), "ts": r["ts"]}
+
+
+def add_msg(con, chat_id, who, m):
+    data = {k: m[k] for k in ("buttons", "cards") if m.get(k)}
+    con.execute("INSERT INTO chat_msgs (chat_id, who, text, data, ts) VALUES (?,?,?,?,?)",
+                (chat_id, who, str(m.get("text") or "")[:4000], json.dumps(data, ensure_ascii=False), time.time()))
+    con.execute("UPDATE chats SET updated=? WHERE id=?", (time.time(), chat_id))
+
+
+def load_chat(con, data):
+    try:
+        cid = int(data.get("chat_id") or 0)
+    except (TypeError, ValueError):
+        return None
+    row = con.execute("SELECT * FROM chats WHERE id=?", (cid,)).fetchone()
+    if not row or not hmac.compare_digest(row["token"], str(data.get("token") or "")):
+        return None
+    return row
+
+
+def chat_payload(con, chat, after=0):
+    rows = con.execute("SELECT * FROM chat_msgs WHERE chat_id=? AND id>? ORDER BY id", (chat["id"], after)).fetchall()
+    return {"chat_id": chat["id"], "status": chat["status"], "messages": [msg_out(r) for r in rows]}
+
+
+def send_crm_lead(payload):
+    if not CRM_URL:
+        return
+
+    def run():
+        try:
+            req = urllib.request.Request(CRM_URL, json.dumps(payload).encode(), {"Content-Type": "text/plain;charset=utf-8"})
+            urllib.request.urlopen(req, timeout=30).read()
+        except Exception as ex:
+            print("crm lead failed:", ex)
+    threading.Thread(target=run, daemon=True).start()
+
+
+def transcript(con, chat_id, n=8):
+    rows = con.execute("SELECT who, text FROM chat_msgs WHERE chat_id=? AND who IN ('visitor','agent') ORDER BY id DESC LIMIT ?", (chat_id, n)).fetchall()
+    return "\n".join(("👤 " if r["who"] == "visitor" else "🏢 ") + r["text"][:200] for r in reversed(rows))
+
+
+async def chat_start(request):
+    d = await body_json(request)
+    with _LOCK, db() as con:
+        chat = load_chat(con, d)
+        if chat and chat["status"] != "closed":
+            return ok(**chat_payload(con, chat), token=chat["token"])
+    if too_many(request, "chatstart", 20, 600):
+        return err("Too many chats, try later", 429)
+    lang = d.get("lang") if d.get("lang") in ("en", "ka", "ru") else "ka"
+    tok = secrets.token_urlsafe(24)
+    now = time.time()
+    with _LOCK, db() as con:
+        cur = con.execute("INSERT INTO chats (token, lang, page, state, ip, created, updated) VALUES (?,?,?,?,?,?,?)",
+                          (tok, lang, str(d.get("page") or "")[:300], json.dumps({"lang": lang}), client_ip(request), now, now))
+        cid = cur.lastrowid
+        add_msg(con, cid, "bot", chatbot.welcome(lang))
+        chat = con.execute("SELECT * FROM chats WHERE id=?", (cid,)).fetchone()
+        return ok(**chat_payload(con, chat), token=tok)
+
+
+async def chat_send(request):
+    d = await body_json(request)
+    text = str(d.get("text") or "").strip()[:1000]
+    if not text:
+        return err("Empty message")
+    if too_many(request, "chatsend", 40, 60):
+        return err("Too many messages, slow down a little", 429)
+    after = int(d.get("after") or 0)
+    alert = None
+    with _LOCK, db() as con:
+        chat = load_chat(con, d)
+        if not chat:
+            return err("Chat not found", 404)
+        shown = text
+        if text.startswith("__"):
+            shown = str(d.get("label") or "")[:200]
+        if shown:
+            add_msg(con, chat["id"], "visitor", {"text": shown})
+        if chat["status"] in ("waiting", "agent"):
+            con.execute("UPDATE chats SET unread=unread+1 WHERE id=?", (chat["id"],))
+            if not text.startswith("__"):
+                alert = f"💬 <b>Website chat #{chat['id']}</b> — {esc(chat['name'])} {esc(chat['phone'])}\n{esc(shown[:500])}\n\nReply: {SITE}/admin/#chats"
+        else:
+            state = json.loads(chat["state"] or "{}")
+            msgs, event = chatbot.reply(con, state, text, get_settings(), SITE)
+            for m in msgs:
+                add_msg(con, chat["id"], "bot", m)
+            con.execute("UPDATE chats SET state=?, lang=? WHERE id=?", (json.dumps(state, ensure_ascii=False), state.get("lang", chat["lang"]), chat["id"]))
+            if event == "handoff":
+                con.execute("UPDATE chats SET status='waiting', name=?, phone=?, topic=?, unread=unread+1 WHERE id=?",
+                            (state.get("name", ""), state.get("phone", ""), state.get("topic", ""), chat["id"]))
+                tr = transcript(con, chat["id"])
+                alert = (f"🙋 <b>Website chat #{chat['id']} — visitor wants an agent</b>\n"
+                         f"Name: {esc(state.get('name'))}\nPhone: {esc(state.get('phone'))}\nTopic: {esc(state.get('topic'))}\n"
+                         f"Language: {state.get('lang')}\nPage: {esc(chat['page'])}\n\n{esc(tr)}\n\nReply here: {SITE}/admin/#chats")
+                send_crm_lead({"action": "lead", "type": "Website chat: " + state.get("topic", ""), "name": state.get("name", ""),
+                               "phone": state.get("phone", ""), "message": tr[:1500], "lang": state.get("lang", "")})
+        chat = con.execute("SELECT * FROM chats WHERE id=?", (chat["id"],)).fetchone()
+        out = chat_payload(con, chat, after)
+    if alert:
+        notify(alert)
+    return ok(**out)
+
+
+async def chat_poll(request):
+    q = request.query_params
+    with db() as con:
+        chat = load_chat(con, {"chat_id": q.get("chat_id"), "token": q.get("token")})
+        if not chat:
+            return err("Chat not found", 404)
+        try:
+            after = int(q.get("after") or 0)
+        except ValueError:
+            after = 0
+        return ok(**chat_payload(con, chat, after))
+
+
+async def admin_chats(request):
+    u, e = need_user(request, admin=True)
+    if e:
+        return e
+    st = request.query_params.get("status", "open")
+    where = "status IN ('waiting','agent')" if st == "open" else "status='bot'" if st == "bot" else "status='closed'" if st == "closed" else "1=1"
+    with db() as con:
+        rows = con.execute(f"""SELECT c.*, (SELECT text FROM chat_msgs m WHERE m.chat_id=c.id AND m.who IN ('visitor','agent') ORDER BY id DESC LIMIT 1) AS last,
+                               (SELECT COUNT(*) FROM chat_msgs m WHERE m.chat_id=c.id AND m.who='visitor') AS n
+                               FROM chats c WHERE {where} ORDER BY (status='waiting') DESC, updated DESC LIMIT 200""").fetchall()
+    out = []
+    for r in rows:
+        if st == "bot" and not r["n"]:
+            continue
+        d = dict(r)
+        d.pop("token", None); d.pop("state", None)
+        out.append(d)
+    return ok(chats=out)
+
+
+async def admin_chat(request):
+    u, e = need_user(request, admin=True)
+    if e:
+        return e
+    cid = int(request.path_params["cid"])
+    with _LOCK, db() as con:
+        chat = con.execute("SELECT * FROM chats WHERE id=?", (cid,)).fetchone()
+        if not chat:
+            return err("Chat not found", 404)
+        if request.method == "POST":
+            d = await body_json(request)
+            act = d.get("action")
+            if act == "reply":
+                text = str(d.get("text") or "").strip()[:2000]
+                if not text:
+                    return err("Write a message")
+                add_msg(con, cid, "agent", {"text": text})
+                con.execute("UPDATE chats SET status='agent', unread=0 WHERE id=?", (cid,))
+            elif act == "close":
+                lang = chat["lang"] or "en"
+                add_msg(con, cid, "system", {"text": chatbot.T(lang, "The agent closed this chat. Write again any time!",
+                                                               "აგენტმა ჩატი დახურა. მოგვწერეთ ნებისმიერ დროს!",
+                                                               "Агент завершил чат. Пишите в любое время!")})
+                con.execute("UPDATE chats SET status='closed', unread=0 WHERE id=?", (cid,))
+            elif act == "take":
+                con.execute("UPDATE chats SET status='agent' WHERE id=?", (cid,))
+            elif act == "bot":
+                con.execute("UPDATE chats SET status='bot', unread=0 WHERE id=?", (cid,))
+            else:
+                return err("Unknown action")
+        else:
+            con.execute("UPDATE chats SET unread=0 WHERE id=?", (cid,))
+        chat = dict(con.execute("SELECT * FROM chats WHERE id=?", (cid,)).fetchone())
+        msgs = [msg_out(r) for r in con.execute("SELECT * FROM chat_msgs WHERE chat_id=? ORDER BY id", (cid,)).fetchall()]
+    chat.pop("token", None); chat.pop("state", None)
+    return ok(chat=chat, messages=msgs)
+
+
 # ---------------------------------------------------------------- app
 
 def ensure_admin():
@@ -808,6 +1008,11 @@ routes = [
     Route("/api/admin/orders/{oid:int}", admin_order_action, methods=["POST"]),
     Route("/api/admin/users", admin_users, methods=["GET", "POST"]),
     Route("/api/admin/settings", admin_settings, methods=["GET", "POST"]),
+    Route("/api/chat/start", chat_start, methods=["POST"]),
+    Route("/api/chat/send", chat_send, methods=["POST"]),
+    Route("/api/chat/poll", chat_poll),
+    Route("/api/admin/chats", admin_chats),
+    Route("/api/admin/chats/{cid:int}", admin_chat, methods=["GET", "POST"]),
 ]
 
 init_db()

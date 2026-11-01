@@ -27,6 +27,16 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
 .tablewrap{overflow-x:auto}
 .desc{white-space:pre-wrap;font-size:13px;color:#33465c;max-height:90px;overflow:auto;margin-top:6px;background:var(--page);border-radius:8px;padding:8px}
 @media (max-width:700px){.item{grid-template-columns:1fr}.item .th{height:180px}}
+.chatwrap{display:grid;grid-template-columns:320px 1fr;gap:16px;min-height:560px}
+.clist{overflow:auto;max-height:640px}.clist button{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:#fff;padding:12px 14px;cursor:pointer}
+.clist button.on{background:var(--sky)}.clist b{font:700 14px var(--display)}.clist .ls{font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.thread{display:flex;flex-direction:column;min-height:560px}.thread .msgs{flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:8px;max-height:520px;background:var(--page)}
+.bub{max-width:78%;padding:9px 12px;border-radius:14px;font-size:14px;white-space:pre-wrap;word-wrap:break-word}
+.bub.visitor{background:#fff;border:1px solid var(--line);align-self:flex-start}.bub.bot{background:#EEF1F5;color:#33465c;align-self:flex-end;font-size:13px}
+.bub.agent{background:var(--navy);color:#fff;align-self:flex-end}.bub.system{align-self:center;color:var(--muted);font-size:12px}
+.bub small{display:block;font-size:11px;opacity:.65;margin-top:3px}
+.thread form{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line)}.thread textarea{flex:1;border:1.5px solid var(--line);border-radius:12px;padding:10px;font:inherit;min-height:46px;resize:vertical}
+@media (max-width:800px){.chatwrap{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -59,21 +69,78 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
       var pend = (STATS.listings || {}).pending || 0;
       $('#app').innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"><h1>KEY GROUP admin</h1>' +
         '<div style="display:flex;gap:8px"><a class="btn b-ghost" href="/account/">Owner view</a><button class="btn b-ghost" id="out">Log out</button></div></div>' +
-        '<div class="tabs">' + [['dash', 'Dashboard', 0], ['listings', 'Listings', pend], ['orders', 'Payments', STATS.orders_waiting], ['reports', 'Reports', STATS.reports_open], ['users', 'Users', 0], ['settings', 'Plans & settings', 0]].map(function (x) {
+        '<div class="tabs">' + [['dash', 'Dashboard', 0], ['listings', 'Listings', pend], ['chats', 'Chats', STATS.chats_waiting], ['orders', 'Payments', STATS.orders_waiting], ['reports', 'Reports', STATS.reports_open], ['users', 'Users', 0], ['settings', 'Plans & settings', 0]].map(function (x) {
           return '<button data-t="' + x[0] + '" aria-pressed="' + (TAB === x[0]) + '">' + x[1] + (x[2] ? ' <span class="n">' + x[2] + '</span>' : '') + '</button>';
         }).join('') + '</div><div id="tab"></div>';
       $$('[data-t]').forEach(function (b) { b.onclick = function () { TAB = b.dataset.t; shell(); }; });
       $('#out').onclick = function () { api('/api/logout', {method: 'POST'}).then(login); };
-      ({dash: dash, listings: listings, orders: orders, reports: reports, users: users, settings: settings})[TAB]();
+      clearInterval(window.__chatTimer);
+      ({dash: dash, chats: chats, listings: listings, orders: orders, reports: reports, users: users, settings: settings})[TAB]();
     });
   }
   function dash() {
     var L = STATS.listings || {}, cur = STATS.currency === 'GEL' ? '₾' : STATS.currency;
     $('#tab').innerHTML = '<div class="kpis">' + [[L.pending || 0, 'Waiting for approval'], [L.active || 0, 'Live owner listings'], [STATS.vip_active, 'VIP / Super VIP live'], [STATS.orders_waiting, 'Payments to confirm'],
-      [cur + Math.round(STATS.revenue_30d), 'Paid in last 30 days'], [STATS.owners, 'Owner accounts'], [STATS.reports_open, 'Open reports'], [L.expired || 0, 'Expired']].map(function (k) {
+      [cur + Math.round(STATS.revenue_30d), 'Paid in last 30 days'], [STATS.owners, 'Owner accounts'], [STATS.reports_open, 'Open reports'], [STATS.chats_today || 0, 'Website chats (24h)'], [L.expired || 0, 'Expired']].map(function (k) {
         return '<div class="card"><b>' + esc(k[0]) + '</b><span>' + esc(k[1]) + '</span></div>'; }).join('') + '</div>' +
       '<p class="muted" style="margin-top:18px">New listings, plan orders and reports also come to the KEY GROUP Telegram bot.</p>';
   }
+  var CSTAT = 'open', CID = 0;
+  function chats() {
+    $('#tab').innerHTML = '<div class="seg" style="max-width:520px;margin-bottom:14px">' + [['open', 'Need an agent'], ['bot', 'Bot only'], ['closed', 'Closed'], ['all', 'All']].map(function (x) {
+        return '<button data-cs="' + x[0] + '" aria-pressed="' + (CSTAT === x[0]) + '">' + x[1] + '</button>'; }).join('') + '</div>' +
+      '<div class="chatwrap"><div class="card clist" id="clist"><div class="empty">…</div></div><div class="card thread" id="thread"><div class="empty" style="margin:auto;border:0">Select a chat</div></div></div>' +
+      '<p class="muted" style="margin-top:12px">The website assistant answers visitors automatically. When someone asks for an agent (or the bot cannot help) the chat appears under <b>Need an agent</b> and an alert goes to Telegram. Your reply here shows up in the visitor\'s chat window within a few seconds.</p>';
+    $$('[data-cs]').forEach(function (b) { b.onclick = function () { CSTAT = b.dataset.cs; CID = 0; chats(); }; });
+    loadList();
+    window.__chatTimer = setInterval(function () { loadList(); if (CID) openChat(CID, true); }, 6000);
+  }
+  function loadList() {
+    api('/api/admin/chats?status=' + CSTAT).then(function (j) {
+      var C = j.chats || [], el = $('#clist'); if (!el) return;
+      el.innerHTML = C.length ? C.map(function (c) {
+        var st = c.status === 'waiting' ? '<span class="pill st-pending">waiting</span>' : c.status === 'agent' ? '<span class="pill st-active">agent</span>' : c.status === 'closed' ? '<span class="pill st-expired">closed</span>' : '<span class="pill" style="background:var(--sky);color:#1D4FB8">bot</span>';
+        return '<button data-c="' + c.id + '" class="' + (c.id === CID ? 'on' : '') + '"><div style="display:flex;justify-content:space-between;gap:8px"><b>' + esc(c.name || ('Visitor #' + c.id)) + '</b>' + st + '</div>' +
+          '<div class="ls">' + esc(c.phone || '') + (c.topic ? ' · ' + esc(c.topic) : '') + '</div><div class="ls">' + (c.unread ? '<span class="n" style="background:var(--coral);color:#fff;border-radius:999px;padding:0 6px;font-size:11px;margin-right:4px">' + c.unread + '</span>' : '') + esc(c.last || '') + '</div>' +
+          '<div class="ls" style="font-size:11px">' + fmtDate(c.updated) + ' · ' + esc((c.lang || '').toUpperCase()) + '</div></button>';
+      }).join('') : '<div class="empty" style="border:0">No chats here yet.</div>';
+      $$('[data-c]', el).forEach(function (b) { b.onclick = function () { CID = +b.dataset.c; openChat(CID); loadList(); }; });
+    });
+  }
+  function openChat(id, quiet) {
+    api('/api/admin/chats/' + id).then(function (j) {
+      if (!j.ok || id !== CID) return;
+      var c = j.chat, el = $('#thread'); if (!el) return;
+      var draft = quiet && $('#rt') ? $('#rt').value : '';
+      var box = $('.msgs', el), atBottom = !box || box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+      el.innerHTML = '<div style="padding:14px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">' +
+        '<div><b style="font:700 16px var(--display)">' + esc(c.name || ('Visitor #' + c.id)) + '</b> <span class="muted">' + esc(c.phone || '') + '</span>' +
+        '<div class="muted" style="font-size:13px">' + esc(c.topic || '') + (c.page ? ' · page ' + esc(c.page) : '') + ' · ' + esc((c.lang || '').toUpperCase()) + '</div></div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+        (c.phone ? '<a class="btn b-wa sm" target="_blank" rel="noopener" href="https://wa.me/' + esc(String(c.phone).replace(/\D/g, '')) + '">WhatsApp</a><a class="btn b-ghost sm" href="tel:' + esc(c.phone) + '">Call</a>' : '') +
+        (c.status === 'bot' ? '<button class="btn b-ghost sm" data-a="take">Take over</button>' : '') +
+        (c.status === 'waiting' || c.status === 'agent' ? '<button class="btn b-ghost sm" data-a="bot">Give back to bot</button>' : '') +
+        (c.status !== 'closed' ? '<button class="btn b-red sm" data-a="close">Close chat</button>' : '') + '</div></div>' +
+        '<div class="msgs">' + j.messages.map(function (m) {
+          var extra = (m.cards || []).map(function (k) { return '\n🏠 ' + k.price + ' — ' + k.title; }).join('');
+          return '<div class="bub ' + esc(m.who) + '">' + esc((m.text || '') + extra) + '<small>' + (m.who === 'bot' ? 'Bot · ' : m.who === 'agent' ? 'You · ' : '') + fmtDate(m.ts) + '</small></div>';
+        }).join('') + '</div>' +
+        (c.status !== 'closed' ? '<form id="rf"><textarea id="rt" placeholder="Write your reply… (Enter to send, Shift+Enter for a new line)"></textarea><button class="btn b-navy" type="submit">Send</button></form>' : '');
+      box = $('.msgs', el); if (atBottom || !quiet) box.scrollTop = box.scrollHeight;
+      if ($('#rt')) { $('#rt').value = draft; if (!quiet) $('#rt').focus();
+        $('#rt').addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#rf').requestSubmit(); } }); }
+      $$('[data-a]', el).forEach(function (b) { b.onclick = function () {
+        if (b.dataset.a === 'close' && !confirmClose()) return;
+        api('/api/admin/chats/' + id, {method: 'POST', json: {action: b.dataset.a}}).then(function () { openChat(id); loadList(); }); }; });
+      if ($('#rf')) $('#rf').onsubmit = function (e) {
+        e.preventDefault(); var t = $('#rt').value.trim(); if (!t) return;
+        $('#rt').value = '';
+        api('/api/admin/chats/' + id, {method: 'POST', json: {action: 'reply', text: t}}).then(function (r) { if (!r.ok) alertMsg(r.error); openChat(id); loadList(); });
+      };
+    });
+  }
+  function confirmClose() { return true; }
+  function alertMsg(t) { var d = document.createElement('div'); d.className = 'msg err'; d.textContent = t; $('#thread').prepend(d); }
   function listings() {
     api('/api/admin/listings?status=' + LSTAT).then(function (j) {
       var L = j.listings || [];
@@ -185,6 +252,7 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
       };
     });
   }
+  if (location.hash === '#chats') TAB = 'chats';
   api('/api/me').then(function (j) { j.user && j.user.role === 'admin' ? shell() : login(); });
 })();
 </script>

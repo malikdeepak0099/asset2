@@ -6,6 +6,7 @@ services:
     env_file: .env
     volumes:
       - ./data:/data
+      - /opt/keygroup/site:/site:ro
     networks:
       - web
 networks:

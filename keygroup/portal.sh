@@ -6,14 +6,14 @@ DIR=/opt/keygroup-portal
 cd /opt/keygroup || { echo "STOP: /opt/keygroup not found"; exit 1; }
 # 1) website pages
 curl -fsSL "$RAW/u.sh?$(date +%s)" | bash || { echo "STOP: website update failed"; exit 1; }
-for f in account/index.html admin/index.html p/index.html search/index.html assets/portal.css assets/portal.js; do
+for f in account/index.html admin/index.html p/index.html search/index.html assets/portal.css assets/portal.js assets/chat.js; do
   mkdir -p "$SITE/$(dirname $f)"
   curl -fsSL "$RAW/site/$f?$(date +%s)" -o "$SITE/$f" || { echo "STOP: could not download $f"; exit 1; }
 done
 chmod -R a+rX "$SITE"
 # 2) portal service
 mkdir -p "$DIR/data" && cd "$DIR"
-for f in app.py requirements.txt Dockerfile docker-compose.yml; do
+for f in app.py chatbot.py requirements.txt Dockerfile docker-compose.yml; do
   curl -fsSL "$RAW/portal/$f?$(date +%s)" -o "$f" || { echo "STOP: could not download $f"; exit 1; }
 done
 CADDY_ID=$(cd /opt/keygroup && docker compose ps -q caddy)
@@ -30,7 +30,9 @@ if [ ! -s .env ]; then
 else
   sed -i "s/^CADDY_NETWORK=.*/CADDY_NETWORK=$NET/" .env
 fi
-docker compose up -d --build 2>&1 | tail -2
+grep -q '^CRM_URL=' .env || { CRMU=$(grep '^CRM_URL=' /opt/keygroup-listing/.env 2>/dev/null | cut -d= -f2-); echo "CRM_URL=$CRMU" >> .env; }
+grep -q '^SITE_DIR=' .env || echo "SITE_DIR=/site" >> .env
+docker compose up -d --build --force-recreate 2>&1 | tail -2
 sleep 6
 docker compose ps | grep -q Up || { echo "PROBLEM - portal did not start:"; docker compose logs --tail 20; exit 1; }
 # 3) Caddy routes /api and /uploads to the portal
