@@ -68,17 +68,25 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
   }
   function leads() {
     api('/api/my/leads').then(function (j) {
-      var L = j.leads || [];
-      $('#app').innerHTML = head() + '<div class="card">' + (L.length ? L.map(function (d) {
+      var L = j.leads || [], TEAM = j.team || [];
+      var soon = L.filter(function (d) { return d.viewing_at && d.viewing_at * 1000 > Date.now() - 3600000; }).sort(function (a, b) { return a.viewing_at - b.viewing_at; });
+      var dtl = function (ts) { if (!ts) return ''; var d = new Date(ts * 1000), z = function (n) { return (n < 10 ? '0' : '') + n; }; return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate()) + 'T' + z(d.getHours()) + ':' + z(d.getMinutes()); };
+      $('#app').innerHTML = head() + (soon.length ? '<div class="card" style="padding:16px;margin-bottom:16px"><h3 style="margin-bottom:8px">📅 ' + t('Upcoming viewings', 'დაგეგმილი დათვალიერებები') + '</h3>' + soon.map(function (d) {
+          return '<div style="display:flex;gap:10px;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid var(--line)"><b>' + new Date(d.viewing_at * 1000).toLocaleString([], {weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'}) + '</b><span>' + esc(d.name || '') + ' · <a href="tel:' + esc(d.phone) + '" style="color:var(--blue)">' + esc(d.phone) + '</a></span><span class="muted">#' + d.listing_id + ' ' + esc(d.title || d.district || '') + (d.assigned_name ? ' · ' + esc(d.assigned_name) : '') + '</span></div>'; }).join('') + '</div>' : '') +
+        '<div class="card">' + (L.length ? L.map(function (d) {
         return '<div class="row" style="grid-template-columns:1fr auto"><div><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><b>' + esc(d.name || t('Visitor', 'ვიზიტორი')) + '</b> <a href="tel:' + esc(d.phone) + '" style="color:var(--blue);font-weight:700">' + esc(d.phone) + '</a>' +
           '<a class="btn sm b-wa" target="_blank" rel="noopener" href="https://wa.me/' + esc(String(d.phone).replace(/\D/g, '')) + '">WhatsApp</a><span class="muted" style="font-size:12px">' + new Date(d.created * 1000).toLocaleString() + ' · ' + esc(d.source) + '</span></div>' +
           '<div class="muted" style="font-size:13px;margin-top:4px">' + t('Listing', 'განცხადება') + ' <a href="/p/?id=' + d.listing_id + '" target="_blank" style="color:var(--blue)">#' + d.listing_id + '</a> ' + esc(d.title || d.district || '') + '</div>' +
           (d.message ? '<div style="margin-top:4px">' + esc(d.message) + '</div>' : '') +
           '<input data-note="' + d.id + '" value="' + esc(d.note || '') + '" placeholder="' + t('Note (only you see it)', 'შენიშვნა') + '" style="margin-top:8px;width:100%;border:1.5px solid var(--line);border-radius:10px;padding:8px 10px;font:inherit"></div>' +
-          '<div><select data-stage="' + d.id + '" style="border:1.5px solid var(--line);border-radius:10px;padding:8px;font:inherit">' + STAGES.map(function (x) { return '<option value="' + x[0] + '"' + (d.stage === x[0] ? ' selected' : '') + '>' + esc(x[1]) + '</option>'; }).join('') + '</select></div></div>';
+          '<div style="display:flex;flex-direction:column;gap:6px;min-width:190px"><select data-stage="' + d.id + '" style="border:1.5px solid var(--line);border-radius:10px;padding:8px;font:inherit">' + STAGES.map(function (x) { return '<option value="' + x[0] + '"' + (d.stage === x[0] ? ' selected' : '') + '>' + esc(x[1]) + '</option>'; }).join('') + '</select>' +
+          '<label style="font-size:12px;color:var(--muted)">📅 ' + t('Viewing', 'დათვალიერება') + '<input type="datetime-local" data-view="' + d.id + '" value="' + dtl(d.viewing_at) + '" style="width:100%;border:1.5px solid var(--line);border-radius:10px;padding:6px;font:inherit"></label>' +
+          (TEAM.length ? '<label style="font-size:12px;color:var(--muted)">' + t('Assign to', 'მიმაგრება') + '<select data-assign="' + d.id + '" style="width:100%;border:1.5px solid var(--line);border-radius:10px;padding:6px;font:inherit"><option value="0">—</option>' + TEAM.map(function (m) { return '<option value="' + m.id + '"' + (d.assigned_to === m.id ? ' selected' : '') + '>' + esc(m.name) + '</option>'; }).join('') + '</select></label>' : (d.assigned_name ? '<span class="muted" style="font-size:12px">→ ' + esc(d.assigned_name) + '</span>' : '')) + '</div></div>';
       }).join('') : '<div class="empty" style="border:0">' + t('No enquiries yet. When someone asks about your listing, it appears here and you can call or WhatsApp them.', 'მოთხოვნები ჯერ არ არის. როცა ვინმე თქვენს განცხადებაზე იკითხავს, აქ გამოჩნდება.') + '</div>') + '</div>';
       bindHead();
       $$('[data-stage]').forEach(function (sl) { sl.onchange = function () { api('/api/my/leads', {method: 'POST', json: {id: +sl.dataset.stage, stage: sl.value}}); }; });
+      $$('[data-view]').forEach(function (inp) { inp.onchange = function () { var ts = inp.value ? new Date(inp.value).getTime() / 1000 : 0; api('/api/my/leads', {method: 'POST', json: {id: +inp.dataset.view, viewing_at: ts}}).then(leads); }; });
+      $$('[data-assign]').forEach(function (sl) { sl.onchange = function () { api('/api/my/leads', {method: 'POST', json: {id: +sl.dataset.assign, assigned_to: +sl.value}}).then(function (r) { if (!r.ok) alert(r.error); }); }; });
       $$('[data-note]').forEach(function (inp) { inp.onchange = function () { api('/api/my/leads', {method: 'POST', json: {id: +inp.dataset.note, note: inp.value}}); }; });
     });
   }
@@ -232,6 +240,7 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       (l.status === 'changes' ? '<div class="msg info" style="margin-top:6px;padding:8px 10px">' + t('Please fix: ', 'გთხოვთ შეასწოროთ: ') + esc(l.reject_reason || '') + ' — ' + t('press Edit, change it and save.', 'დააჭირეთ რედაქტირებას და შეინახეთ.') + '</div>' : '') +
       (needConfirm(l) ? '<div class="msg info" style="margin-top:6px;padding:8px 10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">' + (l.status === 'expired' ? t('This listing expired. Still available?', 'განცხადებას ვადა გაუვიდა. ისევ აქტუალურია?') : t('Is this property still available? Confirm to keep buyers\' trust.', 'ქონება ისევ ხელმისაწვდომია? დაადასტურეთ.')) +
         ' <button class="btn sm b-teal" data-act="confirm" data-id="' + l.id + '">' + KG.icon('check') + t('Yes, still available', 'დიახ, აქტუალურია') + '</button></div>' : '') +
+      (!(l.photos || []).length && l.status !== 'deleted' ? '<div class="msg info" style="margin-top:6px;padding:8px 10px">📸 ' + t('Add photos — listings with photos get many more calls and are approved faster.', 'დაამატეთ ფოტოები — ფოტოიან განცხადებას მეტი ზარი აქვს და უფრო სწრაფად მტკიცდება.') + '</div>' : '') +
       (l.verify_label ? '<div style="margin-top:6px"><span class="pill t-ver">' + KG.icon('check') + esc(KG.VLABEL(l.verify_level)) + '</span></div>' : '') + '</div>' +
       '<div class="acts">' + (l.status === 'active' ? '<a class="btn sm b-ghost" href="/p/?id=' + l.id + '" target="_blank">' + t('View', 'ნახვა') + '</a>' : '') +
       '<button class="btn sm b-ghost" data-act="edit" data-id="' + l.id + '">' + KG.icon('edit') + t('Edit', 'რედაქტირება') + '</button>' +

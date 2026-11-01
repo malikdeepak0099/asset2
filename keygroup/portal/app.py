@@ -61,7 +61,11 @@ DEFAULT_SETTINGS = {
 }
 CONSENT_VERSION = "2026-11-01"
 PARTNER_ROLES = ("agent", "agency", "developer")
-ROLES = ("owner",) + PARTNER_ROLES + ("admin",)
+STAFF_ROLES = ("admin", "moderator", "finance")
+ROLES = ("owner",) + PARTNER_ROLES + STAFF_ROLES
+# what each staff role may open in the admin panel ("*" = everything)
+STAFF_PERMS = {"admin": {"*"}, "moderator": {"stats", "listings", "reports", "chats", "leads", "partners", "analytics"},
+               "finance": {"stats", "orders", "analytics"}}
 VERIFY_LABELS = {0: "", 1: "Contact verified", 2: "Verified listing", 3: "Inspected"}
 
 DEALS = {"sale", "rent", "daily"}
@@ -137,7 +141,9 @@ def init_db():
                                 ("users", "totp_on", "INTEGER DEFAULT 0"), ("listings", "batch_id", "INTEGER DEFAULT 0"),
                                 ("listings", "lat", "REAL DEFAULT 0"), ("listings", "lon", "REAL DEFAULT 0"),
                                 ("listings", "project_id", "INTEGER DEFAULT 0"), ("listings", "building", "TEXT DEFAULT ''"),
-                                ("listings", "unit_no", "TEXT DEFAULT ''"), ("users", "org_id", "INTEGER DEFAULT 0")):
+                                ("listings", "unit_no", "TEXT DEFAULT ''"), ("users", "org_id", "INTEGER DEFAULT 0"),
+                                ("leads", "viewing_at", "REAL DEFAULT 0"), ("leads", "assigned_to", "INTEGER DEFAULT 0"),
+                                ("leads", "first_action_at", "REAL DEFAULT 0")):
             have = [r[1] for r in con.execute(f"PRAGMA table_info({table})")]
             if col not in have:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
@@ -222,12 +228,17 @@ def current_user(request):
     return dict(row)
 
 
-def need_user(request, admin=False):
+def need_user(request, admin=False, perm=None):
+    """admin=True -> full admin only; perm='listings' etc. -> admin or a staff role allowed to do that."""
     u = current_user(request)
     if not u:
         return None, err("Please log in", 401)
     if admin and u["role"] != "admin":
         return None, err("Admins only", 403)
+    if perm:
+        perms = STAFF_PERMS.get(u["role"], set())
+        if "*" not in perms and perm not in perms:
+            return None, err("Your staff role cannot open this", 403)
     return u, None
 
 
@@ -813,23 +824,40 @@ async def my_leads(request):
         stage = d.get("stage")
         with _LOCK, db() as con:
             row = con.execute("SELECT * FROM leads WHERE id=?", (lid,)).fetchone()
-            if not row or (u["role"] != "admin" and row["owner_id"] not in team_ids(con, u)):
+            if not row or (u["role"] not in STAFF_ROLES and row["owner_id"] not in team_ids(con, u) and row["assigned_to"] != u["id"]):
                 return err("Not found", 404)
+            now = time.time()
             if stage in ("new", "contacted", "viewing", "offer", "closed", "lost"):
-                con.execute("UPDATE leads SET stage=?, updated=? WHERE id=?", (stage, time.time(), lid))
+                con.execute("UPDATE leads SET stage=?, updated=? WHERE id=?", (stage, now, lid))
+                if stage != "new" and not row["first_action_at"]:
+                    con.execute("UPDATE leads SET first_action_at=? WHERE id=?", (now, lid))
+            if "viewing_at" in d:
+                try:
+                    va = float(d.get("viewing_at") or 0)
+                except (TypeError, ValueError):
+                    va = 0
+                con.execute("UPDATE leads SET viewing_at=?, updated=? WHERE id=?", (va, now, lid))
+                if va and row["stage"] in ("new", "contacted"):
+                    con.execute("UPDATE leads SET stage='viewing', first_action_at=COALESCE(NULLIF(first_action_at,0), ?) WHERE id=?", (now, lid))
+            if "assigned_to" in d:
+                to = int(d.get("assigned_to") or 0)
+                if to and to not in team_ids(con, u) and u["role"] != "admin":
+                    return err("You can assign only to your team")
+                con.execute("UPDATE leads SET assigned_to=?, updated=? WHERE id=?", (to, now, lid))
             if "note" in d:
                 con.execute("UPDATE leads SET note=?, updated=? WHERE id=?", (str(d["note"])[:1000], time.time(), lid))
         return ok()
     with db() as con:
         ids = team_ids(con, u)
-        rows = con.execute(f"""SELECT d.*, l.title, l.district, l.address, l.price, l.currency, l.deal, o.name AS agent_name FROM leads d
-                               LEFT JOIN listings l ON l.id=d.listing_id LEFT JOIN users o ON o.id=d.owner_id
-                               WHERE d.owner_id IN ({','.join('?' * len(ids))}) ORDER BY d.id DESC LIMIT 500""", ids).fetchall()
-    return ok(leads=[dict(r) for r in rows])
+        rows = con.execute(f"""SELECT d.*, l.title, l.district, l.address, l.price, l.currency, l.deal, o.name AS agent_name, a.name AS assigned_name
+                               FROM leads d LEFT JOIN listings l ON l.id=d.listing_id LEFT JOIN users o ON o.id=d.owner_id LEFT JOIN users a ON a.id=d.assigned_to
+                               WHERE d.owner_id IN ({','.join('?' * len(ids))}) OR d.assigned_to=? ORDER BY d.id DESC LIMIT 500""", (*ids, u["id"])).fetchall()
+        team = [dict(r) for r in con.execute("SELECT id, name FROM users WHERE org_id=?", (u["id"],))] if u["role"] == "agency" else []
+    return ok(leads=[dict(r) for r in rows], team=team)
 
 
 async def admin_leads(request):
-    u, e = need_user(request, admin=True)
+    u, e = need_user(request, perm="leads")
     if e:
         return e
     with db() as con:
@@ -868,7 +896,7 @@ async def partner_apply(request):
 
 
 async def admin_partners(request):
-    u, e = need_user(request, admin=True)
+    u, e = need_user(request, perm="partners")
     if e:
         return e
     with db() as con:
@@ -883,7 +911,7 @@ async def admin_partners(request):
 
 
 async def admin_partner_action(request):
-    u, e = need_user(request, admin=True)
+    u, e = need_user(request, perm="partners")
     if e:
         return e
     aid = int(request.path_params["aid"])
@@ -1132,7 +1160,7 @@ async def my_import(request):
 
 
 async def admin_import_action(request):
-    u, e = need_user(request, admin=True)
+    u, e = need_user(request, perm="partners")
     if e:
         return e
     bid = int(request.path_params["bid"])
@@ -1161,7 +1189,7 @@ async def admin_import_action(request):
 # ---------------------------------------------------------------- admin 2-step login
 
 async def admin_2fa(request):
-    u, e = need_user(request, admin=True)
+    u, e = need_user(request, perm="stats")
     if e:
         return e
     d = await body_json(request)
@@ -1215,7 +1243,7 @@ async def uploads(request):
 # ---------------------------------------------------------------- admin endpoints
 
 async def admin_stats(request):
-    u, e = need_user(request, admin=True)
+    u, e = need_user(request, perm="stats")
     if e:
         return e
     now = time.time()
@@ -1228,17 +1256,19 @@ async def admin_stats(request):
         reports = con.execute("SELECT COUNT(*) FROM reports WHERE status='open'").fetchone()[0]
         vip = con.execute("SELECT COUNT(*) FROM listings WHERE status='active' AND (vip_until>? OR super_until>?)", (now, now)).fetchone()[0]
         leads_new = con.execute("SELECT COUNT(*) FROM leads WHERE stage='new'").fetchone()[0]
+        no_photos = con.execute("SELECT COUNT(*) FROM listings WHERE status IN ('pending','active') AND (photos='[]' OR photos='')").fetchone()[0]
+        viewings_soon = con.execute("SELECT COUNT(*) FROM leads WHERE viewing_at BETWEEN ? AND ?", (now, now + 7 * 86400)).fetchone()[0]
         apps_new = con.execute("SELECT COUNT(*) FROM partner_apps WHERE status='new'").fetchone()[0]
         partners = con.execute(f"SELECT COUNT(*) FROM users WHERE role IN ({','.join('?' * len(PARTNER_ROLES))})", PARTNER_ROLES).fetchone()[0]
         dups = con.execute("SELECT COUNT(*) FROM listings WHERE dup_of!='' AND status IN ('pending','active','changes')").fetchone()[0]
         chats_waiting = con.execute("SELECT COUNT(*) FROM chats WHERE status IN ('waiting','agent') AND unread>0").fetchone()[0]
         chats_today = con.execute("SELECT COUNT(DISTINCT chat_id) FROM chat_msgs WHERE who='visitor' AND ts>?", (now - 86400,)).fetchone()[0]
-    return ok(stats={"leads_new": leads_new, "apps_new": apps_new, "partners": partners, "duplicates": dups, "chats_waiting": chats_waiting, "chats_today": chats_today, "listings": by_status, "owners": users, "orders_waiting": await_pay, "revenue_30d": paid_30,
+    return ok(stats={"no_photos": no_photos, "viewings_soon": viewings_soon, "role": u["role"], "leads_new": leads_new, "apps_new": apps_new, "partners": partners, "duplicates": dups, "chats_waiting": chats_waiting, "chats_today": chats_today, "listings": by_status, "owners": users, "orders_waiting": await_pay, "revenue_30d": paid_30,
                      "vip_active": vip, "reports_open": reports, "currency": get_settings()["currency"]})
 
 
 async def admin_listings(request):
-    u, e = need_user(request, admin=True)
+    u, e = need_user(request, perm="listings")
     if e:
         return e
     status = request.query_params.get("status", "pending")
@@ -1254,7 +1284,7 @@ async def admin_listings(request):
 
 
 async def admin_listing_action(request):
-    u, e = need_user(request, admin=True)
+    u, e = need_user(request, perm="listings")
     if e:
         return e
     lid = int(request.path_params["lid"])
@@ -1315,7 +1345,7 @@ def apply_plan(con, lid, plan, s):
 
 
 async def admin_reports(request):
-    u, e = need_user(request, admin=True)
+    u, e = need_user(request, perm="reports")
     if e:
         return e
     if request.method == "POST":
@@ -1330,7 +1360,7 @@ async def admin_reports(request):
 
 
 async def admin_orders(request):
-    u, e = need_user(request, admin=True)
+    u, e = need_user(request, perm="orders")
     if e:
         return e
     with db() as con:
@@ -1341,7 +1371,7 @@ async def admin_orders(request):
 
 
 async def admin_order_action(request):
-    u, e = need_user(request, admin=True)
+    u, e = need_user(request, perm="orders")
     if e:
         return e
     oid = int(request.path_params["oid"])
@@ -1383,7 +1413,7 @@ async def admin_users(request):
                 return ok(password=pw)
             elif action == "set_role":
                 role = d.get("role")
-                if role not in ("owner",) + PARTNER_ROLES:
+                if role not in ("owner",) + PARTNER_ROLES + ("moderator", "finance"):
                     return err("Unknown role")
                 con.execute("UPDATE users SET role=? WHERE id=? AND role!='admin'", (role, uid))
             elif action == "set_limit":
@@ -1585,7 +1615,7 @@ async def chat_poll(request):
 
 
 async def admin_chats(request):
-    u, e = need_user(request, admin=True)
+    u, e = need_user(request, perm="chats")
     if e:
         return e
     st = request.query_params.get("status", "open")
@@ -1605,7 +1635,7 @@ async def admin_chats(request):
 
 
 async def admin_chat(request):
-    u, e = need_user(request, admin=True)
+    u, e = need_user(request, perm="chats")
     if e:
         return e
     cid = int(request.path_params["cid"])
@@ -1668,7 +1698,7 @@ async def track_event(request):
 
 
 async def admin_analytics(request):
-    u, e = need_user(request, admin=True)
+    u, e = need_user(request, perm="analytics")
     if e:
         return e
     try:
@@ -1695,6 +1725,37 @@ async def admin_analytics(request):
                     FROM events e LEFT JOIN listings l ON l.id=json_extract(e.props,'$.listing_id')
                     WHERE e.ts>? AND e.name='listing_viewed' GROUP BY lid ORDER BY n DESC LIMIT 10""", (since,))]
     return ok(days=days, totals=totals, visitors=visitors, daily=daily, pages=pages, refs=refs, searches=searches, listings=listings)
+
+
+async def admin_performance(request):
+    """Who answers leads how fast, and where the supply is."""
+    u, e = need_user(request, perm="analytics")
+    if e:
+        return e
+    since = time.time() - 90 * 86400
+    with db() as con:
+        agents = [dict(r) for r in con.execute("""
+            SELECT COALESCE(a.id, o.id) AS uid, COALESCE(a.name, o.name) AS name, COALESCE(a.company, o.company) AS company, COALESCE(a.role, o.role) AS role,
+                   COUNT(*) AS leads, SUM(d.stage='new') AS untouched, SUM(d.stage IN ('viewing','offer','closed')) AS viewings, SUM(d.stage='closed') AS closed,
+                   AVG(CASE WHEN d.first_action_at>0 THEN (d.first_action_at-d.created)/3600.0 END) AS avg_hours
+            FROM leads d LEFT JOIN users o ON o.id=d.owner_id LEFT JOIN users a ON a.id=d.assigned_to
+            WHERE d.created>? GROUP BY uid ORDER BY leads DESC LIMIT 50""", (since,))]
+        supply = [dict(r) for r in con.execute("""SELECT COALESCE(NULLIF(city,''),'Tbilisi') AS city, COALESCE(NULLIF(district,''),'—') AS district,
+                    SUM(deal='rent') AS rent, SUM(deal='sale') AS sale, SUM(deal='daily') AS daily, COUNT(*) AS total
+                    FROM listings WHERE status='active' GROUP BY city, district ORDER BY total DESC LIMIT 40""")]
+        viewings = [dict(r) for r in con.execute("""SELECT d.id, d.name, d.phone, d.viewing_at, d.listing_id, l.title, l.district, o.name AS agent
+                    FROM leads d LEFT JOIN listings l ON l.id=d.listing_id LEFT JOIN users o ON o.id=COALESCE(NULLIF(d.assigned_to,0), d.owner_id)
+                    WHERE d.viewing_at>? ORDER BY d.viewing_at LIMIT 50""", (time.time() - 3600,))]
+        quality = con.execute("""SELECT SUM(photos='[]' OR photos='') AS no_photos, SUM(lat=0) AS no_pin, SUM(verify_level>=2) AS verified, COUNT(*) AS total
+                                 FROM listings WHERE status='active'""").fetchone()
+    crm = {}
+    for r in chatbot._crm_listings():
+        d = str(r.get("d") or "").strip()
+        if d and not d.startswith("#"):
+            name = chatbot.KA_TO_EN.get(d, d)
+            crm[name] = crm.get(name, 0) + 1
+    return ok(agents=agents, supply=supply, viewings=viewings, quality=dict(quality),
+              crm_supply=sorted(({"district": k, "total": v} for k, v in crm.items()), key=lambda x: -x["total"])[:25])
 
 
 async def admin_audit(request):
@@ -1765,6 +1826,7 @@ routes = [
     Route("/api/admin/2fa", admin_2fa, methods=["POST"]),
     Route("/api/admin/analytics", admin_analytics),
     Route("/api/admin/audit", admin_audit),
+    Route("/api/admin/performance", admin_performance),
     Route("/api/my/listings/{lid:int}/confirm", confirm_listing, methods=["POST"]),
     Route("/api/chat/send", chat_send, methods=["POST"]),
     Route("/api/chat/poll", chat_poll),

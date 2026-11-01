@@ -59,11 +59,15 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
       api('/api/login', {method: 'POST', json: {phone: e.target.phone.value, password: e.target.password.value, code: e.target.code.value}}).then(function (j) {
         if (j.need_code) { $('#codebox').classList.remove('hidden'); e.target.code.focus(); }
         if (!j.ok) { $('#lm').className = 'msg err'; $('#lm').textContent = j.error; return; }
-        if (j.user.role !== 'admin') { $('#lm').className = 'msg err'; $('#lm').textContent = 'This account is not an admin.'; return; }
+        if (['admin', 'moderator', 'finance'].indexOf(j.user.role) < 0) { $('#lm').className = 'msg err'; $('#lm').textContent = 'This account is not a staff account.'; return; }
         shell();
       });
     };
   }
+  var TABPERM = {dash: 'stats', chats: 'chats', leads: 'leads', partners: 'partners', listings: 'listings', orders: 'orders', reports: 'reports', users: '*', analytics: 'analytics', performance: 'analytics', log: '*', settings: '*'};
+  var ROLEPERM = {admin: ['*'], moderator: ['stats', 'listings', 'reports', 'chats', 'leads', 'partners', 'analytics'], finance: ['stats', 'orders', 'analytics']};
+  function can(tab) { var p = ROLEPERM[STATS.role || 'admin'] || []; return p.indexOf('*') >= 0 || p.indexOf(TABPERM[tab]) >= 0; }
+  function allowedTabs(list) { var l = list.filter(function (x) { return can(x[0]); }); if (!can(TAB)) TAB = 'dash'; return l; }
   function shell() {
     api('/api/admin/stats').then(function (j) {
       if (!j.ok) { login(); return; }
@@ -71,21 +75,23 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
       var pend = (STATS.listings || {}).pending || 0;
       $('#app').innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"><h1>KEY GROUP admin</h1>' +
         '<div style="display:flex;gap:8px"><a class="btn b-ghost" href="/account/">Owner view</a><button class="btn b-ghost" id="out">Log out</button></div></div>' +
-        '<div class="tabs">' + [['dash', 'Dashboard', 0], ['listings', 'Listings', pend], ['chats', 'Chats', STATS.chats_waiting], ['leads', 'Leads', STATS.leads_new], ['partners', 'Partners', STATS.apps_new], ['orders', 'Payments', STATS.orders_waiting], ['reports', 'Reports', STATS.reports_open], ['users', 'Users', 0], ['analytics', 'Analytics', 0], ['log', 'Activity log', 0], ['settings', 'Plans & settings', 0]].map(function (x) {
+        '<div class="tabs">' + allowedTabs([['dash', 'Dashboard', 0], ['listings', 'Listings', pend], ['chats', 'Chats', STATS.chats_waiting], ['leads', 'Leads', STATS.leads_new], ['partners', 'Partners', STATS.apps_new], ['orders', 'Payments', STATS.orders_waiting], ['reports', 'Reports', STATS.reports_open], ['users', 'Users', 0], ['analytics', 'Analytics', 0], ['performance', 'Performance', STATS.viewings_soon], ['log', 'Activity log', 0], ['settings', 'Plans & settings', 0]]).map(function (x) {
           return '<button data-t="' + x[0] + '" aria-pressed="' + (TAB === x[0]) + '">' + x[1] + (x[2] ? ' <span class="n">' + x[2] + '</span>' : '') + '</button>';
         }).join('') + '</div><div id="tab"></div>';
       $$('[data-t]').forEach(function (b) { b.onclick = function () { TAB = b.dataset.t; shell(); }; });
       $('#out').onclick = function () { api('/api/logout', {method: 'POST'}).then(login); };
       clearInterval(window.__chatTimer);
-      ({leads: leadsTab, partners: partnersTab, analytics: analytics, log: activity, dash: dash, chats: chats, listings: listings, orders: orders, reports: reports, users: users, settings: settings})[TAB]();
+      ({performance: performance, leads: leadsTab, partners: partnersTab, analytics: analytics, log: activity, dash: dash, chats: chats, listings: listings, orders: orders, reports: reports, users: users, settings: settings})[TAB]();
     });
   }
   function dash() {
     var L = STATS.listings || {}, cur = STATS.currency === 'GEL' ? '₾' : STATS.currency;
     $('#tab').innerHTML = '<div class="kpis">' + [[L.pending || 0, 'Waiting for approval'], [L.active || 0, 'Live owner listings'], [STATS.vip_active, 'VIP / Super VIP live'], [STATS.orders_waiting, 'Payments to confirm'],
-      [cur + Math.round(STATS.revenue_30d), 'Paid in last 30 days'], [STATS.owners, 'Owner accounts'], [STATS.leads_new || 0, 'New enquiries'], [STATS.partners || 0, 'Partners'], [STATS.apps_new || 0, 'Partner applications'], [STATS.reports_open, 'Open reports'], [STATS.duplicates || 0, 'Possible duplicates'], [L.changes || 0, 'Waiting for owner changes'], [STATS.chats_today || 0, 'Website chats (24h)'], [L.expired || 0, 'Expired']].map(function (k) {
+      [cur + Math.round(STATS.revenue_30d), 'Paid in last 30 days'], [STATS.owners, 'Owner accounts'], [STATS.leads_new || 0, 'New enquiries'], [STATS.viewings_soon || 0, 'Viewings next 7 days'], [STATS.no_photos || 0, 'Listings without photos'], [STATS.partners || 0, 'Partners'], [STATS.apps_new || 0, 'Partner applications'], [STATS.reports_open, 'Open reports'], [STATS.duplicates || 0, 'Possible duplicates'], [L.changes || 0, 'Waiting for owner changes'], [STATS.chats_today || 0, 'Website chats (24h)'], [L.expired || 0, 'Expired']].map(function (k) {
         return '<div class="card"><b>' + esc(k[0]) + '</b><span>' + esc(k[1]) + '</span></div>'; }).join('') + '</div>' +
-      '<p class="muted" style="margin-top:18px">New listings, plan orders and reports also come to the KEY GROUP Telegram bot.</p>';
+      '<p class="muted" style="margin-top:18px">New listings, plan orders and reports also come to the KEY GROUP Telegram bot.</p>' +
+      (STATS.role !== 'admin' ? '<div class="card" id="tfd" style="padding:22px;display:flex;flex-direction:column;gap:12px;max-width:520px;margin-top:18px"></div>' : '');
+    if ($('#tfd')) twoFactor($('#tfd'));
   }
   var CSTAT = 'open', CID = 0;
   function chats() {
@@ -214,6 +220,22 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
       };
     });
   }
+  function performance() {
+    api('/api/admin/performance').then(function (j) {
+      if (!j.ok) { $('#tab').innerHTML = '<div class="msg err">' + esc(j.error) + '</div>'; return; }
+      var Q = j.quality || {};
+      var tbl = function (title, head, rows) { return '<div class="card tablewrap" style="padding:0;margin-top:16px"><h3 style="padding:14px 16px 0">' + title + '</h3><table><thead><tr>' + head.map(function (h) { return '<th>' + h + '</th>'; }).join('') + '</tr></thead><tbody>' + (rows.length ? rows.join('') : '<tr><td colspan="' + head.length + '" class="muted">No data yet.</td></tr>') + '</tbody></table></div>'; };
+      $('#tab').innerHTML = '<div class="kpis">' + [[Q.total || 0, 'Live owner/partner listings'], [Q.verified || 0, 'Verified (L2+)'], [Q.no_photos || 0, 'Live without photos'], [Q.no_pin || 0, 'Live without map pin']].map(function (k) { return '<div class="card"><b>' + esc(k[0]) + '</b><span>' + esc(k[1]) + '</span></div>'; }).join('') + '</div>' +
+        tbl('Upcoming viewings', ['When', 'Visitor', 'Listing', 'Agent'], (j.viewings || []).map(function (v) { return '<tr><td><b>' + fmtDate(v.viewing_at) + '</b></td><td>' + esc(v.name || '') + ' <a href="tel:' + esc(v.phone) + '" style="color:var(--blue)">' + esc(v.phone) + '</a></td><td><a href="/p/?id=' + v.listing_id + '" target="_blank" style="color:var(--blue)">#' + v.listing_id + '</a> ' + esc(v.title || v.district || '') + '</td><td>' + esc(v.agent || '') + '</td></tr>'; })) +
+        tbl('Lead response (last 90 days)', ['Agent / owner', 'Leads', 'Not answered yet', 'Viewings+', 'Closed', 'Avg first response'], (j.agents || []).map(function (a) {
+          var h = a.avg_hours, txt = h == null ? '—' : h < 1 ? Math.round(h * 60) + ' min' : h < 48 ? h.toFixed(1) + ' h' : Math.round(h / 24) + ' days';
+          return '<tr><td><b>' + esc(a.name || '—') + '</b><br><span class="muted">' + esc(a.company || a.role || '') + '</span></td><td>' + a.leads + '</td><td' + (a.untouched ? ' style="color:var(--coral);font-weight:700"' : '') + '>' + (a.untouched || 0) + '</td><td>' + (a.viewings || 0) + '</td><td>' + (a.closed || 0) + '</td><td' + (h > 24 ? ' style="color:var(--coral);font-weight:700"' : '') + '>' + txt + '</td></tr>'; })) +
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px">' +
+        tbl('Owner & partner supply by area', ['City · district', 'Rent', 'Sale', 'Total'], (j.supply || []).map(function (r) { return '<tr><td>' + esc(r.city) + ' · ' + esc(r.district) + '</td><td>' + r.rent + '</td><td>' + r.sale + '</td><td><b>' + r.total + '</b></td></tr>'; })) +
+        tbl('KEY GROUP CRM listings by district', ['District', 'Listings'], (j.crm_supply || []).map(function (r) { return '<tr><td>' + esc(r.district) + '</td><td><b>' + r.total + '</b></td></tr>'; })) + '</div>' +
+        '<p class="muted" style="font-size:13px">Red = leads nobody has answered yet, or an average first response slower than 24 hours.</p>';
+    });
+  }
   function analytics() {
     var days = window.__anDays || 30;
     api('/api/admin/analytics?days=' + days).then(function (j) {
@@ -262,6 +284,7 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
           if (a === 'changes') { var c = prompt('What should the owner fix? (shown to the owner, e.g. "add real photos of the kitchen", "price missing")'); if (!c) return; body.reason = c; }
           if (a === 'level') body.level = +b.dataset.l;
           if (a === 'delete' && !confirm('Delete listing #' + id + '?')) return;
+          if (a === 'approve' && b.dataset.nophoto === '1' && !confirm('This listing has no photos. Approve anyway? (Better: "Request changes" and ask for photos.)')) return;
           api('/api/admin/listings/' + id, {method: 'POST', json: body}).then(function (r) { if (!r.ok) alert(r.error); shell(); });
         };
       });
@@ -272,7 +295,7 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
     var tier = l.tier === 'super' ? '<span class="pill t-super">Super VIP</span>' : l.tier === 'vip' ? '<span class="pill t-vip">VIP</span>' : '';
     var btn = function (a, label, cls) { return '<button class="btn sm ' + (cls || 'b-ghost') + '" data-a="' + a + '" data-id="' + l.id + '">' + label + '</button>'; };
     return '<div class="item"><div class="th" style="' + (ph[0] ? 'background-image:url(' + KG.photo(ph[0], true) + ')' : '') + '"></div><div>' +
-      '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span class="pill st-' + esc(l.status) + '">' + esc(l.status === 'changes' ? 'changes requested' : l.status) + '</span>' + tier + (l.verify_level ? '<span class="pill t-ver">L' + l.verify_level + ' · ' + esc(l.verify_label) + '</span>' : '') +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span class="pill st-' + esc(l.status) + '">' + esc(l.status === 'changes' ? 'changes requested' : l.status) + '</span>' + tier + (l.verify_level ? '<span class="pill t-ver">L' + l.verify_level + ' · ' + esc(l.verify_label) + '</span>' : '') + (!ph.length ? '<span class="pill st-rejected">no photos</span>' : '') + (!l.lat ? '<span class="pill st-paused">no map pin</span>' : '') +
       '<b>#' + l.id + ' · ' + esc(KG.DEAL(l.deal)) + ' · ' + esc(KG.TYPE(l.type)) + ' · ' + KG.money(l.price, l.currency) + '</b></div>' +
       '<div style="margin-top:4px">' + esc(l.title || '') + ' <span class="muted">' + esc([l.city, l.district, l.address].filter(Boolean).join(', ')) + ' · ' + (l.rooms || '—') + ' rooms · ' + (l.area || '—') + ' m² · floor ' + esc(l.floor || '—') + '</span></div>' +
       '<div class="muted" style="font-size:13px">Owner: <b>' + esc(l.owner_name || '') + '</b> ' + esc(l.owner_phone || '') + ' · contact ' + esc(l.contact_name || '') + ' ' + esc(l.contact_phone || '') + ' · created ' + fmtDate(l.created) + ' · ' + (l.views || 0) + ' views</div>' +
@@ -281,7 +304,7 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
       '<div class="muted" style="font-size:12px;margin-top:4px">Availability confirmed: ' + fmtDate(l.confirmed) + '</div>' +
       (l.description ? '<div class="desc">' + esc(l.description) + '</div>' : '') +
       '<div class="thumbs">' + ph.map(function (p) { return '<a href="' + KG.photo(p) + '" target="_blank" style="background-image:url(' + KG.photo(p, true) + ')"></a>'; }).join('') + '</div>' +
-      '<div class="acts">' + (l.status !== 'active' ? btn('approve', '✓ Approve', 'b-teal') : '') + (l.status !== 'rejected' ? btn('reject', 'Reject', 'b-red') : '') +
+      '<div class="acts">' + (l.status !== 'active' ? btn('approve', '✓ Approve', 'b-teal').replace('<button ', '<button data-nophoto="' + (ph.length ? 0 : 1) + '" ') : '') + (l.status !== 'rejected' ? btn('reject', 'Reject', 'b-red') : '') +
       (l.status === 'active' ? btn('pause', 'Pause') + '<a class="btn sm b-ghost" target="_blank" href="/p/?id=' + l.id + '">Open</a>' : '') + (l.status === 'expired' ? btn('renew', 'Renew 30 days') : '') +
       (l.status !== 'changes' ? btn('changes', 'Request changes') : '') +
       '<span style="display:inline-flex;gap:2px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:2px 4px"><span class="muted" style="font-size:12px;padding:0 4px">Verify</span>' +
@@ -324,7 +347,7 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
       var U = j.users || [];
       $('#tab').innerHTML = '<div class="card tablewrap"><table><thead><tr><th>Name</th><th>Phone</th><th>Role</th><th>Listings</th><th>Joined</th><th></th></tr></thead><tbody>' +
         U.map(function (u) {
-          return '<tr><td>' + esc(u.name) + (u.blocked ? ' <span class="pill st-rejected">blocked</span>' : '') + (u.contact_verified ? ' <span class="pill t-ver">contact verified</span>' : '') + (u.consent_at ? '<br><span class="muted" style="font-size:11px">consent ' + fmtDate(u.consent_at) + '</span>' : '') + '</td><td>' + esc(u.phone) + '</td><td>' + (u.role === 'admin' ? 'admin' : '<select data-role="' + u.id + '">' + ['owner', 'agent', 'agency', 'developer'].map(function (r) { return '<option' + (u.role === r ? ' selected' : '') + '>' + r + '</option>'; }).join('') + '</select>') + (u.company ? '<br><span class="muted" style="font-size:12px">' + esc(u.company) + '</span>' : '') + '</td><td>' + u.listings + (u.role !== 'admin' ? '<br><span class="muted" style="font-size:12px">limit <input data-limit="' + u.id + '" type="number" min="0" value="' + (u.listing_limit || '') + '" placeholder="default" style="width:70px;border:1px solid var(--line);border-radius:6px;padding:2px 4px"></span>' : '') + '</td><td>' + fmtDate(u.created) + '</td>' +
+          return '<tr><td>' + esc(u.name) + (u.blocked ? ' <span class="pill st-rejected">blocked</span>' : '') + (u.contact_verified ? ' <span class="pill t-ver">contact verified</span>' : '') + (u.consent_at ? '<br><span class="muted" style="font-size:11px">consent ' + fmtDate(u.consent_at) + '</span>' : '') + '</td><td>' + esc(u.phone) + '</td><td>' + (u.role === 'admin' ? 'admin' : '<select data-role="' + u.id + '">' + ['owner', 'agent', 'agency', 'developer', 'moderator', 'finance'].map(function (r) { return '<option' + (u.role === r ? ' selected' : '') + '>' + r + '</option>'; }).join('') + '</select>') + (u.company ? '<br><span class="muted" style="font-size:12px">' + esc(u.company) + '</span>' : '') + '</td><td>' + u.listings + (u.role !== 'admin' ? '<br><span class="muted" style="font-size:12px">limit <input data-limit="' + u.id + '" type="number" min="0" value="' + (u.listing_limit || '') + '" placeholder="default" style="width:70px;border:1px solid var(--line);border-radius:6px;padding:2px 4px"></span>' : '') + '</td><td>' + fmtDate(u.created) + '</td>' +
             '<td>' + (u.role !== 'admin' ? '<button class="btn sm b-ghost" data-u="' + (u.blocked ? 'unblock' : 'block') + '" data-id="' + u.id + '">' + (u.blocked ? 'Unblock' : 'Block') + '</button> <button class="btn sm b-ghost" data-u="reset_password" data-id="' + u.id + '">Reset password</button> <button class="btn sm b-ghost" data-u="' + (u.contact_verified ? 'unverify_contact' : 'verify_contact') + '" data-id="' + u.id + '">' + (u.contact_verified ? 'Unverify contact' : 'Verify contact (L1)') + '</button>' : '') + '</td></tr>';
         }).join('') + '</tbody></table></div>';
       $$('[data-role]').forEach(function (sl) { sl.onchange = function () { api('/api/admin/users', {method: 'POST', json: {id: +sl.dataset.role, action: 'set_role', role: sl.value}}); }; });
@@ -376,7 +399,7 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
     });
   }
   if (['#chats', '#leads', '#partners'].indexOf(location.hash) >= 0) TAB = location.hash.slice(1);
-  api('/api/me').then(function (j) { j.user && j.user.role === 'admin' ? shell() : login(); });
+  api('/api/me').then(function (j) { j.user && ['admin', 'moderator', 'finance'].indexOf(j.user.role) >= 0 ? shell() : login(); });
 })();
 </script>
 </body>

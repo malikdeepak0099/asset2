@@ -104,37 +104,56 @@ def district_pages():
     return out
 
 
-def render(pg, all_pages):
+LBL = {
+    "rent per m² a month": ("ქირა მ²-ზე თვეში", "аренда за м² в месяц"), "gross rental yield": ("წლიური შემოსავალი ქირიდან", "доходность аренды"),
+    "usual contract": ("ჩვეულებრივი ხელშეკრულება", "обычный договор"), "average asking price per m²": ("საშუალო ფასი მ²-ზე", "средняя цена за м²"),
+    "price change in a year": ("ფასის ცვლილება წელიწადში", "изменение цены за год"), "average gross yield": ("საშუალო შემოსავალი", "средняя доходность"),
+    "for rent and sale": ("ქირით და იყიდება", "аренда и продажа"), "tax on commercial rent": ("კომერციული ქირის გადასახადი", "налог на коммерческую аренду"),
+    "registration": ("რეგისტრაცია", "регистрация"), "average price per m² (2025)": ("საშუალო ფასი მ²-ზე (2025)", "средняя цена за м² (2025)"),
+    "of buyers are foreigners": ("მყიდველები — უცხოელები", "покупателей — иностранцы"), "rentals": ("ქირა", "аренда"), "New Boulevard": ("ახალი ბულვარი", "Новый бульвар"),
+    "replies the same day": ("პასუხი იმავე დღეს", "ответ в тот же день"), "renovated, per m²": ("რემონტით, მ²-ზე", "с ремонтом, за м²"), "rent per m²": ("ქირა მ²-ზე", "аренда за м²"),
+    "gross yield": ("შემოსავალი", "доходность"), "Tbilisi average per m²": ("თბილისის საშუალო მ²-ზე", "средняя по Тбилиси за м²"), "many projects": ("ბევრი პროექტი", "много проектов"),
+    "near the river": ("მდინარესთან", "у реки"), "property for a residence permit": ("ქონება ბინადრობისთვის", "недвижимость для ВНЖ"), "Tbilisi rental yield": ("შემოსავალი თბილისში", "доходность в Тбилиси"),
+    "buying costs": ("ყიდვის ხარჯი", "расходы на покупку"), "GDP growth 2025": ("მშპ-ს ზრდა 2025", "рост ВВП 2025"),
+}
+UI = {"en": ("Current listings", "See all listings →", "Map", "More", "New listings are added every day — message us and an agent will send you options."),
+      "ka": ("აქტუალური განცხადებები", "ყველა განცხადება →", "რუკა", "მეტი", "ახალი განცხადებები ყოველდღე ემატება — მოგვწერეთ და აგენტი შეგირჩევთ."),
+      "ru": ("Актуальные объявления", "Все объявления →", "Карта", "Ещё", "Новые объявления каждый день — напишите нам, и агент подберёт варианты.")}
+
+
+def lurl(path, lg):
+    return f"{SITE}/{'' if lg == 'en' else lg + '/'}{path}/"
+
+
+def render(pg, all_pages, lg):
     e = html.escape
-    url = f"{SITE}/{pg['path']}/"
-    title_en, desc_en, body_en = pg["en"]
-    crumbs = [("KEY GROUP", SITE + "/")]
-    parts = pg["path"].split("/")
-    if len(parts) > 1:
-        crumbs.append((parts[0].capitalize(), SITE + "/search/"))
-    crumbs.append((title_en, url))
+    url = lurl(pg["path"], lg)
+    title, desc, body = pg[lg]
     ld = [{"@context": "https://schema.org", "@type": "BreadcrumbList",
-           "itemListElement": [{"@type": "ListItem", "position": i + 1, "name": n, "item": u} for i, (n, u) in enumerate(crumbs)]},
+           "itemListElement": [{"@type": "ListItem", "position": 1, "name": "KEY GROUP", "item": SITE + "/"},
+                               {"@type": "ListItem", "position": 2, "name": title, "item": url}]},
           {"@context": "https://schema.org", "@type": "FAQPage",
-           "mainEntity": [{"@type": "Question", "name": q, "acceptedAnswer": {"@type": "Answer", "text": a}} for q, a in FAQ["en"]]}]
-    facts = "".join(f'<div class="card"><b>{e(v)}</b><span>{e(lbl)}</span></div>' for v, lbl in pg["facts"])
-    langs = ""
-    for lg in ("en", "ka", "ru"):
-        t, d, b = pg[lg]
-        faq = "".join(f"<details><summary>{e(q)}</summary><p>{e(a)}</p></details>" for q, a in FAQ[lg])
-        langs += f'<section data-lang="{lg}"{"" if lg == "en" else " hidden"}><h1>{e(t)}</h1><p class="lead">{e(b)}</p><div class="faqh" data-faq>{faq}</div></section>'
-    links = "".join(f'<a href="/{p["path"]}/">{e(p["en"][0])}</a>' for p in all_pages if p["path"] != pg["path"])
+           "mainEntity": [{"@type": "Question", "name": q, "acceptedAnswer": {"@type": "Answer", "text": a}} for q, a in FAQ[lg]]}]
+    li = {"en": 0, "ka": 1, "ru": 2}[lg]
+    facts = "".join(f'<div class="card"><b>{e(v)}</b><span>{e(lbl if li == 0 else LBL.get(lbl, (lbl, lbl))[li - 1])}</span></div>' for v, lbl in pg["facts"])
+    faq = "".join(f"<details><summary>{e(q)}</summary><p>{e(a)}</p></details>" for q, a in FAQ[lg])
+    alts = "".join(f'<link rel="alternate" hreflang="{x}" href="{lurl(pg["path"], x)}">' for x in ("en", "ka", "ru")) + f'<link rel="alternate" hreflang="x-default" href="{lurl(pg["path"], "en")}">'
+    langbtn = "".join(f'<a href="{lurl(pg["path"], x)}" data-l="{x}" aria-current="{"true" if x == lg else "false"}">{n}</a>' for x, n in (("en", "EN"), ("ka", "ქარ"), ("ru", "RU")))
+    pre = "" if lg == "en" else "/" + lg
+    links = "".join(f'<a href="{pre}/{p["path"]}/">{e(p[lg][0])}</a>' for p in all_pages if p["path"] != pg["path"])
+    u = UI[lg]
     flt = json.dumps(pg["filter"], ensure_ascii=False)
     return f"""<!doctype html>
-<html lang="en">
+<html lang="{lg}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{e(title_en)} | KEY GROUP Real Estate</title>
-<meta name="description" content="{e(desc_en)}">
+<title>{e(title)} | KEY GROUP Real Estate</title>
+<meta name="description" content="{e(desc)}">
 <link rel="canonical" href="{url}">
-<meta property="og:title" content="{e(title_en)} — KEY GROUP">
-<meta property="og:description" content="{e(desc_en)}">
+{alts}
+<meta property="og:title" content="{e(title)} — KEY GROUP">
+<meta property="og:description" content="{e(desc)}">
 <meta property="og:url" content="{url}">
 <meta property="og:image" content="{SITE}/img/hero.png">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -145,42 +164,36 @@ def render(pg, all_pages):
 .pg{{padding:26px 0 64px}}.crumb{{font-size:13px;color:var(--muted)}}.crumb a{{color:var(--blue)}}
 .lead{{font-size:17px;color:#33465c;max-width:900px}}
 .facts{{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:18px 0}}.facts .card{{padding:16px}}.facts b{{display:block;font:800 22px var(--display)}}.facts span{{color:var(--muted);font-size:13px}}
-.lt{{display:flex;gap:6px;margin:6px 0 10px}}.lt button{{border:1px solid var(--line);background:#fff;border-radius:999px;padding:5px 12px;font:700 12px var(--display);cursor:pointer}}.lt button[aria-pressed="true"]{{background:var(--navy);color:#fff}}
+.lt{{display:flex;gap:6px;margin:6px 0 10px}}.lt a{{border:1px solid var(--line);background:#fff;border-radius:999px;padding:5px 12px;font:700 12px var(--display)}}.lt a[aria-current="true"]{{background:var(--navy);color:#fff}}
 .faqh details{{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 16px;margin-bottom:8px;max-width:900px}}.faqh summary{{font:700 15px var(--display);cursor:pointer}}
 .more-links{{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}}.more-links a{{background:#fff;border:1px solid var(--line);border-radius:999px;padding:7px 12px;font:600 13px var(--display)}}
 </style>
 </head>
 <body>
 <main class="wrap pg">
-  <div class="crumb"><a href="/">KEY GROUP</a> › {e(title_en)}</div>
-  <div class="lt" role="group" aria-label="Language"><button data-l="en" aria-pressed="true">EN</button><button data-l="ka">ქარ</button><button data-l="ru">RU</button></div>
-  {langs}
+  <div class="crumb"><a href="/">KEY GROUP</a> › {e(title)}</div>
+  <nav class="lt" aria-label="Language">{langbtn}</nav>
+  <h1>{e(title)}</h1><p class="lead">{e(body)}</p>
   <div class="facts">{facts}</div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:22px">
-    <a class="btn b-coral" href="/search/?{pg['search']}" id="all">See all listings →</a>
-    <a class="btn b-wa" target="_blank" rel="noopener" href="https://wa.me/995577114118?text={e('Hello KEY GROUP! ' + title_en)}">WhatsApp</a>
-    <a class="btn b-ghost" href="/search/?{pg['search']}&view=map">🗺 Map</a>
+    <a class="btn b-coral" href="/search/?{pg['search']}">{e(u[1])}</a>
+    <a class="btn b-wa" target="_blank" rel="noopener" href="https://wa.me/995577114118?text={e('KEY GROUP: ' + title)}">WhatsApp</a>
+    <a class="btn b-ghost" href="/search/?{pg['search']}&view=map">🗺 {e(u[2])}</a>
   </div>
-  <h2 style="margin-bottom:12px" id="lh">Current listings</h2>
+  <h2 style="margin-bottom:12px">{e(u[0])}</h2>
   <div class="lgrid" id="grid"><div class="empty">…</div></div>
-  <h2 style="margin:34px 0 8px">More</h2><div class="more-links">{links}<a href="/invest-in-georgia/">Invest in Georgia</a><a href="/project/">New build projects</a><a href="/partners/">For agents & developers</a></div>
+  <div class="faqh" style="margin-top:30px">{faq}</div>
+  <h2 style="margin:30px 0 8px">{e(u[3])}</h2><div class="more-links">{links}<a href="/project/">🏗 Projects</a><a href="/partners/">🤝 Partners</a></div>
 </main>
 <script src="/assets/portal.js"></script>
 <script src="/assets/chat.js" defer></script>
 <script>
 (function () {{
+  try {{ localStorage.setItem('kg_lang', '{lg}'); }} catch (e) {{}}
+  KG.lang = '{'en' if lg == 'ru' else lg}';
   KG.header('search');
+  KG.$$('.lt a').forEach(function (a) {{ a.addEventListener('click', function () {{ try {{ localStorage.setItem('kg_lang', a.dataset.l); }} catch (e) {{}} }}); }});
   var F = {flt};
-  var lang = 'en'; try {{ lang = localStorage.getItem('kg_lang') || (KG.lang === 'ka' ? 'ka' : 'en'); }} catch (e) {{}}
-  var L = {{en: ['Current listings', 'See all listings →'], ka: ['აქტუალური განცხადებები', 'ყველა განცხადება →'], ru: ['Актуальные объявления', 'Все объявления →']}};
-  function show(l) {{
-    if (!L[l]) l = 'en';
-    KG.$$('[data-lang]').forEach(function (s) {{ s.hidden = s.dataset.lang !== l; }});
-    KG.$$('.lt button').forEach(function (b) {{ b.setAttribute('aria-pressed', b.dataset.l === l); }});
-    KG.$('#lh').textContent = L[l][0]; KG.$('#all').textContent = L[l][1]; document.documentElement.lang = l;
-  }}
-  KG.$$('.lt button').forEach(function (b) {{ b.onclick = function () {{ try {{ localStorage.setItem('kg_lang', b.dataset.l); }} catch (e) {{}} show(b.dataset.l); }}; }});
-  show(lang);
   KG.bindFavs(document);
   KG.loadAll().then(function (all) {{
     var res = all.filter(function (x) {{
@@ -192,7 +205,7 @@ def render(pg, all_pages):
       return true;
     }});
     res.sort(function (a, b) {{ var r = function (l) {{ return l.tier === 'super' ? 2 : l.tier === 'vip' ? 1 : 0; }}; return r(b) - r(a) || (b.src === 'owner') - (a.src === 'owner'); }});
-    KG.$('#grid').innerHTML = res.length ? res.slice(0, 12).map(KG.card).join('') : '<div class="empty">' + ({{en: 'New listings are added every day — message us and an agent will send you options.', ka: 'ახალი განცხადებები ყოველდღე ემატება — მოგვწერეთ.', ru: 'Новые объявления каждый день — напишите нам.'}})[lang] + '</div>';
+    KG.$('#grid').innerHTML = res.length ? res.slice(0, 12).map(KG.card).join('') : '<div class="empty">{e(u[4])}</div>';
   }});
 }})();
 </script>
@@ -203,11 +216,14 @@ def render(pg, all_pages):
 
 def main():
     pages = PAGES + district_pages() + [INVEST]
+    urls = []
     for pg in pages:
-        d = os.path.join(HERE, "site", pg["path"])
-        os.makedirs(d, exist_ok=True)
-        open(os.path.join(d, "index.html"), "w").write(render(pg, pages))
-    print("\n".join(SITE + "/" + p["path"] + "/" for p in pages))
+        for lg in ("en", "ka", "ru"):
+            d = os.path.join(HERE, "site", ("" if lg == "en" else lg + "/") + pg["path"])
+            os.makedirs(d, exist_ok=True)
+            open(os.path.join(d, "index.html"), "w").write(render(pg, pages, lg))
+        urls.append(pg["path"])
+    print("\n".join(urls))
 
 
 if __name__ == "__main__":

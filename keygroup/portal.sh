@@ -5,8 +5,11 @@ SITE=/opt/keygroup/site
 DIR=/opt/keygroup-portal
 cd /opt/keygroup || { echo "STOP: /opt/keygroup not found"; exit 1; }
 # 0) backups: install daily backup + restore scripts, and back up before every update
-for f in backup.sh restore.sh; do curl -fsSL "$RAW/$f?$(date +%s)" -o "/opt/keygroup/$f" && chmod 700 "/opt/keygroup/$f"; done
-( crontab -l 2>/dev/null | grep -v 'keygroup/backup.sh'; echo "30 3 * * * /bin/bash /opt/keygroup/backup.sh >> /var/log/keygroup-backup.log 2>&1" ) | crontab -
+for f in backup.sh restore.sh restore_test.sh monitor.sh; do curl -fsSL "$RAW/$f?$(date +%s)" -o "/opt/keygroup/$f" && chmod 700 "/opt/keygroup/$f"; done
+( crontab -l 2>/dev/null | grep -v 'keygroup/backup.sh' | grep -v 'keygroup/monitor.sh' | grep -v 'keygroup/restore_test.sh'
+  echo "30 3 * * * /bin/bash /opt/keygroup/backup.sh >> /var/log/keygroup-backup.log 2>&1"
+  echo "*/5 * * * * /bin/bash /opt/keygroup/monitor.sh >> /var/log/keygroup-monitor.log 2>&1"
+  echo "0 5 * * 0 /bin/bash /opt/keygroup/restore_test.sh >> /var/log/keygroup-restore-test.log 2>&1" ) | crontab -
 [ -d /opt/keygroup-portal/data ] && bash /opt/keygroup/backup.sh
 # 1) website pages
 curl -fsSL "$RAW/u.sh?$(date +%s)" | bash || { echo "STOP: website update failed"; exit 1; }
@@ -58,6 +61,7 @@ PY
 fi
 sleep 2
 if curl -fsS https://keygroup.ge/api/health >/dev/null 2>&1 || curl -fsS -H 'Host: keygroup.ge' http://127.0.0.1/api/health >/dev/null 2>&1; then echo "portal reachable: OK"; fi
+bash /opt/keygroup/restore_test.sh 2>/dev/null | tail -2
 echo "DONE - owner portal is live: https://keygroup.ge/account/  admin: https://keygroup.ge/admin/"
 if [ "$FIRST_RUN" = "1" ]; then
   echo "================ ADMIN LOGIN (write it down) ================"
