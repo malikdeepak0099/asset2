@@ -49,13 +49,13 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
   var STAGES = [['new', t('New', 'ახალი')], ['contacted', t('Contacted', 'დაკავშირებული')], ['viewing', t('Viewing', 'დათვალიერება')], ['offer', t('Offer', 'შეთავაზება')], ['closed', t('Deal closed', 'გარიგება')], ['lost', t('Lost', 'დაკარგული')]];
   function tabs() {
     var nl = (ME && ME.new_leads) || 0;
-    return '<div class="seg" style="max-width:560px;margin:0 0 16px">' + [['listings', t('My listings', 'განცხადებები')], ['leads', t('Leads', 'მოთხოვნები') + (nl ? ' (' + nl + ')' : '')]].concat(PARTNER() ? [['bulk', t('Bulk upload', 'მასობრივი ატვირთვა')]] : []).map(function (x) {
+    return '<div class="seg" style="max-width:760px;margin:0 0 16px">' + [['listings', t('My listings', 'განცხადებები')], ['leads', t('Leads', 'მოთხოვნები') + (nl ? ' (' + nl + ')' : '')]].concat(ME.role === 'developer' || ME.role === 'admin' ? [['projects', t('Projects', 'პროექტები')]] : []).concat(ME.role === 'agency' ? [['team', t('Team', 'გუნდი')]] : []).concat(PARTNER() ? [['bulk', t('Bulk upload', 'მასობრივი ატვირთვა')]] : []).map(function (x) {
       return '<button type="button" data-tab="' + x[0] + '" aria-pressed="' + (TAB === x[0]) + '">' + esc(x[1]) + '</button>'; }).join('') + '</div>';
   }
   function bindTabs() { $$('[data-tab]').forEach(function (b) { b.onclick = function () { TAB = b.dataset.tab; render(); }; }); }
-  function render() { api('/api/me').then(function (j) { if (j.user) { ME = j.user; SETTINGS = j.settings; } ({listings: dash, leads: leads, bulk: bulk})[TAB](); }); }
+  function render() { api('/api/me').then(function (j) { if (j.user) { ME = j.user; SETTINGS = j.settings; } ({listings: dash, leads: leads, bulk: bulk, team: team, projects: projects})[TAB](); }); }
   function head() {
-    return '<div class="dash-head"><div><h1>' + (TAB === 'leads' ? t('Leads', 'მოთხოვნები') : TAB === 'bulk' ? t('Bulk upload', 'მასობრივი ატვირთვა') : t('My listings', 'ჩემი განცხადებები')) + '</h1><span class="muted">' + esc(ME.name) + (ME.company ? ' · ' + esc(ME.company) : '') + ' · ' + esc(ME.phone) +
+    return '<div class="dash-head"><div><h1>' + (TAB === 'team' ? t('Team', 'გუნდი') : TAB === 'projects' ? t('Projects', 'პროექტები') : TAB === 'leads' ? t('Leads', 'მოთხოვნები') : TAB === 'bulk' ? t('Bulk upload', 'მასობრივი ატვირთვა') : t('My listings', 'ჩემი განცხადებები')) + '</h1><span class="muted">' + esc(ME.name) + (ME.company ? ' · ' + esc(ME.company) : '') + ' · ' + esc(ME.phone) +
       (ME.role !== 'owner' ? ' · <span class="pill t-vip">' + esc(ROLE(ME.role)) + '</span>' : '') + (ME.limit ? ' · ' + t('active listings ', 'აქტიური ') + (ME.live || 0) + ' / ' + ME.limit : '') +
       (ME.partner_until && ME.partner_until * 1000 > Date.now() ? ' · ' + t('Founding Partner until ', 'დამფუძნებელი პარტნიორი: ') + new Date(ME.partner_until * 1000).toLocaleDateString() : '') + '</span></div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap">' + (ME.role === 'admin' ? '<a class="btn b-navy" href="/admin/">Admin panel</a>' : '') +
@@ -81,6 +81,59 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       $$('[data-stage]').forEach(function (sl) { sl.onchange = function () { api('/api/my/leads', {method: 'POST', json: {id: +sl.dataset.stage, stage: sl.value}}); }; });
       $$('[data-note]').forEach(function (inp) { inp.onchange = function () { api('/api/my/leads', {method: 'POST', json: {id: +inp.dataset.note, note: inp.value}}); }; });
     });
+  }
+  function team() {
+    api('/api/my/team').then(function (j) {
+      var M = j.team || [];
+      $('#app').innerHTML = head() + '<div class="card" style="padding:20px;max-width:860px"><h2>' + t('Your agents', 'თქვენი აგენტები') + '</h2>' +
+        '<p class="muted">' + t('Agents you add log in with their own phone. You see all their listings and enquiries here; they manage their own.', 'აგენტები შედიან საკუთარი ტელეფონით. თქვენ ხედავთ მათ განცხადებებს და მოთხოვნებს.') + '</p>' +
+        (M.length ? '<table style="width:100%;font-size:14px"><thead><tr><th style="text-align:left">' + t('Agent', 'აგენტი') + '</th><th style="text-align:left">' + t('Phone', 'ტელეფონი') + '</th><th>' + t('Live', 'აქტიური') + '</th><th>' + t('New leads', 'ახალი') + '</th><th></th></tr></thead><tbody>' +
+          M.map(function (m) { return '<tr><td><b>' + esc(m.name) + '</b></td><td>' + esc(m.phone) + '</td><td style="text-align:center">' + m.live + '</td><td style="text-align:center">' + m.new_leads + '</td><td><button class="btn sm b-red" data-rmm="' + m.id + '">' + t('Remove', 'წაშლა') + '</button></td></tr>'; }).join('') + '</tbody></table>'
+          : '<p class="muted">' + t('No agents yet.', 'აგენტები ჯერ არ არის.') + '</p>') +
+        '<form id="tm" class="grid3" style="margin-top:16px;align-items:end"><label class="f">' + t('Agent name', 'აგენტის სახელი') + '<input name="name" required></label><label class="f">' + t('Agent phone', 'ტელეფონი') + '<input name="phone" type="tel" required></label><button class="btn b-navy" type="submit">' + KG.icon('plus') + t('Add agent', 'დამატება') + '</button></form><div id="tmm" style="margin-top:10px"></div></div>';
+      bindHead();
+      $('#tm').onsubmit = function (e) {
+        e.preventDefault();
+        api('/api/my/team', {method: 'POST', json: {name: e.target.name.value, phone: e.target.phone.value}}).then(function (r) {
+          if (!r.ok) { $('#tmm').className = 'msg err'; $('#tmm').textContent = r.error; return; }
+          if (r.password) alert(t('Agent account created.\nLogin: keygroup.ge/account\nPhone: ', 'აგენტის ანგარიში შეიქმნა.\nშესვლა: keygroup.ge/account\nტელეფონი: ') + r.phone + t('\nPassword: ', '\nპაროლი: ') + r.password);
+          team();
+        });
+      };
+      $$('[data-rmm]').forEach(function (b) { b.onclick = function () { if (confirm(t('Remove this agent from your team?', 'წავშალო აგენტი გუნდიდან?'))) api('/api/my/team?id=' + b.dataset.rmm, {method: 'DELETE'}).then(team); }; });
+    });
+  }
+  function projects() {
+    api('/api/my/projects').then(function (j) {
+      var P = j.projects || [];
+      $('#app').innerHTML = head() + '<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button class="btn b-navy" id="np">' + KG.icon('plus') + t('New project', 'ახალი პროექტი') + '</button></div>' +
+        '<div class="card">' + (P.length ? P.map(function (p) {
+          return '<div class="row" style="grid-template-columns:1fr auto"><div><b style="font:700 17px var(--display)">' + esc(p.name) + '</b> <span class="muted">' + esc([p.district, p.address, p.city].filter(Boolean).join(', ')) + '</span>' +
+            '<div class="muted" style="font-size:13px">' + t('Completion: ', 'დასრულება: ') + esc(p.completion || '—') + ' · ' + t('units live ', 'აქტიური ბინები ') + (p.units || 0) + ' / ' + p.all_units + (p.min_price ? ' · ' + t('from ', 'დან ') + KG.money(p.min_price, p.currency) : '') + (p.min_ppm ? ' · ' + KG.money(p.min_ppm, p.currency) + '/m²' : '') + '</div></div>' +
+            '<div class="acts"><a class="btn sm b-ghost" href="/project/?id=' + p.id + '" target="_blank">' + t('Public page', 'საჯარო გვერდი') + '</a><button class="btn sm b-ghost" data-pe="' + p.id + '">' + KG.icon('edit') + t('Edit', 'რედაქტირება') + '</button><button class="btn sm b-coral" data-pu="' + p.id + '">' + KG.icon('plus') + t('Add unit', 'ბინის დამატება') + '</button></div></div>';
+        }).join('') : '<div class="empty" style="border:0">' + t('No projects yet. Create your first project, then add its units (or upload them by CSV with the project_id column).', 'პროექტები ჯერ არ არის. შექმენით პროექტი და დაამატეთ ბინები.') + '</div>') + '</div>';
+      bindHead();
+      $('#np').onclick = function () { pform({}); };
+      $$('[data-pe]').forEach(function (b) { b.onclick = function () { pform(P.filter(function (x) { return x.id === +b.dataset.pe; })[0]); }; });
+      $$('[data-pu]').forEach(function (b) { b.onclick = function () { var p = P.filter(function (x) { return x.id === +b.dataset.pu; })[0];
+        form({deal: 'sale', type: 'flat', currency: 'USD', city: p.city, district: p.district, address: p.address, lat: p.lat, lon: p.lon, project_id: p.id, contact_name: ME.company || ME.name, contact_phone: ME.phone, photos: []}); }; });
+    });
+  }
+  function pform(p) {
+    var v = function (k) { return esc(p[k] == null ? '' : p[k]); };
+    $('#app').innerHTML = '<form class="card formcard" id="pjf"><h1>' + (p.id ? t('Edit project', 'პროექტის რედაქტირება') : t('New project', 'ახალი პროექტი')) + '</h1>' +
+      '<label class="f">' + t('Project name', 'პროექტის სახელი') + '<input name="name" required value="' + v('name') + '"></label>' +
+      '<div class="grid3"><label class="f">' + t('City', 'ქალაქი') + '<input name="city" value="' + (v('city') || 'Tbilisi') + '"></label><label class="f">' + t('District', 'უბანი') + '<input name="district" value="' + v('district') + '"></label><label class="f">' + t('Completion', 'დასრულება') + '<input name="completion" value="' + v('completion') + '" placeholder="Q4 2027 / ' + t('completed', 'დასრულებული') + '"></label></div>' +
+      '<label class="f">' + t('Address', 'მისამართი') + '<input name="address" value="' + v('address') + '"></label>' +
+      '<label class="f">' + t('Description (frame type, amenities, payment plan)', 'აღწერა (კარკასი, ინფრასტრუქტურა, განვადება)') + '<textarea name="description">' + v('description') + '</textarea></label>' +
+      '<div style="display:flex;gap:8px"><button class="btn b-coral" type="submit">' + t('Save project', 'შენახვა') + '</button><button class="btn b-ghost" type="button" id="pjb">' + t('Back', 'უკან') + '</button></div><div id="pjm"></div></form>';
+    $('#pjb').onclick = projects;
+    $('#pjf').onsubmit = function (e) {
+      e.preventDefault();
+      var d = {id: p.id || 0}; ['name', 'city', 'district', 'completion', 'address', 'description'].forEach(function (k) { d[k] = e.target[k].value; });
+      var c = KG.center(d.district, d.city); if (c && !p.lat) { d.lat = c[0]; d.lon = c[1]; } else { d.lat = p.lat; d.lon = p.lon; }
+      api('/api/my/projects', {method: 'POST', json: d}).then(function (r) { if (!r.ok) { $('#pjm').className = 'msg err'; $('#pjm').textContent = r.error; return; } TAB = 'projects'; projects(); });
+    };
   }
   function bulk() {
     api('/api/my/import').then(function (j) {
@@ -173,7 +226,7 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
     var until = l.tier === 'super' ? l.super_until : l.tier === 'vip' ? l.vip_until : l.expires;
     return '<div class="row"><div class="th" style="' + (ph ? 'background-image:url(' + KG.photo(ph, true) + ')' : '') + '"></div><div>' +
       '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px"><span class="pill st-' + esc(l.status) + '">' + esc(STATUS(l.status)) + '</span>' + tierB + '</div>' +
-      '<b>' + esc(l.title || KG.TYPE(l.type) + ' · ' + (l.district || '')) + '</b><div class="muted" style="font-size:13px">' + esc(KG.DEAL(l.deal)) + ' · ' + KG.money(l.price, l.currency) + ' · ' + (l.photos || []).length + ' ' + t('photos', 'ფოტო') + ' · ' + KG.icon('eye') + ' ' + (l.views || 0) +
+      '<b>' + esc(l.title || KG.TYPE(l.type) + ' · ' + (l.district || '')) + '</b>' + (ME.role === 'agency' && l.agent_name && l.agent_name !== ME.name ? ' <span class="pill st-paused">' + esc(l.agent_name) + '</span>' : '') + '<div class="muted" style="font-size:13px">' + esc(KG.DEAL(l.deal)) + ' · ' + KG.money(l.price, l.currency) + ' · ' + (l.photos || []).length + ' ' + t('photos', 'ფოტო') + ' · ' + KG.icon('eye') + ' ' + (l.views || 0) +
       (until && l.status === 'active' ? ' · ' + t('until ', 'ვადა: ') + new Date(until * 1000).toLocaleDateString() : '') + '</div>' +
       (l.status === 'rejected' && l.reject_reason ? '<div class="msg err" style="margin-top:6px;padding:8px 10px">' + esc(l.reject_reason) + '</div>' : '') +
       (l.status === 'changes' ? '<div class="msg info" style="margin-top:6px;padding:8px 10px">' + t('Please fix: ', 'გთხოვთ შეასწოროთ: ') + esc(l.reject_reason || '') + ' — ' + t('press Edit, change it and save.', 'დააჭირეთ რედაქტირებას და შეინახეთ.') + '</div>' : '') +
@@ -208,6 +261,10 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       '<label class="f">' + t('City', 'ქალაქი') + sel('city', [['Tbilisi', t('Tbilisi', 'თბილისი')], ['Batumi', t('Batumi', 'ბათუმი')], ['Kutaisi', t('Kutaisi', 'ქუთაისი')], ['Other', t('Other', 'სხვა')]], l.city) + '</label></div>' +
       '<div class="grid2"><label class="f">' + t('District', 'უბანი') + '<input name="district" value="' + v('district') + '" placeholder="' + t('Vake, Saburtalo…', 'ვაკე, საბურთალო…') + '" required></label>' +
       '<label class="f">' + t('Street and number', 'ქუჩა და ნომერი') + '<input name="address" value="' + v('address') + '"></label></div>' +
+      '<div><b style="font:700 14px var(--display)">' + t('Location on the map', 'მდებარეობა რუკაზე') + '</b> <span class="muted" style="font-size:13px">' + t('optional — tap the map to drop a pin. Buyers see an approximate area (~100 m), not your exact door.', 'არასავალდებულო — დააჭირეთ რუკას. მყიდველი ხედავს მიახლოებით ადგილს (~100 მ).') + '</span>' +
+      '<div id="pick" style="height:260px;border-radius:14px;border:1px solid var(--line);margin-top:8px;background:#E8EEF3"></div><input type="hidden" name="lat" value="' + (l.lat || '') + '"><input type="hidden" name="lon" value="' + (l.lon || '') + '">' +
+      '<button type="button" class="btn sm b-ghost hidden" id="unpin" style="margin-top:6px">' + t('Remove pin', 'პინის წაშლა') + '</button></div>' +
+      (ME.role === 'developer' || ME.role === 'admin' ? '<div class="grid3" id="projrow"><label class="f">' + t('Project', 'პროექტი') + '<select name="project_id"><option value="0">—</option></select></label><label class="f">' + t('Building / block', 'კორპუსი / ბლოკი') + '<input name="building" value="' + v('building') + '"></label><label class="f">' + t('Unit number', 'ბინის ნომერი') + '<input name="unit_no" value="' + v('unit_no') + '"></label></div>' : '') +
       '<div class="grid4"><label class="f">' + t('Rooms', 'ოთახები') + '<input name="rooms" type="number" min="0" value="' + v('rooms') + '"></label><label class="f">' + t('Bedrooms', 'საძინებელი') + '<input name="bedrooms" type="number" min="0" value="' + v('bedrooms') + '"></label>' +
       '<label class="f">' + t('Area, m²', 'ფართი, მ²') + '<input name="area" type="number" min="0" step="0.1" value="' + v('area') + '"></label><label class="f">' + t('Floor / of', 'სართული / სულ') + '<span style="display:flex;gap:6px"><input name="floor" value="' + v('floor') + '" style="width:50%"><input name="total_floors" value="' + v('total_floors') + '" style="width:50%"></span></label></div>' +
       '<div class="grid3"><label class="f">' + t('Price', 'ფასი') + '<input name="price" type="number" min="0" value="' + v('price') + '" required></label><label class="f">' + t('Currency', 'ვალუტა') + sel('currency', [['USD', '$ USD'], ['GEL', '₾ GEL'], ['EUR', '€ EUR']], l.currency) + '</label><span></span></div>' +
@@ -220,6 +277,26 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       '<p class="muted" style="font-size:13px;margin:0">' + t('Every new or edited listing is checked by KEY GROUP before it goes live (usually within a few hours).', 'ყველა ახალი ან შეცვლილი განცხადება მოწმდება KEY GROUP-ის მიერ (ჩვეულებრივ რამდენიმე საათში).') + '</p>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn b-coral" type="submit">' + (l.id ? t('Save changes', 'შენახვა') : t('Save and add photos', 'შენახვა და ფოტოები')) + '</button></div><div id="lm"></div></form>';
     $('#back').onclick = dash;
+    // map pin
+    KG.leaflet().then(function (L) {
+      var f = $('#lf'); if (!f || !$('#pick')) return;
+      var start = l.lat ? [l.lat, l.lon] : (KG.center(l.district, l.city) || null);
+      var map = KG.baseMap('pick', start, l.lat ? 16 : 13), mk = null;
+      function setPin(ll) {
+        if (mk) mk.remove();
+        if (!ll) { f.lat.value = ''; f.lon.value = ''; $('#unpin').classList.add('hidden'); return; }
+        mk = L.circleMarker(ll, {radius: 9, color: '#fff', weight: 2, fillColor: '#F45D48', fillOpacity: 1}).addTo(map);
+        f.lat.value = ll[0].toFixed(6); f.lon.value = ll[1].toFixed(6); $('#unpin').classList.remove('hidden');
+      }
+      if (l.lat) setPin([l.lat, l.lon]);
+      map.on('click', function (e) { setPin([e.latlng.lat, e.latlng.lng]); });
+      $('#unpin').onclick = function () { setPin(null); };
+      f.district.addEventListener('change', function () { if (!f.lat.value) { var c = KG.center(f.district.value, f.city.value); if (c) map.setView(c, 14); } });
+    }).catch(function () { var pk = $('#pick'); if (pk) pk.outerHTML = '<p class="muted">' + t('Map could not load — you can save without a pin.', 'რუკა ვერ ჩაიტვირთა.') + '</p>'; });
+    if ($('#projrow')) api('/api/my/projects').then(function (j) {
+      var sl = $('select[name=project_id]'); if (!sl || !j.ok) return;
+      sl.innerHTML = '<option value="0">— ' + t('no project', 'პროექტის გარეშე') + ' —</option>' + j.projects.map(function (p) { return '<option value="' + p.id + '"' + (l.project_id === p.id ? ' selected' : '') + '>' + esc(p.name) + '</option>'; }).join('');
+    });
     function drawPhotos() {
       $('#phs').innerHTML = (l.photos || []).map(function (p, i) { return '<div class="p" style="background-image:url(' + KG.photo(p, true) + ')">' + (i === 0 ? '<span class="main">' + t('MAIN', 'მთავარი') + '</span>' : '<button type="button" data-first="' + esc(p) + '" style="left:4px;right:auto" title="' + t('Make main', 'მთავარი') + '">★</button>') + '<button type="button" data-rm="' + esc(p) + '" aria-label="' + t('Remove', 'წაშლა') + '">×</button></div>'; }).join('');
       $$('[data-rm]').forEach(function (b) { b.onclick = function () { api('/api/my/listings/' + l.id + '/photos?name=' + encodeURIComponent(b.dataset.rm), {method: 'DELETE'}).then(function (j) { if (j.ok) { l.photos = j.photos; drawPhotos(); } }); }; });

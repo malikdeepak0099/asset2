@@ -86,7 +86,7 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       '<div><div class="price">' + KG.money(l.price, l.currency) + '<small>' + per + '</small></div></div></div>' + gal +
       '<div class="body"><div><div class="facts">' + facts.map(function (f) { return '<div><span>' + esc(f[0]) + '</span><b>' + esc(f[1]) + '</b></div>'; }).join('') + '</div>' +
       (l.description ? '<section class="sec"><h2>' + t('Description', 'აღწერა') + '</h2><div class="desc">' + esc(l.description) + '</div></section>' : '') + calc +
-      '<section class="sec"><h2>' + t('Location', 'მდებარეობა') + '</h2><a class="btn b-ghost" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=' + mapQ + '">' + KG.icon('pin') + t('Open in Google Maps', 'Google Maps-ზე ნახვა') + '</a></section>' +
+      '<section class="sec"><h2>' + t('Location', 'მდებარეობა') + '</h2><div id="lmap" style="height:280px;border-radius:16px;border:1px solid var(--line);overflow:hidden;background:#E8EEF3;margin-bottom:10px"></div>' + (l.project_id ? '<p><a class="btn sm b-gold" href="/project/?id=' + l.project_id + '">' + t('See the whole project', 'მთელი პროექტის ნახვა') + ' →</a></p>' : '') + '<a class="btn b-ghost" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=' + mapQ + '">' + KG.icon('pin') + t('Open in Google Maps', 'Google Maps-ზე ნახვა') + '</a></section>' +
       '<section class="sec"><h2>' + t('Similar properties', 'მსგავსი განცხადებები') + '</h2><div class="lgrid" id="sim"></div></section></div>' +
       '<aside><div class="card"><h3>' + (phone ? esc(l.contact_name || t('Owner', 'მესაკუთრე')) : 'KEY GROUP Real Estate') + '</h3><span class="muted" style="font-size:13px">' + t('Mention listing #', 'ახსენე განცხადება #') + l.id + '</span>' + contact +
       '<form id="cb" style="display:flex;flex-direction:column;gap:10px;border-top:1px solid var(--line);padding-top:12px"><b>' + t('Request a call back', 'დამირეკეთ') + '</b>' +
@@ -102,6 +102,10 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       '<label class="f">' + t('Reason', 'მიზეზი') + '<select name="reason"><option>' + t('Already rented or sold', 'უკვე გაქირავებულია/გაყიდულია') + '</option><option>' + t('Wrong price or details', 'არასწორი ფასი ან ინფორმაცია') + '</option><option>' + t('Fake or spam', 'ყალბი ან სპამი') + '</option><option>' + t('Other', 'სხვა') + '</option></select></label>' +
       '<label class="f">' + t('Details (optional)', 'დეტალები') + '<textarea name="more" style="min-height:80px"></textarea></label>' +
       '<div style="display:flex;gap:8px"><button class="btn b-coral" value="send">' + t('Send report', 'გაგზავნა') + '</button><button class="btn b-ghost" value="cancel">' + t('Cancel', 'გაუქმება') + '</button></div></form></dialog>';
+    // location map (approximate circle, never the exact door)
+    var lc = l.lat ? [l.lat, l.lon] : KG.center(l.district, l.city);
+    if (lc) KG.leaflet().then(function (L) { var m = KG.baseMap('lmap', lc, l.lat ? 15 : 14); L.circle(lc, {radius: l.lat ? 150 : 600, color: '#0E9F9A', fillOpacity: .18}).addTo(m); }).catch(function () { var x = $('#lmap'); if (x) x.remove(); });
+    else { var x0 = $('#lmap'); if (x0) x0.remove(); }
     // gallery lightbox
     var idx = 0;
     function lb(i) {

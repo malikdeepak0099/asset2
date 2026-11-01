@@ -120,6 +120,9 @@ def init_db():
         CREATE TABLE IF NOT EXISTS partner_apps (
             id INTEGER PRIMARY KEY, user_id INTEGER DEFAULT 0, name TEXT, company TEXT, phone TEXT, email TEXT, ptype TEXT, city TEXT,
             listings_est TEXT, website TEXT, message TEXT, status TEXT DEFAULT 'new', consent_at REAL DEFAULT 0, created REAL, decided REAL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS projects (
+            id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, city TEXT, district TEXT, address TEXT, description TEXT,
+            completion TEXT, status TEXT DEFAULT 'active', lat REAL DEFAULT 0, lon REAL DEFAULT 0, cover TEXT DEFAULT '', created REAL, updated REAL);
         CREATE TABLE IF NOT EXISTS imports (
             id INTEGER PRIMARY KEY, user_id INTEGER, filename TEXT, total INTEGER, imported INTEGER, errors TEXT DEFAULT '[]',
             status TEXT DEFAULT 'imported', created REAL);
@@ -131,7 +134,10 @@ def init_db():
                                 ("chats", "consent_at", "REAL DEFAULT 0"),
                                 ("users", "company", "TEXT DEFAULT ''"), ("users", "partner_until", "REAL DEFAULT 0"),
                                 ("users", "listing_limit", "INTEGER DEFAULT 0"), ("users", "totp_secret", "TEXT DEFAULT ''"),
-                                ("users", "totp_on", "INTEGER DEFAULT 0"), ("listings", "batch_id", "INTEGER DEFAULT 0")):
+                                ("users", "totp_on", "INTEGER DEFAULT 0"), ("listings", "batch_id", "INTEGER DEFAULT 0"),
+                                ("listings", "lat", "REAL DEFAULT 0"), ("listings", "lon", "REAL DEFAULT 0"),
+                                ("listings", "project_id", "INTEGER DEFAULT 0"), ("listings", "building", "TEXT DEFAULT ''"),
+                                ("listings", "unit_no", "TEXT DEFAULT ''"), ("users", "org_id", "INTEGER DEFAULT 0")):
             have = [r[1] for r in con.execute(f"PRAGMA table_info({table})")]
             if col not in have:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
@@ -363,12 +369,21 @@ def listing_out(row, owner_view=False, admin_view=False, settings=None):
     d.pop("photo_hashes", None)
     if not admin_view:
         d.pop("dup_of", None)
+    if not (owner_view or admin_view) and d.get("lat"):
+        d["lat"], d["lon"] = round(d["lat"], 3), round(d["lon"], 3)   # ~100 m: never publish an exact door location
     if not (owner_view or admin_view or settings.get("show_owner_phone")):
         d["contact_phone"] = ""
         d["contact_name"] = (d.get("contact_name") or "").split(" ")[0]
     if not admin_view:
         d.pop("user_id", None)
     return d
+
+
+def check_project(con, u, f):
+    if f.get("project_id"):
+        p = con.execute("SELECT user_id FROM projects WHERE id=? AND status!='deleted'", (f["project_id"],)).fetchone()
+        if not p or (p["user_id"] != u["id"] and u["role"] != "admin"):
+            f["project_id"] = 0
 
 
 def clean_listing(data):
@@ -387,7 +402,11 @@ def clean_listing(data):
         "floor": s("floor", 10), "total_floors": s("total_floors", 10), "price": num("price"),
         "currency": s("currency", 5).upper() or "USD", "title": s("title", 140), "description": s("description", 5000),
         "contact_name": s("contact_name", 80), "contact_phone": norm_phone(data.get("contact_phone")),
+        "lat": num("lat"), "lon": num("lon"), "building": s("building", 40), "unit_no": s("unit_no", 40),
+        "project_id": num("project_id", int),
     }
+    if not (41.0 <= f["lat"] <= 43.7 and 40.0 <= f["lon"] <= 46.8):   # inside Georgia, else drop
+        f["lat"], f["lon"] = 0, 0
     if f["deal"] not in DEALS:
         return None, "Choose sale or rent"
     if f["type"] not in TYPES:
@@ -496,11 +515,12 @@ async def me(request):
     u = current_user(request)
     if not u:
         return ok(user=None, settings=public_settings())
-    out = {k: u[k] for k in ("id", "name", "phone", "role", "company", "partner_until", "totp_on")}
+    out = {k: u[k] for k in ("id", "name", "phone", "role", "company", "partner_until", "totp_on", "org_id")}
     out["limit"] = listing_limit(u)
     with db() as con:
         out["live"] = live_count(con, u["id"])
-        out["new_leads"] = con.execute("SELECT COUNT(*) FROM leads WHERE owner_id=? AND stage='new'", (u["id"],)).fetchone()[0]
+        ids = team_ids(con, u)
+        out["new_leads"] = con.execute(f"SELECT COUNT(*) FROM leads WHERE owner_id IN ({','.join('?' * len(ids))}) AND stage='new'", ids).fetchone()[0]
     return ok(user=out, settings=public_settings())
 
 
@@ -546,6 +566,7 @@ async def my_listings(request):
                     if u["role"] in PARTNER_ROLES:
                         return err(f"Your plan allows {limit} active listings. Contact KEY GROUP to raise the limit.")
                     return err(f"A free account can have up to {limit} active listings. Delete or promote one (VIP), or join as an agent / agency partner.")
+            check_project(con, u, f)
             cols = ",".join(f.keys())
             cur = con.execute(f"INSERT INTO listings (user_id,{cols},status,created,updated,confirmed,verify_level) VALUES (?,{','.join('?' * len(f))},'pending',?,?,?,?)",
                               (u["id"], *f.values(), now, now, now, 1 if u.get("contact_verified") else 0))
@@ -557,7 +578,9 @@ async def my_listings(request):
                + (f"⚠️ Possible duplicate of {esc(', '.join(dups))}\n" if dups else "") + f"{SITE}/admin/")
         return ok(id=lid)
     with db() as con:
-        rows = con.execute("SELECT * FROM listings WHERE user_id=? AND status!='deleted' ORDER BY id DESC", (u["id"],)).fetchall()
+        ids = team_ids(con, u)
+        rows = con.execute(f"""SELECT l.*, u.name AS agent_name FROM listings l LEFT JOIN users u ON u.id=l.user_id
+                               WHERE l.user_id IN ({','.join('?' * len(ids))}) AND l.status!='deleted' ORDER BY l.id DESC""", ids).fetchall()
         orders = con.execute("SELECT * FROM orders WHERE user_id=? ORDER BY id DESC LIMIT 50", (u["id"],)).fetchall()
     s = get_settings()
     return ok(listings=[listing_out(r, owner_view=True, settings=s) for r in rows], orders=[dict(o) for o in orders])
@@ -565,7 +588,9 @@ async def my_listings(request):
 
 def own_listing(u, lid, con):
     row = con.execute("SELECT * FROM listings WHERE id=? AND status!='deleted'", (lid,)).fetchone()
-    if not row or (row["user_id"] != u["id"] and u["role"] != "admin"):
+    if not row:
+        return None
+    if row["user_id"] != u["id"] and u["role"] != "admin" and row["user_id"] not in team_ids(con, u):
         return None
     return row
 
@@ -591,8 +616,9 @@ async def my_listing(request):
     f, msg = clean_listing(d)
     if msg:
         return err(msg)
-    sets = ",".join(f"{k}=?" for k in f)
     with _LOCK, db() as con:
+        check_project(con, u, f)
+        sets = ",".join(f"{k}=?" for k in f)
         # an edit goes back to the approval queue (admins' own edits stay live)
         status = row["status"] if u["role"] == "admin" else ("pending" if row["status"] in ("active", "rejected", "changes") else row["status"])
         con.execute(f"UPDATE listings SET {sets}, status=?, updated=?, confirmed=? WHERE id=?", (*f.values(), status, time.time(), time.time(), lid))
@@ -723,6 +749,8 @@ async def public_listings(request):
             where.append(f"{col}{op}?"); args.append(v)
     if q.get("currency") in CURRENCIES:
         where.append("currency=?"); args.append(q["currency"])
+    if q.get("project", "").isdigit():
+        where.append("project_id=?"); args.append(int(q["project"]))
     if q.get("exclude"):
         where.append("id!=?"); args.append(int(q["exclude"]) if q["exclude"].isdigit() else 0)
     sort = {"price_asc": "price ASC", "price_desc": "price DESC", "area_desc": "area DESC"}.get(q.get("sort", ""), "")
@@ -785,7 +813,7 @@ async def my_leads(request):
         stage = d.get("stage")
         with _LOCK, db() as con:
             row = con.execute("SELECT * FROM leads WHERE id=?", (lid,)).fetchone()
-            if not row or (row["owner_id"] != u["id"] and u["role"] != "admin"):
+            if not row or (u["role"] != "admin" and row["owner_id"] not in team_ids(con, u)):
                 return err("Not found", 404)
             if stage in ("new", "contacted", "viewing", "offer", "closed", "lost"):
                 con.execute("UPDATE leads SET stage=?, updated=? WHERE id=?", (stage, time.time(), lid))
@@ -793,8 +821,10 @@ async def my_leads(request):
                 con.execute("UPDATE leads SET note=?, updated=? WHERE id=?", (str(d["note"])[:1000], time.time(), lid))
         return ok()
     with db() as con:
-        rows = con.execute("""SELECT d.*, l.title, l.district, l.address, l.price, l.currency, l.deal FROM leads d
-                              LEFT JOIN listings l ON l.id=d.listing_id WHERE d.owner_id=? ORDER BY d.id DESC LIMIT 500""", (u["id"],)).fetchall()
+        ids = team_ids(con, u)
+        rows = con.execute(f"""SELECT d.*, l.title, l.district, l.address, l.price, l.currency, l.deal, o.name AS agent_name FROM leads d
+                               LEFT JOIN listings l ON l.id=d.listing_id LEFT JOIN users o ON o.id=d.owner_id
+                               WHERE d.owner_id IN ({','.join('?' * len(ids))}) ORDER BY d.id DESC LIMIT 500""", ids).fetchall()
     return ok(leads=[dict(r) for r in rows])
 
 
@@ -888,10 +918,137 @@ async def admin_partner_action(request):
     return ok(password=password, phone=a["phone"])
 
 
+# ---------------------------------------------------------------- agency teams
+
+def team_ids(con, u):
+    """User ids whose listings/leads this user may see: self, plus team members for an agency manager."""
+    ids = [u["id"]]
+    if u["role"] == "agency":
+        ids += [r[0] for r in con.execute("SELECT id FROM users WHERE org_id=?", (u["id"],))]
+    return ids
+
+
+async def my_team(request):
+    u, e = need_user(request)
+    if e:
+        return e
+    if u["role"] != "agency":
+        return err("Teams are for agency accounts", 403)
+    if request.method == "POST":
+        d = await body_json(request)
+        phone, name = norm_phone(d.get("phone")), str(d.get("name") or "").strip()[:80]
+        if len(phone) < 10 or not name:
+            return err("Enter the agent's name and phone")
+        password = None
+        with _LOCK, db() as con:
+            row = con.execute("SELECT * FROM users WHERE phone=?", (phone,)).fetchone()
+            if row:
+                if row["role"] == "admin" or (row["org_id"] and row["org_id"] != u["id"]):
+                    return err("This phone belongs to another account")
+                con.execute("UPDATE users SET org_id=?, role='agent', company=? WHERE id=?", (u["id"], u.get("company") or "", row["id"]))
+            else:
+                password = secrets.token_urlsafe(6)
+                con.execute("""INSERT INTO users (phone, name, pw, role, company, org_id, partner_until, created, consent_at, consent_ver)
+                               VALUES (?,?,?,?,?,?,?,?,?,?)""", (phone, name, hash_pw(password), "agent", u.get("company") or "", u["id"],
+                                                                u.get("partner_until") or 0, time.time(), time.time(), CONSENT_VERSION))
+            audit(con, u, "team_add", "user", 0, f"{name} {phone}")
+        return ok(password=password, phone=phone)
+    if request.method == "DELETE":
+        uid = int(request.query_params.get("id") or 0)
+        with _LOCK, db() as con:
+            con.execute("UPDATE users SET org_id=0 WHERE id=? AND org_id=?", (uid, u["id"]))
+            audit(con, u, "team_remove", "user", uid)
+        return ok()
+    with db() as con:
+        rows = con.execute("""SELECT u.id, u.name, u.phone, u.created,
+                                     (SELECT COUNT(*) FROM listings l WHERE l.user_id=u.id AND l.status='active') AS live,
+                                     (SELECT COUNT(*) FROM leads d WHERE d.owner_id=u.id AND d.stage='new') AS new_leads
+                              FROM users u WHERE u.org_id=? ORDER BY u.id""", (u["id"],)).fetchall()
+    return ok(team=[dict(r) for r in rows])
+
+
+# ---------------------------------------------------------------- developer projects
+
+def clean_project(d):
+    s = lambda k, n=200: str(d.get(k) or "").strip()[:n]
+    try:
+        lat, lon = float(d.get("lat") or 0), float(d.get("lon") or 0)
+    except (TypeError, ValueError):
+        lat, lon = 0, 0
+    if not (41.0 <= lat <= 43.7 and 40.0 <= lon <= 46.8):
+        lat, lon = 0, 0
+    f = {"name": s("name", 120), "city": s("city", 60) or "Tbilisi", "district": s("district", 80), "address": s("address", 160),
+         "description": s("description", 5000), "completion": s("completion", 40), "lat": lat, "lon": lon}
+    return (None, "Enter the project name") if not f["name"] else (f, None)
+
+
+def project_out(con, r):
+    d = dict(r)
+    stats = con.execute("""SELECT COUNT(*) AS units, MIN(price) AS min_price, MIN(CASE WHEN area>0 THEN price/area END) AS min_ppm,
+                                  MAX(currency) AS currency FROM listings WHERE project_id=? AND status='active'""", (r["id"],)).fetchone()
+    d.update(dict(stats))
+    d["url"] = f"{SITE}/project/?id={r['id']}"
+    return d
+
+
+async def my_projects(request):
+    u, e = need_user(request)
+    if e:
+        return e
+    if u["role"] not in ("developer", "admin"):
+        return err("Projects are for developer accounts", 403)
+    if request.method == "POST":
+        d = await body_json(request)
+        f, msg = clean_project(d)
+        if msg:
+            return err(msg)
+        now = time.time()
+        with _LOCK, db() as con:
+            pid = int(d.get("id") or 0)
+            if pid:
+                row = con.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+                if not row or (row["user_id"] != u["id"] and u["role"] != "admin"):
+                    return err("Not found", 404)
+                con.execute(f"UPDATE projects SET {','.join(k + '=?' for k in f)}, updated=? WHERE id=?", (*f.values(), now, pid))
+            else:
+                cur = con.execute(f"INSERT INTO projects (user_id,{','.join(f)},created,updated) VALUES (?,{','.join('?' * len(f))},?,?)",
+                                  (u["id"], *f.values(), now, now))
+                pid = cur.lastrowid
+            audit(con, u, "project_save", "project", pid, f["name"])
+        return ok(id=pid)
+    if request.method == "DELETE":
+        pid = int(request.query_params.get("id") or 0)
+        with _LOCK, db() as con:
+            con.execute("UPDATE projects SET status='deleted' WHERE id=? AND (user_id=? OR ?)", (pid, u["id"], 1 if u["role"] == "admin" else 0))
+        return ok()
+    with db() as con:
+        rows = con.execute("SELECT * FROM projects WHERE user_id=? AND status!='deleted' ORDER BY id DESC", (u["id"],)).fetchall()
+        out = []
+        for r in rows:
+            d = project_out(con, r)
+            d["all_units"] = con.execute("SELECT COUNT(*) FROM listings WHERE project_id=? AND status!='deleted'", (r["id"],)).fetchone()[0]
+            out.append(d)
+    return ok(projects=out)
+
+
+async def public_projects(request):
+    with db() as con:
+        pid = request.query_params.get("id", "")
+        if pid.isdigit():
+            r = con.execute("SELECT p.*, u.company FROM projects p LEFT JOIN users u ON u.id=p.user_id WHERE p.id=? AND p.status='active'", (int(pid),)).fetchone()
+            if not r:
+                return err("Project not found", 404)
+            units = con.execute("SELECT * FROM listings WHERE project_id=? AND status='active' ORDER BY building, CAST(floor AS INTEGER), unit_no", (r["id"],)).fetchall()
+            s = get_settings()
+            return ok(project=project_out(con, r), units=[listing_out(x, settings=s) for x in units])
+        rows = con.execute("SELECT p.*, u.company FROM projects p LEFT JOIN users u ON u.id=p.user_id WHERE p.status='active' ORDER BY p.id DESC LIMIT 100").fetchall()
+        return ok(projects=[project_out(con, r) for r in rows if True])
+
+
 # ---------------------------------------------------------------- CSV bulk import (partners)
 
 IMPORT_COLS = ["deal", "type", "city", "district", "address", "rooms", "bedrooms", "area", "floor", "total_floors", "price", "currency",
-               "title", "description", "contact_name", "contact_phone"]
+               "title", "description", "contact_name", "contact_phone", "project_id", "building", "unit_no", "lat", "lon"]
 DEAL_ALIASES = {"sale": "sale", "sell": "sale", "buy": "sale", "rent": "rent", "lease": "rent", "daily": "daily",
                 "იყიდება": "sale", "ქირავდება": "rent", "продажа": "sale", "аренда": "rent"}
 TYPE_ALIASES = {"flat": "flat", "apartment": "flat", "house": "house", "villa": "house", "commercial": "commercial", "office": "commercial",
@@ -964,6 +1121,7 @@ async def my_import(request):
         bid = cur.lastrowid
         level = 1 if u.get("contact_verified") else 0
         for g in good:
+            check_project(con, u, g)
             cols = ",".join(g.keys())
             c2 = con.execute(f"INSERT INTO listings (user_id,{cols},status,created,updated,confirmed,verify_level,batch_id) VALUES (?,{','.join('?' * len(g))},'pending',?,?,?,?,?)",
                              (u["id"], *g.values(), now, now, now, level, bid))
@@ -1596,6 +1754,9 @@ routes = [
     Route("/api/listings/{lid:int}/enquiry", listing_enquiry, methods=["POST"]),
     Route("/api/my/leads", my_leads, methods=["GET", "POST"]),
     Route("/api/my/import", my_import, methods=["GET", "POST"]),
+    Route("/api/my/team", my_team, methods=["GET", "POST", "DELETE"]),
+    Route("/api/my/projects", my_projects, methods=["GET", "POST", "DELETE"]),
+    Route("/api/projects", public_projects),
     Route("/api/partners/apply", partner_apply, methods=["POST"]),
     Route("/api/admin/leads", admin_leads),
     Route("/api/admin/partners", admin_partners),

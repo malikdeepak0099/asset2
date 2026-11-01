@@ -13,6 +13,11 @@
 .filters{position:sticky;top:16px;padding:20px;display:flex;flex-direction:column;gap:14px}
 .bar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px}
 .more{display:flex;justify-content:center;margin-top:28px}
+#map{height:620px;border-radius:18px;border:1px solid var(--line);overflow:hidden;background:#E8EEF3}
+.mp b{font:800 15px var(--display)}.mp a{color:var(--blue);font-weight:700}
+.vt{display:inline-flex;gap:4px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:3px}.vt button{border:0;background:none;padding:7px 12px;border-radius:9px;font:700 13px var(--display);cursor:pointer;color:var(--muted)}
+.vt button[aria-pressed="true"]{background:var(--navy);color:#fff}
+@media (max-width:900px){#map{height:480px}}
 @media (max-width:900px){.layout{grid-template-columns:1fr}.filters{position:static}}
 </style>
 </head>
@@ -36,7 +41,8 @@
       <button class="btn b-ghost" type="button" id="reset">გასუფთავება</button>
     </form>
     <section aria-live="polite">
-      <div class="bar"><h1 id="h">განცხადებები</h1><span class="muted" id="count"></span></div>
+      <div class="bar"><h1 id="h">განცხადებები</h1><span style="display:flex;gap:12px;align-items:center"><span class="muted" id="count"></span><span class="vt" role="group" aria-label="View"><button type="button" data-v="list" aria-pressed="true" id="v-list">☰</button><button type="button" data-v="map" aria-pressed="false" id="v-map">🗺</button></span></span></div>
+      <div id="map" class="hidden"></div>
       <div class="lgrid" id="grid"><div class="empty">…</div></div>
       <div class="more"><button class="btn b-ghost hidden" id="moreBtn" type="button"></button></div>
     </section>
@@ -60,7 +66,30 @@
   var so = $('select[name=sort]').options; so[0].text = t('Recommended (VIP first)', 'რეკომენდებული (VIP პირველი)'); so[1].text = t('Newest', 'ახალი'); so[2].text = t('Price: low to high', 'ფასი: ზრდადობით'); so[3].text = t('Price: high to low', 'ფასი: კლებადობით'); so[4].text = t('Largest area', 'დიდი ფართი');
   $('#h').textContent = favMode ? t('Saved listings', 'შენახული განცხადებები') : t('Properties', 'განცხადებები');
 
-  var ALL = [], shown = 24, deal = params.get('deal') || '';
+  var ALL = [], shown = 24, deal = params.get('deal') || '', VIEW = params.get('view') === 'map' ? 'map' : 'list', LAST = [], MAP = null, LAYER = null;
+  $('#v-list').textContent = '☰ ' + t('List', 'სია'); $('#v-map').textContent = '🗺 ' + t('Map', 'რუკა');
+  function drawMap() {
+    KG.leaflet().then(function (L) {
+      if (!MAP) MAP = KG.baseMap('map', null, 12);
+      if (LAYER) LAYER.remove();
+      LAYER = L.layerGroup().addTo(MAP);
+      var pts = [];
+      LAST.forEach(function (l) {
+        var c = KG.coords(l); if (!c) return; pts.push(c);
+        var col = l.tier === 'super' ? '#F45D48' : l.tier === 'vip' ? '#7C5CFF' : l.deal === 'sale' ? '#B5475E' : '#0E9F9A';
+        L.circleMarker(c, {radius: l.tier ? 9 : 7, color: '#fff', weight: 2, fillColor: col, fillOpacity: .95}).addTo(LAYER)
+          .bindPopup('<div class="mp"><b>' + KG.money(l.price, l.cur) + (l.deal !== 'sale' ? ' / ' + t('month', 'თვე') : '') + '</b><br>' + KG.esc(l.title || KG.TYPE(l.type)) + '<br><span style="color:#5E6E82">' + KG.esc([l.district, l.rooms ? l.rooms + ' ' + t('rooms', 'ოთახი') : '', l.area ? l.area + ' m²' : ''].filter(Boolean).join(' · ')) + '</span><br><a href="' + KG.esc(l.url) + '"' + (l.src === 'crm' ? ' target="_blank" rel="noopener"' : '') + '>' + t('Open', 'გახსნა') + ' →</a></div>');
+      });
+      setTimeout(function () { MAP.invalidateSize(); if (pts.length) MAP.fitBounds(pts, {padding: [30, 30], maxZoom: 15}); }, 50);
+    }).catch(function () { $('#map').innerHTML = '<div class="empty">' + t('Map could not load.', 'რუკა ვერ ჩაიტვირთა.') + '</div>'; });
+  }
+  function setView(v) {
+    VIEW = v;
+    $$('.vt button').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.v === v ? 'true' : 'false'); });
+    $('#map').classList.toggle('hidden', v !== 'map'); $('#grid').classList.toggle('hidden', v === 'map'); $('#moreBtn').parentNode.classList.toggle('hidden', v === 'map');
+    if (v === 'map') drawMap();
+  }
+  $$('.vt button').forEach(function (b) { b.onclick = function () { setView(b.dataset.v); }; });
   var f = $('#f');
   ['type', 'district', 'min', 'max', 'rooms', 'area', 'sort'].forEach(function (k) { if (params.get(k)) f[k].value = params.get(k); });
   if (params.get('photos')) f.photos.checked = true;
@@ -102,6 +131,8 @@
       if (f.photos.checked) p.set('photos', '1');
       history.replaceState(null, '', '?' + p.toString());
     }
+    LAST = res;
+    if (VIEW === 'map') drawMap();
     $('#count').textContent = res.length + ' ' + t('listings', 'განცხადება');
     $('#grid').innerHTML = res.length ? res.slice(0, shown).map(KG.card).join('') :
       '<div class="empty">' + (favMode ? t('No saved listings yet. Tap ♥ on any listing to save it here.', 'შენახული განცხადებები ჯერ არ არის. დააჭირე ♥-ს განცხადებაზე.') :
@@ -116,7 +147,7 @@
   $('#reset').onclick = function () { f.reset(); setDeal(''); run(true); };
   $('#moreBtn').onclick = function () { shown += 24; run(false); };
   KG.bindFavs(document, function () { if (favMode) run(false); });
-  KG.loadAll().then(function (all) { ALL = all; run(false); });
+  KG.loadAll().then(function (all) { ALL = all; run(false); if (VIEW === 'map') setView('map'); });
 })();
 </script>
 </body>

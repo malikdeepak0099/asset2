@@ -107,7 +107,7 @@
   KG.fromOwner = function (r) {
     return {key: 'o' + r.id, src: 'owner', id: r.id, deal: r.deal, type: r.type, district: r.district, address: r.address, rooms: r.rooms,
       area: r.area, floor: r.floor ? r.floor + (r.total_floors ? '/' + r.total_floors : '') : '', price: r.price, cur: r.currency,
-      photo: KG.photo((r.photos || [])[0], true), tier: r.tier, verified: !!r.verified, vlevel: r.verify_level || 0, url: '/p/?id=' + r.id, title: r.title, views: r.views,
+      photo: KG.photo((r.photos || [])[0], true), tier: r.tier, verified: !!r.verified, vlevel: r.verify_level || 0, lat: r.lat || 0, lon: r.lon || 0, city: r.city, url: '/p/?id=' + r.id, title: r.title, views: r.views,
       created: r.approved || r.created};
   };
   var KA_EN = {'ვაკე': 'Vake', 'საბურთალო': 'Saburtalo', 'დიდუბე': 'Didube', 'ვერა': 'Vera', 'მთაწმინდა': 'Mtatsminda', 'ისანი': 'Isani', 'სამგორი': 'Samgori',
@@ -121,6 +121,43 @@
     return {key: 'c' + (r.k || r.link), src: 'crm', deal: r.deal === 'Rent' ? 'rent' : 'sale', type: type, district: shown, districtKa: d, address: r.a, rooms: r.rooms,
       area: r.area, floor: r.floor, price: r.price, cur: r.cur || 'USD', photo: '', tier: '', verified: true,
       url: r.link || 'https://wa.me/995577114118', title: '', views: 0, created: 0};
+  };
+
+  // ---------- maps (Leaflet + OpenStreetMap, loaded only when needed)
+  var CENTERS = {'vake': [41.709, 44.759], 'saburtalo': [41.727, 44.753], 'vera': [41.706, 44.778], 'mtatsminda': [41.695, 44.786], 'sololaki': [41.690, 44.799],
+    'old tbilisi': [41.691, 44.807], 'didube': [41.750, 44.780], 'didi digomi': [41.792, 44.752], 'digomi massive': [41.760, 44.770], 'digomi': [41.770, 44.765],
+    'chugureti': [41.720, 44.800], 'nadzaladevi': [41.755, 44.790], 'gldani': [41.795, 44.820], 'mukhiani': [41.800, 44.810], 'isani-samgori': [41.695, 44.845],
+    'isani': [41.690, 44.830], 'samgori': [41.695, 44.855], 'varketili': [41.700, 44.880], 'krtsanisi': [41.660, 44.820], 'ortachala': [41.680, 44.820],
+    'avlabari': [41.693, 44.813], 'lisi': [41.740, 44.730], 'tskneti': [41.693, 44.700], 'bagebi': [41.715, 44.735], 'vazisubani': [41.714, 44.870],
+    'navtlughi': [41.685, 44.845], 'batumi': [41.642, 41.633], 'kutaisi': [42.268, 42.695], 'tbilisi': [41.715, 44.827]};
+  KG.center = function (district, city) {
+    var d = String(district || '').toLowerCase().trim(), en = (KA_EN[String(district || '').trim()] || '').toLowerCase();
+    var keys = Object.keys(CENTERS);
+    for (var i = 0; i < keys.length; i++) { if ((en && en.indexOf(keys[i]) >= 0) || (d && d.indexOf(keys[i]) >= 0)) return CENTERS[keys[i]]; }
+    var c = String(city || '').toLowerCase();
+    return CENTERS[c] || null;
+  };
+  KG.coords = function (l) {   // exact (rounded) for owner listings with a pin, else district centre with a small stable offset
+    if (l.lat && l.lon) return [l.lat, l.lon];
+    var c = KG.center(l.districtKa || l.district, l.city); if (!c) return null;
+    var h = 0, k = String(l.key || l.address || ''); for (var i = 0; i < k.length; i++) h = (h * 31 + k.charCodeAt(i)) | 0;
+    return [c[0] + ((h % 100) / 100) * 0.008 - 0.004, c[1] + (((h >> 8) % 100) / 100) * 0.010 - 0.005];
+  };
+  var leafletP = null;
+  KG.leaflet = function () {
+    if (window.L && window.L.map) return Promise.resolve(window.L);
+    if (leafletP) return leafletP;
+    leafletP = new Promise(function (res, rej) {
+      var css = document.createElement('link'); css.rel = 'stylesheet'; css.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css'; document.head.appendChild(css);
+      var js = document.createElement('script'); js.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';
+      js.onload = function () { res(window.L); }; js.onerror = rej; document.head.appendChild(js);
+    });
+    return leafletP;
+  };
+  KG.baseMap = function (el, center, zoom) {
+    var map = window.L.map(el, {scrollWheelZoom: false}).setView(center || CENTERS.tbilisi, zoom || 12);
+    window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19, attribution: '&copy; OpenStreetMap'}).addTo(map);
+    return map;
   };
   KG.loadAll = function () {
     return Promise.all([

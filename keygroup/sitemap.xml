@@ -6,4 +6,17 @@
   <url><loc>https://keygroup.ge/account/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://keygroup.ge/privacy/</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>
   <url><loc>https://keygroup.ge/partners/</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://keygroup.ge/tbilisi/apartments-for-rent/</loc><changefreq>daily</changefreq><priority>0.8</priority></url>
+  <url><loc>https://keygroup.ge/tbilisi/apartments-for-sale/</loc><changefreq>daily</changefreq><priority>0.8</priority></url>
+  <url><loc>https://keygroup.ge/tbilisi/commercial-property/</loc><changefreq>daily</changefreq><priority>0.8</priority></url>
+  <url><loc>https://keygroup.ge/batumi/apartments-for-sale/</loc><changefreq>daily</changefreq><priority>0.8</priority></url>
+  <url><loc>https://keygroup.ge/batumi/apartments-for-rent/</loc><changefreq>daily</changefreq><priority>0.8</priority></url>
+  <url><loc>https://keygroup.ge/tbilisi/vake/</loc><changefreq>daily</changefreq><priority>0.8</priority></url>
+  <url><loc>https://keygroup.ge/tbilisi/saburtalo/</loc><changefreq>daily</changefreq><priority>0.8</priority></url>
+  <url><loc>https://keygroup.ge/tbilisi/old-tbilisi/</loc><changefreq>daily</changefreq><priority>0.8</priority></url>
+  <url><loc>https://keygroup.ge/tbilisi/didube/</loc><changefreq>daily</changefreq><priority>0.8</priority></url>
+  <url><loc>https://keygroup.ge/tbilisi/isani/</loc><changefreq>daily</changefreq><priority>0.8</priority></url>
+  <url><loc>https://keygroup.ge/tbilisi/digomi/</loc><changefreq>daily</changefreq><priority>0.8</priority></url>
+  <url><loc>https://keygroup.ge/invest-in-georgia/</loc><changefreq>daily</changefreq><priority>0.8</priority></url>
+  <url><loc>https://keygroup.ge/project/</loc><changefreq>daily</changefreq><priority>0.8</priority></url>
 </urlset>
