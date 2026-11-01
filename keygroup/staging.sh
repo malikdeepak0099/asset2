@@ -79,6 +79,33 @@ PY
   docker compose restart caddy >/dev/null 2>&1; sleep 6
   if ! docker compose ps caddy | grep -q Up; then echo "PROBLEM - restoring Caddy"; cp "$BK" "$CF"; docker compose restart caddy; exit 1; fi
 fi
+# 4) team-only access: username + password on the whole staging site
+if ! grep -q 'basicauth' "$CF"; then
+  TPW=$(python3 -c 'import secrets; print(secrets.token_urlsafe(8))')
+  HASH=$(docker compose exec -T caddy caddy hash-password --plaintext "$TPW" 2>/dev/null | tail -n1 | tr -d '\r')
+  if [ -n "$HASH" ]; then
+    BK="$CF.bak-$(date +%s)"; cp "$CF" "$BK"
+    python3 - "$CF" "$HASH" <<'PY'
+import sys
+p, h = sys.argv[1], sys.argv[2]; s = open(p).read()
+i = s.index("staging.keygroup.ge {")
+j = s.index("\n", i) + 1
+s = s[:j] + "\tbasicauth {\n\t\tteam " + h + "\n\t}\n" + s[j:]
+open(p, "w").write(s)
+PY
+    docker compose restart caddy >/dev/null 2>&1; sleep 6
+    if docker compose ps caddy | grep -q Up; then
+      echo "========== STAGING SITE LOGIN (browser asks for it) =========="
+      echo "Username: team"
+      echo "Password: $TPW"
+      echo "=============================================================="
+    else
+      echo "PROBLEM - restoring Caddy"; cp "$BK" "$CF"; docker compose restart caddy
+    fi
+  else
+    echo "note: could not create the staging password (Caddy hash tool not available)"
+  fi
+fi
 echo "DONE - staging updated: https://staging.keygroup.ge  (admin: https://staging.keygroup.ge/admin/)"
 if [ "$FIRST" = "1" ]; then
   echo "========== STAGING ADMIN LOGIN (test only) =========="
