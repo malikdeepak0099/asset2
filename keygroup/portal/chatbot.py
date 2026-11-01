@@ -455,9 +455,9 @@ def answer(intent, state, lang, settings, site):
                           "Размещение своего объявления на keygroup.ge бесплатно. Комиссия при сделке с агентами KEY GROUP зависит от объекта и типа сделки — точные условия агент назовёт заранее."),
                 "buttons": [{"label": T(lang, "👤 Ask an agent", "👤 კითხვა აგენტს", "👤 Спросить агента"), "value": "__agent"}]}
     if intent == "contact":
-        return {"text": T(lang, f"📍 Office: {OFFICE['en']}\n📞 Phone / WhatsApp: {PHONE}\n🕙 Mon–Sat, 10:00–19:00",
-                          f"📍 ოფისი: {OFFICE['ka']}\n📞 ტელეფონი / WhatsApp: {PHONE}\n🕙 ორშ–შაბ, 10:00–19:00",
-                          f"📍 Офис: {OFFICE['ru']}\n📞 Телефон / WhatsApp: {PHONE}\n🕙 Пн–Сб, 10:00–19:00"),
+        return {"text": T(lang, f"📍 Office: {OFFICE['en']}\n📞 Phone / WhatsApp: {PHONE}\n✉️ info@keygroup.ge · owners: support@keygroup.ge\n🕙 Mon–Sat, 10:00–19:00",
+                          f"📍 ოფისი: {OFFICE['ka']}\n📞 ტელეფონი / WhatsApp: {PHONE}\n✉️ info@keygroup.ge · მესაკუთრეებს: support@keygroup.ge\n🕙 ორშ–შაბ, 10:00–19:00",
+                          f"📍 Офис: {OFFICE['ru']}\n📞 Телефон / WhatsApp: {PHONE}\n✉️ info@keygroup.ge · владельцам: support@keygroup.ge\n🕙 Пн–Сб, 10:00–19:00"),
                 "buttons": [{"label": "WhatsApp", "url": WA},
                             {"label": T(lang, "🗺 Open map", "🗺 რუკა", "🗺 Карта"), "url": "https://maps.google.com/?q=" + "Richard+Holbrooke+St+4+Tbilisi"}]}
     if intent == "services":

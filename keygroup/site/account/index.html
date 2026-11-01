@@ -59,7 +59,7 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       '<label class="f">' + t('Phone number', 'ტელეფონის ნომერი') + '<input name="phone" type="tel" required autocomplete="tel" placeholder="5__ __ __ __"></label>' +
       '<label class="f">' + t('Password', 'პაროლი') + '<input name="password" type="password" required minlength="6" autocomplete="' + (mode === 'login' ? 'current-password' : 'new-password') + '"></label>' +
       '<button class="btn b-coral" type="submit">' + (mode === 'login' ? t('Log in', 'შესვლა') : t('Create account', 'ანგარიშის შექმნა')) + '</button><div id="am"></div>' +
-      (mode === 'login' ? '<p class="muted" style="font-size:13px;margin:0">' + t('Forgot your password? WhatsApp us at +995 577 114 118 and we will reset it.', 'დაგავიწყდა პაროლი? მოგვწერე WhatsApp-ზე +995 577 114 118.') + '</p>' : '') + '</form>';
+      (mode === 'login' ? '<p class="muted" style="font-size:13px;margin:0">' + t('Forgot your password? Write to support@keygroup.ge or WhatsApp +995 577 114 118 and we will reset it.', 'დაგავიწყდა პაროლი? მოგვწერე support@keygroup.ge-ზე ან WhatsApp-ზე +995 577 114 118.') + '</p>' : '') + '</form>';
     $$('[data-m]').forEach(function (b) { b.onclick = function () { auth(b.dataset.m); }; });
     $('#af').onsubmit = function (e) {
       e.preventDefault();

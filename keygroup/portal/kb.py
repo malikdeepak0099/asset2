@@ -439,18 +439,18 @@ TOPICS = {
                "• Rejected — the reason is shown in your account; fix it and save again\n"
                "• Expired — free listings stay 30 days; press Renew in your account\n"
                "• To change the price or photos, open the listing in your account and edit — it goes live again after a quick check\n"
-               "• Forgot your password? Write to us and we reset it."),
+               "• Forgot your password? Write to support@keygroup.ge or WhatsApp and we reset it."),
         "ka": ("თუ განცხადება არ ჩანს:\n"
                "• შემოწმებაზეა — ახალ და შეცვლილ განცხადებას ვამოწმებთ, ჩვეულებრივ იმავე დღეს\n"
                "• უარყოფილია — მიზეზი ანგარიშში ჩანს; გაასწორეთ და შეინახეთ\n"
                "• ვადაგასულია — უფასო განცხადება 30 დღეა; დააჭირეთ „განახლებას“\n"
-               "• პაროლი დაგავიწყდათ? მოგვწერეთ და აღვადგენთ."),
+               "• პაროლი დაგავიწყდათ? მოგვწერეთ support@keygroup.ge-ზე ან WhatsApp-ზე."),
         "ru": ("Если объявление не видно:\n"
                "• На проверке — новые и изменённые объявления проверяем, обычно в тот же день\n"
                "• Отклонено — причина указана в кабинете; исправьте и сохраните\n"
                "• Истекло — бесплатное объявление живёт 30 дней; нажмите «Продлить»\n"
                "• Цену и фото меняйте в кабинете — после быстрой проверки снова в эфире\n"
-               "• Забыли пароль? Напишите нам — сбросим."),
+               "• Забыли пароль? Напишите на support@keygroup.ge или в WhatsApp — сбросим."),
         "next": ["o_add", "__agent", "owner"],
         "url": "/account/",
     },
