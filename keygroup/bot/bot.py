@@ -76,8 +76,21 @@ def is_admin(uid):
 
 
 def send_admins(text, buttons=None):
+    """text may be a function(uid) -> str so every admin gets their own language."""
     for a in admins():
-        send(a, text, buttons)
+        send(a, text(a) if callable(text) else text, buttons)
+
+
+def lang_of(uid):
+    uid = str(uid)
+    return STATE.setdefault("lang", {}).get(uid) or ("en" if is_admin(uid) else "ka")
+
+
+def tr(uid, ka, en):
+    return en if lang_of(uid) == "en" else ka
+
+
+BOT_USERNAME = ""
 for pair in os.environ.get("AGENTS", "").split(","):
     if ":" in pair:
         i, n = pair.split(":", 1)
@@ -120,6 +133,20 @@ def e(s):
 
 # ---------------------------------------------------------------- views
 
+HELP_EN = (
+    "👋 <b>KEY GROUP Assistant</b> — your personal assistant\n\n"
+    "<b>Your profile</b>\n"
+    "• /profile — send your MyHome.ge profile link (or any of your own listings). Every day I read all your listings, "
+    "save them to the CRM and tell you what changed.\n"
+    "• /sync — update now · /my — my database\n\n"
+    "<b>Owner listing</b>\n"
+    "1️⃣ Send me an owner's listing <b>link</b> (myhome.ge or ss.ge).\n"
+    "2️⃣ I extract all the details and the owner's phone.\n"
+    "3️⃣ Call the owner. If they agree, tap <b>“✅ Owner agreed”</b>.\n"
+    "4️⃣ I give you the ready listing (GE/EN/RU), the form fields and photos. Everything is saved to the CRM.\n\n"
+    "/myid — your Telegram ID · /lang — ქართული / English"
+)
+
 HELP = (
     "👋 <b>KEY GROUP Assistant</b> — შენი პირადი ასისტენტი\n\n"
     "<b>შენი პროფილი</b>\n"
@@ -131,13 +158,37 @@ HELP = (
     "2️⃣ ამოვიღებ ყველა ინფორმაციას და მესაკუთრის ნომერს.\n"
     "3️⃣ დაურეკე მესაკუთრეს. თუ თანახმაა, დააჭირე <b>„✅ მესაკუთრე თანახმაა“</b>.\n"
     "4️⃣ მოგცემ მზა განცხადებას (ქართ/ინგ/რუს), ველებს და ფოტოებს. ყველაფერი ჩაიწერება CRM-ში.\n\n"
-    "/myid — შენი Telegram ID"
+    "/myid — შენი Telegram ID · /lang — ქართული / English"
+)
+
+ADMIN_HELP_EN = (
+    "\n\n👑 <b>Admin</b>\n/invite — link to send to agents · /team — company report (24 h)\n"
+    "/syncall — update all agents now · /agents — agents and their profiles\n"
+    "/addadmin &lt;ID&gt; — add another admin · /setprofile &lt;TelegramID&gt; &lt;link&gt; — set an agent's profile"
 )
 
 ADMIN_HELP = (
-    "\n\n👑 <b>ადმინი</b>\n/team — კომპანიის ანგარიში · /syncall — ყველა აგენტის განახლება\n"
+    "\n\n👑 <b>ადმინი</b>\n/invite — აგენტების ბმული · /team — კომპანიის ანგარიში · /syncall — ყველა აგენტის განახლება\n"
     "/agents — აგენტები · /addadmin &lt;ID&gt; — მეორე ადმინი · /setprofile &lt;TelegramID&gt; &lt;ბმული&gt; — აგენტის პროფილი"
 )
+
+
+def help_for(uid):
+    if lang_of(uid) == "en":
+        return HELP_EN + (ADMIN_HELP_EN if is_admin(uid) else "")
+    return HELP + (ADMIN_HELP if is_admin(uid) else "")
+
+
+def invite_text(uid):
+    link = f"https://t.me/{BOT_USERNAME}" if BOT_USERNAME else "(bot link)"
+    return tr(uid,
+              f"🔗 აგენტების ბმული: {link}\n\nგადაუგზავნე ეს შეტყობინება აგენტებს 👇",
+              f"🔗 Link for agents: {link}\n\nForward the next message to your agents 👇"), (
+        "👋 KEY GROUP-ის პირადი AI ასისტენტი:\n"
+        f"{link}\n\n"
+        "1. გახსენი ბმული და დააჭირე Start\n"
+        "2. ადმინისტრატორი დაგიდასტურებს\n"
+        "3. გამოუგზავნე შენი MyHome.ge პროფილის ბმული — ასისტენტი ყოველდღე ჩაწერს შენს განცხადებებს CRM-ში")
 
 
 def summary(d):
@@ -330,7 +381,8 @@ def sync_agent(uid, notify=True):
         traceback.print_exc()
         stats["error"] = f"{type(ex).__name__}: {ex}"[:200]
         if notify:
-            send(uid, "⚠️ MyHome.ge პროფილის წაკითხვა ვერ მოხერხდა. მოგვიანებით ვცდი ხელახლა.")
+            send(uid, tr(uid, "⚠️ MyHome.ge პროფილის წაკითხვა ვერ მოხერხდა. მოგვიანებით ვცდი ხელახლა.",
+                         "⚠️ Could not read your MyHome.ge profile. I will try again later."))
         return stats
     if not recs and DB.counts(uid).get(uid, {}).get("myhome", {}).get("Active", 0) > 3:
         stats["error"] = "profile returned 0 listings (skipped, possible site problem)"
@@ -339,7 +391,7 @@ def sync_agent(uid, notify=True):
     stats.update(new=new, updated=upd, removed=rem, total=len(recs))
     push_to_crm(uid, name, new, upd, rem, same)
     if notify:
-        send(uid, agent_report(stats))
+        send(uid, agent_report(stats, uid))
     return stats
 
 
@@ -351,34 +403,43 @@ def fmt_price(r):
     return "—"
 
 
-def agent_report(st):
-    lines = [f"📊 <b>შენი განცხადებები — {datetime.now(TBILISI):%d.%m %H:%M}</b>",
-             f"MyHome.ge-ზე ახლა: <b>{st['total']}</b>",
-             f"🆕 ახალი: {len(st['new'])} · ✏️ შეცვლილი: {len(st['updated'])} · 🗑 მოხსნილი: {len(st['removed'])}"]
-    for title, items, icon in (("ახალი", st["new"], "🆕"), ("შეცვლილი", st["updated"], "✏️"), ("მოხსნილი", st["removed"], "🗑")):
+def agent_report(st, uid=None):
+    en = uid is not None and lang_of(uid) == "en"
+    who = "" if not en or str(uid) not in admins() else f" — {st['name']}"
+    if en:
+        lines = [f"📊 <b>Listings{e(who)} — {datetime.now(TBILISI):%d.%m %H:%M}</b>",
+                 f"On MyHome.ge now: <b>{st['total']}</b>",
+                 f"🆕 New: {len(st['new'])} · ✏️ Changed: {len(st['updated'])} · 🗑 Removed: {len(st['removed'])}"]
+    else:
+        lines = [f"📊 <b>შენი განცხადებები — {datetime.now(TBILISI):%d.%m %H:%M}</b>",
+                 f"MyHome.ge-ზე ახლა: <b>{st['total']}</b>",
+                 f"🆕 ახალი: {len(st['new'])} · ✏️ შეცვლილი: {len(st['updated'])} · 🗑 მოხსნილი: {len(st['removed'])}"]
+    for title, items, icon in (("new", st["new"], "🆕"), ("changed", st["updated"], "✏️"), ("removed", st["removed"], "🗑")):
         for r in items[:5]:
             extra = (" — " + ", ".join(r.get("_changes", []))) if r.get("_changes") else ""
             lines.append(f"{icon} <a href=\"{e(r.get('url'))}\">{e(r.get('title') or r.get('id'))}</a> · {fmt_price(r)}{e(extra)}")
         if len(items) > 5:
-            lines.append(f"   … და კიდევ {len(items) - 5}")
-    lines.append("💾 ყველაფერი ჩაწერილია Master CRM-ში.")
+            lines.append(f"   … and {len(items) - 5} more" if en else f"   … და კიდევ {len(items) - 5}")
+    lines.append("💾 Everything is saved in the Master CRM." if en else "💾 ყველაფერი ჩაწერილია Master CRM-ში.")
     return "\n".join(lines)
 
 
-def company_report(results, title="🏢 KEY GROUP — აგენტების ანგარიში"):
+def company_report(results, uid=None):
+    en = uid is None or lang_of(uid) == "en"
+    title = "🏢 KEY GROUP — agents report" if en else "🏢 KEY GROUP — აგენტების ანგარიში"
     lines = [f"<b>{title}</b>\n{datetime.now(TBILISI):%d.%m.%Y %H:%M}", ""]
     tot = {"n": 0, "u": 0, "r": 0, "t": 0}
     for st in sorted(results, key=lambda s: s["name"]):
         if st.get("error") == "no profile":
-            lines.append(f"• {e(st['name'])}: ⚠️ პროფილი არ არის მითითებული")
+            lines.append(f"• {e(st['name'])}: ⚠️ " + ("no MyHome.ge profile yet" if en else "პროფილი არ არის მითითებული"))
             continue
         if st.get("error"):
             lines.append(f"• {e(st['name'])}: ⚠️ {e(st['error'])}")
             continue
-        lines.append(f"• <b>{e(st['name'])}</b>: {st['total']} განცხ. · 🆕 {len(st['new'])} · ✏️ {len(st['updated'])} · 🗑 {len(st['removed'])}")
+        lines.append(f"• <b>{e(st['name'])}</b>: {st['total']} " + ("listings" if en else "განცხ.") + f" · 🆕 {len(st['new'])} · ✏️ {len(st['updated'])} · 🗑 {len(st['removed'])}")
         tot["n"] += len(st["new"]); tot["u"] += len(st["updated"]); tot["r"] += len(st["removed"]); tot["t"] += st["total"]
-    lines += ["", f"სულ: <b>{tot['t']}</b> · 🆕 {tot['n']} · ✏️ {tot['u']} · 🗑 {tot['r']}",
-              "დეტალები: Master CRM → Agent Listings / Agent Activity"]
+    lines += ["", ("Total" if en else "სულ") + f": <b>{tot['t']}</b> · 🆕 {tot['n']} · ✏️ {tot['u']} · 🗑 {tot['r']}",
+              ("Details" if en else "დეტალები") + ": Master CRM → Agent Listings / Agent Activity"]
     return "\n".join(lines)
 
 
@@ -389,7 +450,7 @@ def sync_all(report_to_admin=True, notify_agents=True):
             results.append(sync_agent(uid, notify=notify_agents))
             time.sleep(2)
         if report_to_admin:
-            send_admins(company_report(results))
+            send_admins(lambda a: company_report(results, a))
         return results
 
 
@@ -420,8 +481,9 @@ def ask_admin_to_register(user):
     if row:
         rows.append(row)
     rows.append([{"text": "❌ არა", "callback_data": f"rej|{uid}|-"}])
-    rows.insert(-1, [{"text": "👑 ადმინი (მფლობელი)", "callback_data": f"adm|{uid}|-"}])
-    send_admins(f"🙋 ახალი მომხმარებელი ითხოვს წვდომას: <b>{e(who)}</b> · ID <code>{uid}</code>\nრომელი აგენტია?", rows)
+    rows[-1:-1] = [[{"text": "👑 Admin / ადმინი", "callback_data": f"adm|{uid}|-"}]]
+    send_admins(lambda a: tr(a, f"🙋 ახალი მომხმარებელი ითხოვს წვდომას: <b>{e(who)}</b> · ID <code>{uid}</code>\nრომელი აგენტია?",
+                             f"🙋 New user asks for access: <b>{e(who)}</b> · ID <code>{uid}</code>\nWhich agent is this?"), rows)
 
 
 # ---------------------------------------------------------------- handlers
@@ -432,26 +494,38 @@ def on_message(msg):
     text = (msg.get("text") or msg.get("caption") or "").strip()
 
     if text.startswith("/myid"):
-        send(chat, f"შენი Telegram ID: <code>{uid}</code>\nგაუგზავნე ადმინისტრატორს.")
+        send(chat, tr(uid, f"შენი Telegram ID: <code>{uid}</code>\nგაუგზავნე ადმინისტრატორს.",
+                      f"Your Telegram ID: <code>{uid}</code>"))
+        return
+    if text.startswith("/lang"):
+        cur = lang_of(uid)
+        STATE.setdefault("lang", {})[str(uid)] = "ka" if cur == "en" else "en"
+        save_state()
+        send(chat, tr(uid, "✅ ენა: ქართული. English-ისთვის: /lang", "✅ Language: English. ქართულისთვის: /lang"))
+        return
+    if text.startswith("/invite") and is_admin(uid):
+        a, b = invite_text(uid)
+        send(chat, a)
+        send(chat, b)
         return
     if text.startswith("/addagent") and is_admin(uid):
         parts = text.split(maxsplit=2)
         if len(parts) == 3:
             STATE["agents"][parts[1]] = parts[2]
             save_state()
-            send(chat, f"✅ აგენტი დამატებულია: {e(parts[2])} ({e(parts[1])})")
+            send(chat, tr(uid, f"✅ აგენტი დამატებულია: {e(parts[2])} ({e(parts[1])})", f"✅ Agent added: {e(parts[2])} ({e(parts[1])})"))
         else:
-            send(chat, "ფორმატი: <code>/addagent 123456789 ნინი</code>")
+            send(chat, tr(uid, "ფორმატი: <code>/addagent 123456789 ნინი</code>", "Format: <code>/addagent 123456789 Nini</code>"))
         return
     if text.startswith("/addadmin") and is_admin(uid):
         parts = text.split()
         if len(parts) == 2 and parts[1].isdigit():
             if parts[1] not in STATE["admins"]:
                 STATE["admins"].append(parts[1]); save_state()
-            send(chat, f"👑 ადმინი დამატებულია: <code>{e(parts[1])}</code>")
-            send(parts[1], "👑 შენ ახლა ხარ KEY GROUP Assistant-ის ადმინი.\n\n" + HELP + ADMIN_HELP)
+            send(chat, tr(uid, f"👑 ადმინი დამატებულია: <code>{e(parts[1])}</code>", f"👑 Admin added: <code>{e(parts[1])}</code>"))
+            send(parts[1], "👑 You are now an admin of KEY GROUP Assistant.\n\n" + help_for(parts[1]))
         else:
-            send(chat, "ფორმატი: <code>/addadmin 123456789</code>")
+            send(chat, tr(uid, "ფორმატი: <code>/addadmin 123456789</code>", "Format: <code>/addadmin 123456789</code>"))
         return
     if text.startswith("/agents") and is_admin(uid):
         cnt = DB.counts()
@@ -460,31 +534,33 @@ def on_message(msg):
             p = STATE["profiles"].get(i, {})
             act = cnt.get(i, {}).get("myhome", {}).get("Active", 0)
             lst.append(f"• {e(n)} — <code>{e(i)}</code> · MyHome: {'✅ ' + str(act) if p.get('myhome') else '❌'} · SS.ge: {'✅' if p.get('ss') else '❌'}")
-        send(chat, "აგენტები:\n" + ("\n".join(lst) or "ჯერ არავინ"))
+        send(chat, tr(uid, "აგენტები:\n", "Agents:\n") + ("\n".join(lst) or tr(uid, "ჯერ არავინ — გაგზავნე /invite", "No agents yet — send /invite")))
         return
     if text.startswith("/setprofile") and is_admin(uid):
         parts = text.split(maxsplit=2)
         if len(parts) == 3 and parts[1] in STATE["agents"]:
             msg_ = set_profile_from_text(parts[1], parts[2])
-            send(chat, msg_ or "ბმული ვერ ვიცანი.")
+            send(chat, msg_ or tr(uid, "ბმული ვერ ვიცანი.", "I could not recognise that link."))
             if msg_ and msg_.startswith("✅ MyHome"):
-                threading.Thread(target=lambda: send(chat, agent_report(sync_agent(parts[1], notify=False))), daemon=True).start()
+                threading.Thread(target=lambda: send(chat, agent_report(sync_agent(parts[1], notify=False), uid)), daemon=True).start()
         else:
-            send(chat, "ფორმატი: <code>/setprofile 123456789 https://www.myhome.ge/udzravi-qoneba/?users=9925395</code>")
+            send(chat, tr(uid, "ფორმატი", "Format") + ": <code>/setprofile 123456789 https://www.myhome.ge/udzravi-qoneba/?users=9925395</code>")
         return
     if text.startswith("/syncall") and is_admin(uid):
-        send(chat, "⏳ ყველა აგენტის განახლება დაიწყო…")
+        send(chat, tr(uid, "⏳ ყველა აგენტის განახლება დაიწყო…", "⏳ Updating all agents… the report will follow."))
         threading.Thread(target=sync_all, kwargs={"notify_agents": False}, daemon=True).start()
         return
     if text.startswith("/team") and is_admin(uid):
         since = time.time() - 86400
         act = DB.activity_since(since)
         cnt = DB.counts()
-        lines = ["🏢 <b>KEY GROUP — ბოლო 24 საათი</b>", ""]
+        lines = [tr(uid, "🏢 <b>KEY GROUP — ბოლო 24 საათი</b>", "🏢 <b>KEY GROUP — last 24 hours</b>"), ""]
         for i, n in sorted(STATE["agents"].items(), key=lambda x: x[1]):
             a = act.get(i, {})
             c = cnt.get(i, {}).get("myhome", {}).get("Active", 0)
-            lines.append(f"• <b>{e(n)}</b>: {c} აქტიური · 🆕 {a.get('new', 0)} · ✏️ {a.get('updated', 0)} · 🗑 {a.get('removed', 0)}")
+            lines.append(f"• <b>{e(n)}</b>: {c} " + tr(uid, "აქტიური", "active") + f" · 🆕 {a.get('new', 0)} · ✏️ {a.get('updated', 0)} · 🗑 {a.get('removed', 0)}")
+        if len(lines) == 2:
+            lines.append(tr(uid, "ჯერ აგენტები არ არიან — გაგზავნე /invite", "No agents yet — send /invite"))
         send(chat, "\n".join(lines))
         return
 
@@ -495,7 +571,9 @@ def on_message(msg):
         send(chat, "👋 ეს KEY GROUP-ის აგენტების ასისტენტია. მოთხოვნა გაეგზავნა ადმინისტრატორს — დადასტურების შემდეგ მოგწერ.")
         return
     if text.startswith("/start") or text.startswith("/help"):
-        send(chat, HELP + (ADMIN_HELP if is_admin(uid) else ""))
+        send(chat, help_for(uid))
+        if is_admin(uid) and str(uid) not in STATE["agents"]:
+            return
         if not profile_of(uid).get("myhome"):
             send(chat, "👉 დავიწყოთ: გამომიგზავნე შენი <b>MyHome.ge პროფილის ბმული</b> ან შენი ნებისმიერი განცხადების ბმული ბრძანებით:\n<code>/profile ბმული</code>")
         return
@@ -591,19 +669,19 @@ def on_callback(cb):
         new_uid, _, agent = key.partition("|")
         tg("editMessageReplyMarkup", chat_id=chat, message_id=cb["message"]["message_id"], reply_markup={"inline_keyboard": []})
         if action == "rej":
-            send(chat, f"უარყოფილია: <code>{e(new_uid)}</code>")
+            send(chat, tr(chat, f"უარყოფილია: <code>{e(new_uid)}</code>", f"Declined: <code>{e(new_uid)}</code>"))
             return
         if action == "adm":
             if new_uid not in STATE["admins"]:
                 STATE["admins"].append(new_uid)
                 save_state()
-            send(chat, f"👑 ადმინი დამატებულია: <code>{e(new_uid)}</code>")
-            send(new_uid, "👑 შენ ახლა ხარ KEY GROUP Assistant-ის ადმინი. ანგარიშები აქაც მოვა.\n\n" + HELP + ADMIN_HELP)
+            send(chat, tr(chat, f"👑 ადმინი დამატებულია: <code>{e(new_uid)}</code>", f"👑 Admin added: <code>{e(new_uid)}</code>"))
+            send(new_uid, "👑 You are now an admin of KEY GROUP Assistant. Reports will come here too.\n\n" + help_for(new_uid))
             return
         STATE["agents"][new_uid] = agent
         save_state()
-        send(chat, f"✅ {e(agent)} დამატებულია (ID <code>{e(new_uid)}</code>).")
-        send(new_uid, f"✅ გამარჯობა {e(agent)}! შენი პირადი ასისტენტი მზადაა.\n\n" + HELP)
+        send(chat, tr(chat, f"✅ {e(agent)} დამატებულია (ID <code>{e(new_uid)}</code>).", f"✅ {e(agent)} added (ID <code>{e(new_uid)}</code>). They will get their own private assistant."))
+        send(new_uid, f"✅ გამარჯობა {e(agent)}! შენი პირადი ასისტენტი მზადაა.\n\n" + help_for(new_uid))
         send(new_uid, "👉 გამომიგზავნე შენი <b>MyHome.ge პროფილის ბმული</b> ან შენი ნებისმიერი განცხადების ბმული:\n<code>/profile ბმული</code>")
         return
     item = STATE["pending"].get(key)
@@ -652,12 +730,23 @@ def on_callback(cb):
 
 def main():
     print("KEY GROUP Assistant started")
+    global BOT_USERNAME
     tg("deleteWebhook")
+    BOT_USERNAME = (tg("getMe").get("result") or {}).get("username", "")
     tg("setMyCommands", commands=[{"command": "start", "description": "როგორ მუშაობს"},
                                   {"command": "profile", "description": "ჩემი MyHome.ge / SS.ge პროფილი"},
                                   {"command": "sync", "description": "ჩემი განცხადებების განახლება"},
                                   {"command": "my", "description": "ჩემი ბაზა"},
                                   {"command": "myid", "description": "ჩემი Telegram ID"}])
+    for adm in admins():
+        tg("setMyCommands", scope={"type": "chat", "chat_id": int(adm)}, commands=[
+            {"command": "start", "description": "Help"},
+            {"command": "invite", "description": "Link to send to agents"},
+            {"command": "team", "description": "Company report (24 h)"},
+            {"command": "agents", "description": "Agents and their profiles"},
+            {"command": "syncall", "description": "Update all agents now"},
+            {"command": "addadmin", "description": "Add another admin"},
+            {"command": "lang", "description": "English / ქართული"}])
     threading.Thread(target=scheduler, daemon=True).start()
     while True:
         try:
