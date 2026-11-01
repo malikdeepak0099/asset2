@@ -4,9 +4,13 @@ RAW=https://raw.githubusercontent.com/malikdeepak0099/asset2/main/keygroup
 SITE=/opt/keygroup/site
 DIR=/opt/keygroup-portal
 cd /opt/keygroup || { echo "STOP: /opt/keygroup not found"; exit 1; }
+# 0) backups: install daily backup + restore scripts, and back up before every update
+for f in backup.sh restore.sh; do curl -fsSL "$RAW/$f?$(date +%s)" -o "/opt/keygroup/$f" && chmod 700 "/opt/keygroup/$f"; done
+( crontab -l 2>/dev/null | grep -v 'keygroup/backup.sh'; echo "30 3 * * * /bin/bash /opt/keygroup/backup.sh >> /var/log/keygroup-backup.log 2>&1" ) | crontab -
+[ -d /opt/keygroup-portal/data ] && bash /opt/keygroup/backup.sh
 # 1) website pages
 curl -fsSL "$RAW/u.sh?$(date +%s)" | bash || { echo "STOP: website update failed"; exit 1; }
-for f in account/index.html admin/index.html p/index.html search/index.html assets/portal.css assets/portal.js assets/chat.js; do
+for f in account/index.html admin/index.html p/index.html search/index.html privacy/index.html assets/portal.css assets/portal.js assets/chat.js; do
   mkdir -p "$SITE/$(dirname $f)"
   curl -fsSL "$RAW/site/$f?$(date +%s)" -o "$SITE/$f" || { echo "STOP: could not download $f"; exit 1; }
 done

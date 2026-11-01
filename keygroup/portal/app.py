@@ -52,7 +52,11 @@ DEFAULT_SETTINGS = {
                      "or pay in our office (Richard Holbrooke St. 4, Tbilisi). WhatsApp +995 577 114 118."),
     "show_owner_phone": False,
     "company_phone": "+995577114118",
+    "free_listing_limit": 2,
+    "reconfirm_days": 15,
 }
+CONSENT_VERSION = "2026-11-01"
+VERIFY_LABELS = {0: "", 1: "Contact verified", 2: "Verified listing", 3: "Inspected"}
 
 DEALS = {"sale", "rent", "daily"}
 TYPES = {"flat", "house", "commercial", "land", "hotel"}
@@ -98,7 +102,22 @@ def init_db():
         CREATE TABLE IF NOT EXISTS chat_msgs (
             id INTEGER PRIMARY KEY, chat_id INTEGER, who TEXT, text TEXT, data TEXT DEFAULT '{}', ts REAL);
         CREATE INDEX IF NOT EXISTS idx_chat_msgs ON chat_msgs(chat_id, id);
+        CREATE TABLE IF NOT EXISTS audit (
+            id INTEGER PRIMARY KEY, actor_id INTEGER, actor TEXT, action TEXT, entity TEXT, entity_id INTEGER, detail TEXT, ts REAL);
+        CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY, name TEXT, sid TEXT, page TEXT, props TEXT DEFAULT '{}', ts REAL);
+        CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
         """)
+        for table, col, typ in (("users", "consent_at", "REAL DEFAULT 0"), ("users", "consent_ver", "TEXT DEFAULT ''"),
+                                ("users", "contact_verified", "INTEGER DEFAULT 0"),
+                                ("listings", "verify_level", "INTEGER DEFAULT 0"), ("listings", "confirmed", "REAL DEFAULT 0"),
+                                ("listings", "dup_of", "TEXT DEFAULT ''"), ("listings", "photo_hashes", "TEXT DEFAULT '{}'"),
+                                ("chats", "consent_at", "REAL DEFAULT 0")):
+            have = [r[1] for r in con.execute(f"PRAGMA table_info({table})")]
+            if col not in have:
+                con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+        con.execute("UPDATE listings SET verify_level=2 WHERE verified=1 AND verify_level=0")
+        con.execute("UPDATE listings SET confirmed=COALESCE(NULLIF(approved,0), created) WHERE confirmed=0")
 
 
 def get_settings():
@@ -214,6 +233,58 @@ def notify(text):
     threading.Thread(target=run, daemon=True).start()
 
 
+def audit(con, user, action, entity, entity_id=0, detail=""):
+    con.execute("INSERT INTO audit (actor_id, actor, action, entity, entity_id, detail, ts) VALUES (?,?,?,?,?,?,?)",
+                (user["id"] if user else 0, (user or {}).get("name") or (user or {}).get("phone") or "system",
+                 action, entity, entity_id, str(detail or "")[:1000], time.time()))
+
+
+def track(con, name, page="", props=None, sid="server"):
+    con.execute("INSERT INTO events (name, sid, page, props, ts) VALUES (?,?,?,?,?)",
+                (name, sid[:40], page[:200], json.dumps(props or {}, ensure_ascii=False)[:1000], time.time()))
+
+
+def ahash(path):
+    """8x8 average hash of an image, as 16 hex chars (same photo re-uploaded -> same or very close hash)."""
+    try:
+        im = Image.open(path).convert("L").resize((8, 8))
+        px = list(im.getdata())
+        avg = sum(px) / 64
+        return "%016x" % sum(1 << i for i, v in enumerate(px) if v > avg)
+    except Exception:
+        return ""
+
+
+def _addr_key(row):
+    return re.sub(r"[^0-9a-z\u10a0-\u10ff\u0400-\u04ff]", "", ((row["address"] or "") + (row["city"] or "")).lower())
+
+
+def find_duplicates(con, lid):
+    """Possible duplicates of listing lid among other live listings: same address + rooms, very similar specs, or a shared photo."""
+    row = con.execute("SELECT * FROM listings WHERE id=?", (lid,)).fetchone()
+    if not row:
+        return []
+    hashes = set(json.loads(row["photo_hashes"] or "{}").values()) - {""}
+    found = []
+    for o in con.execute("SELECT * FROM listings WHERE id!=? AND status IN ('pending','active','paused','changes','expired')", (lid,)).fetchall():
+        why = ""
+        if o["deal"] == row["deal"] and (o["rooms"] or 0) == (row["rooms"] or 0) and _addr_key(o) and _addr_key(o) == _addr_key(row) \
+                and len(_addr_key(row)) >= 6:
+            why = "same address"
+        elif (o["deal"] == row["deal"] and o["district"] and (o["district"] or "").lower() == (row["district"] or "").lower()
+              and (o["rooms"] or 0) == (row["rooms"] or 0) and row["area"] and o["area"] and abs(o["area"] - row["area"]) <= row["area"] * 0.03
+              and (o["floor"] or "") == (row["floor"] or "") and o["price"] and abs(o["price"] - row["price"]) <= row["price"] * 0.1):
+            why = "same district, rooms, area and floor"
+        if not why and hashes:
+            oh = set(json.loads(o["photo_hashes"] or "{}").values()) - {""}
+            if any(bin(int(a, 16) ^ int(b, 16)).count("1") <= 4 for a in hashes for b in oh):
+                why = "same photo"
+        if why:
+            found.append(f"#{o['id']} ({why})")
+    con.execute("UPDATE listings SET dup_of=? WHERE id=?", (", ".join(found[:5]), lid))
+    return found
+
+
 def esc(s):
     return str(s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
@@ -233,6 +304,12 @@ def listing_out(row, owner_view=False, admin_view=False, settings=None):
     d["photos"] = json.loads(d.get("photos") or "[]")
     d["tier"] = tier(row)
     d["url"] = f"{SITE}/p/?id={d['id']}"
+    lvl = d.get("verify_level") or 0
+    d["verified"] = 1 if lvl >= 2 else 0
+    d["verify_label"] = VERIFY_LABELS.get(lvl, "")
+    d.pop("photo_hashes", None)
+    if not admin_view:
+        d.pop("dup_of", None)
     if not (owner_view or admin_view or settings.get("show_owner_phone")):
         d["contact_phone"] = ""
         d["contact_name"] = (d.get("contact_name") or "").split(" ")[0]
@@ -320,11 +397,15 @@ async def register(request):
         return err("Password must be at least 6 characters")
     if not name:
         return err("Enter your name")
+    if not d.get("consent"):
+        return err("Please accept the terms and privacy policy")
     with _LOCK, db() as con:
         if con.execute("SELECT 1 FROM users WHERE phone=?", (phone,)).fetchone():
             return err("This phone is already registered — log in instead")
-        cur = con.execute("INSERT INTO users (phone, name, pw, created) VALUES (?,?,?,?)", (phone, name, hash_pw(pw), time.time()))
+        cur = con.execute("INSERT INTO users (phone, name, pw, created, consent_at, consent_ver) VALUES (?,?,?,?,?,?)",
+                          (phone, name, hash_pw(pw), time.time(), time.time(), CONSENT_VERSION))
         uid = cur.lastrowid
+        track(con, "owner_registered")
     notify(f"👤 New owner account on keygroup.ge: <b>{esc(name)}</b> {esc(phone)}")
     return with_session(ok(user={"id": uid, "name": name, "phone": phone, "role": "owner"}), new_session(uid))
 
@@ -377,7 +458,8 @@ async def change_password(request):
 def public_settings():
     s = get_settings()
     return {"plans": s["plans"], "currency": s["currency"], "payment_info": s["payment_info"],
-            "show_owner_phone": s["show_owner_phone"], "company_phone": s["company_phone"]}
+            "show_owner_phone": s["show_owner_phone"], "company_phone": s["company_phone"],
+            "free_listing_limit": s.get("free_listing_limit", 2), "reconfirm_days": s.get("reconfirm_days", 15)}
 
 
 # ---------------------------------------------------------------- owner endpoints
@@ -392,13 +474,23 @@ async def my_listings(request):
         if msg:
             return err(msg)
         now = time.time()
+        s = get_settings()
+        limit = int(s.get("free_listing_limit", 2) or 0)
         with _LOCK, db() as con:
+            if limit and u["role"] != "admin":
+                n = con.execute("""SELECT COUNT(*) FROM listings WHERE user_id=? AND status IN ('pending','active','paused','changes')
+                                   AND vip_until<? AND super_until<?""", (u["id"], now, now)).fetchone()[0]
+                if n >= limit:
+                    return err(f"A free account can have up to {limit} active listings. Delete or promote one (VIP), or contact us for an agent account.")
             cols = ",".join(f.keys())
-            cur = con.execute(f"INSERT INTO listings (user_id,{cols},status,created,updated) VALUES (?,{','.join('?' * len(f))},'pending',?,?)",
-                              (u["id"], *f.values(), now, now))
+            cur = con.execute(f"INSERT INTO listings (user_id,{cols},status,created,updated,confirmed,verify_level) VALUES (?,{','.join('?' * len(f))},'pending',?,?,?,?)",
+                              (u["id"], *f.values(), now, now, now, 1 if u.get("contact_verified") else 0))
             lid = cur.lastrowid
+            dups = find_duplicates(con, lid)
+            track(con, "listing_submitted", props={"deal": f["deal"], "type": f["type"]})
         notify(f"🏠 New owner listing #{lid} waiting for approval\n{esc(f['deal'])} · {esc(f['type'])} · {esc(f['district'] or f['address'])} · "
-               f"{f['price']:,.0f} {esc(f['currency'])}\nOwner: {esc(u['name'])} {esc(u['phone'])}\n{SITE}/admin/")
+               f"{f['price']:,.0f} {esc(f['currency'])}\nOwner: {esc(u['name'])} {esc(u['phone'])}\n"
+               + (f"⚠️ Possible duplicate of {esc(', '.join(dups))}\n" if dups else "") + f"{SITE}/admin/")
         return ok(id=lid)
     with db() as con:
         rows = con.execute("SELECT * FROM listings WHERE user_id=? AND status!='deleted' ORDER BY id DESC", (u["id"],)).fetchall()
@@ -438,8 +530,9 @@ async def my_listing(request):
     sets = ",".join(f"{k}=?" for k in f)
     with _LOCK, db() as con:
         # an edit goes back to the approval queue (admins' own edits stay live)
-        status = row["status"] if u["role"] == "admin" else ("pending" if row["status"] in ("active", "rejected") else row["status"])
-        con.execute(f"UPDATE listings SET {sets}, status=?, updated=? WHERE id=?", (*f.values(), status, time.time(), lid))
+        status = row["status"] if u["role"] == "admin" else ("pending" if row["status"] in ("active", "rejected", "changes") else row["status"])
+        con.execute(f"UPDATE listings SET {sets}, status=?, updated=?, confirmed=? WHERE id=?", (*f.values(), status, time.time(), time.time(), lid))
+        find_duplicates(con, lid)
     if status == "pending" and row["status"] != "pending":
         notify(f"✏️ Owner listing #{lid} was edited and waits for approval again\n{SITE}/admin/")
     return ok(status=status)
@@ -481,9 +574,36 @@ async def listing_photos(request):
                 print("bad image:", ex)
         if files and not added:
             return err("Could not read the photos. Use JPG or PNG under 12 MB.")
+    hashes = json.loads(row["photo_hashes"] or "{}")
+    hashes = {p: hashes.get(p) or ahash(os.path.join(UPLOADS, "t_" + p)) for p in photos}
     with _LOCK, db() as con:
-        con.execute("UPDATE listings SET photos=?, updated=? WHERE id=?", (json.dumps(photos), time.time(), lid))
+        con.execute("UPDATE listings SET photos=?, photo_hashes=?, updated=? WHERE id=?", (json.dumps(photos), json.dumps(hashes), time.time(), lid))
+        dups = find_duplicates(con, lid) if request.method == "POST" else []
+    if dups and request.method == "POST":
+        notify(f"⚠️ Listing #{lid}: photos look like {esc(', '.join(dups))}\n{SITE}/admin/")
     return ok(photos=photos)
+
+
+async def confirm_listing(request):
+    """Owner confirms the property is still available (and renews an expired free listing)."""
+    u, e = need_user(request)
+    if e:
+        return e
+    lid = int(request.path_params["lid"])
+    s = get_settings()
+    now = time.time()
+    with _LOCK, db() as con:
+        row = own_listing(u, lid, con)
+        if not row:
+            return err("Not found", 404)
+        if row["status"] == "expired":
+            con.execute("UPDATE listings SET status='active', expires=?, confirmed=? WHERE id=?", (now + s["plans"]["free"]["days"] * 86400, now, lid))
+        else:
+            con.execute("UPDATE listings SET confirmed=?, expires=MAX(expires, ?) WHERE id=?",
+                        (now, now + s["plans"]["free"]["days"] * 86400 if row["status"] == "active" else 0, lid))
+        audit(con, u, "confirm_available", "listing", lid)
+        row = con.execute("SELECT * FROM listings WHERE id=?", (lid,)).fetchone()
+    return ok(listing=listing_out(row, owner_view=True))
 
 
 async def order_plan(request):
@@ -559,6 +679,8 @@ async def public_listing(request):
         row = con.execute("SELECT * FROM listings WHERE id=? AND status='active'", (lid,)).fetchone()
         if row:
             con.execute("UPDATE listings SET views=views+1 WHERE id=?", (lid,))
+            track(con, "listing_viewed", f"/p/?id={lid}", {"listing_id": lid, "district": row["district"]},
+                  sid=request.headers.get("x-kg-sid", "")[:40] or "server")
     if not row:
         return err("This listing is not available", 404)
     return ok(listing=listing_out(row), settings=public_settings())
@@ -604,9 +726,10 @@ async def admin_stats(request):
         paid_30 = con.execute("SELECT COALESCE(SUM(amount),0) FROM orders WHERE status='paid' AND paid>?", (now - 30 * 86400,)).fetchone()[0]
         reports = con.execute("SELECT COUNT(*) FROM reports WHERE status='open'").fetchone()[0]
         vip = con.execute("SELECT COUNT(*) FROM listings WHERE status='active' AND (vip_until>? OR super_until>?)", (now, now)).fetchone()[0]
+        dups = con.execute("SELECT COUNT(*) FROM listings WHERE dup_of!='' AND status IN ('pending','active','changes')").fetchone()[0]
         chats_waiting = con.execute("SELECT COUNT(*) FROM chats WHERE status IN ('waiting','agent') AND unread>0").fetchone()[0]
         chats_today = con.execute("SELECT COUNT(DISTINCT chat_id) FROM chat_msgs WHERE who='visitor' AND ts>?", (now - 86400,)).fetchone()[0]
-    return ok(stats={"chats_waiting": chats_waiting, "chats_today": chats_today, "listings": by_status, "owners": users, "orders_waiting": await_pay, "revenue_30d": paid_30,
+    return ok(stats={"duplicates": dups, "chats_waiting": chats_waiting, "chats_today": chats_today, "listings": by_status, "owners": users, "orders_waiting": await_pay, "revenue_30d": paid_30,
                      "vip_active": vip, "reports_open": reports, "currency": get_settings()["currency"]})
 
 
@@ -645,6 +768,15 @@ async def admin_listing_action(request):
                         (row["approved"] or now, exp, lid))
         elif action == "reject":
             con.execute("UPDATE listings SET status='rejected', reject_reason=? WHERE id=?", (str(d.get("reason") or "")[:300], lid))
+        elif action == "changes":
+            con.execute("UPDATE listings SET status='changes', reject_reason=? WHERE id=?", (str(d.get("reason") or "")[:300], lid))
+        elif action == "level":
+            lvl = max(0, min(3, int(d.get("level") or 0)))
+            con.execute("UPDATE listings SET verify_level=?, verified=? WHERE id=?", (lvl, 1 if lvl >= 2 else 0, lid))
+        elif action == "not_duplicate":
+            con.execute("UPDATE listings SET dup_of='' WHERE id=?", (lid,))
+        elif action == "check_duplicates":
+            find_duplicates(con, lid)
         elif action == "pause":
             con.execute("UPDATE listings SET status='paused' WHERE id=?", (lid,))
         elif action == "renew":
@@ -652,11 +784,12 @@ async def admin_listing_action(request):
         elif action == "delete":
             con.execute("UPDATE listings SET status='deleted' WHERE id=?", (lid,))
         elif action in ("verify", "unverify"):
-            con.execute("UPDATE listings SET verified=? WHERE id=?", (1 if action == "verify" else 0, lid))
+            con.execute("UPDATE listings SET verified=?, verify_level=? WHERE id=?", (1 if action == "verify" else 0, 2 if action == "verify" else 0, lid))
         elif action in ("vip", "super", "boost", "clear_plan"):
             apply_plan(con, lid, action, s)
         else:
             return err("Unknown action")
+        audit(con, u, action, "listing", lid, d.get("reason") or (f"level {d.get('level')}" if action == "level" else ""))
     return ok()
 
 
@@ -722,6 +855,7 @@ async def admin_order_action(request):
             con.execute("UPDATE orders SET status='cancelled', note=? WHERE id=?", (str(d.get("note") or "")[:200], oid))
         else:
             return err("Unknown action")
+        audit(con, u, "order_" + action, "order", oid, f"{o['plan']} {o['amount']} {o['currency']} listing #{o['listing_id']}")
     return ok()
 
 
@@ -741,12 +875,19 @@ async def admin_users(request):
             elif action == "reset_password":
                 pw = secrets.token_urlsafe(6)
                 con.execute("UPDATE users SET pw=? WHERE id=? AND role!='admin'", (hash_pw(pw), uid))
+                audit(con, u, "reset_password", "user", uid)
                 return ok(password=pw)
+            elif action in ("verify_contact", "unverify_contact"):
+                on = action == "verify_contact"
+                con.execute("UPDATE users SET contact_verified=? WHERE id=?", (1 if on else 0, uid))
+                if on:
+                    con.execute("UPDATE listings SET verify_level=1 WHERE user_id=? AND verify_level=0", (uid,))
             else:
                 return err("Unknown action")
+            audit(con, u, action, "user", uid)
         return ok()
     with db() as con:
-        rows = con.execute("""SELECT u.id, u.phone, u.name, u.role, u.blocked, u.created,
+        rows = con.execute("""SELECT u.id, u.phone, u.name, u.role, u.blocked, u.created, u.contact_verified, u.consent_at,
                                      (SELECT COUNT(*) FROM listings l WHERE l.user_id=u.id AND l.status!='deleted') AS listings
                               FROM users u ORDER BY u.id DESC LIMIT 1000""").fetchall()
     return ok(users=[dict(r) for r in rows])
@@ -771,9 +912,17 @@ async def admin_settings(request):
             s["payment_info"] = str(d["payment_info"])[:1000]
         if "show_owner_phone" in d:
             s["show_owner_phone"] = bool(d["show_owner_phone"])
+        for k in ("free_listing_limit", "reconfirm_days"):
+            if k in d:
+                try:
+                    s[k] = max(0, min(1000, int(d[k])))
+                except (TypeError, ValueError):
+                    pass
         if d.get("currency") in CURRENCIES:
             s["currency"] = d["currency"]
         save_settings(s)
+        with _LOCK, db() as con:
+            audit(con, u, "settings", "settings", 0, json.dumps({k: d[k] for k in d if k != "payment_info"}, ensure_ascii=False)[:500])
     return ok(settings=s)
 
 
@@ -884,8 +1033,9 @@ async def chat_send(request):
                 add_msg(con, chat["id"], "bot", m)
             con.execute("UPDATE chats SET state=?, lang=? WHERE id=?", (json.dumps(state, ensure_ascii=False), state.get("lang", chat["lang"]), chat["id"]))
             if event == "handoff":
-                con.execute("UPDATE chats SET status='waiting', name=?, phone=?, topic=?, unread=unread+1 WHERE id=?",
-                            (state.get("name", ""), state.get("phone", ""), state.get("topic", ""), chat["id"]))
+                con.execute("UPDATE chats SET status='waiting', name=?, phone=?, topic=?, unread=unread+1, consent_at=? WHERE id=?",
+                            (state.get("name", ""), state.get("phone", ""), state.get("topic", ""), time.time(), chat["id"]))
+                track(con, "lead_submitted", chat["page"], {"channel": "chat", "topic": state.get("topic", "")[:60]})
                 tr = transcript(con, chat["id"])
                 alert = (f"🙋 <b>Website chat #{chat['id']} — visitor wants an agent</b>\n"
                          f"Name: {esc(state.get('name'))}\nPhone: {esc(state.get('phone'))}\nTopic: {esc(state.get('topic'))}\n"
@@ -950,6 +1100,7 @@ async def admin_chat(request):
                     return err("Write a message")
                 add_msg(con, cid, "agent", {"text": text})
                 con.execute("UPDATE chats SET status='agent', unread=0 WHERE id=?", (cid,))
+                audit(con, u, "chat_reply", "chat", cid)
             elif act == "close":
                 lang = chat["lang"] or "en"
                 add_msg(con, cid, "system", {"text": chatbot.T(lang, "The agent closed this chat. Write again any time!",
@@ -968,6 +1119,69 @@ async def admin_chat(request):
         msgs = [msg_out(r) for r in con.execute("SELECT * FROM chat_msgs WHERE chat_id=? ORDER BY id", (cid,)).fetchall()]
     chat.pop("token", None); chat.pop("state", None)
     return ok(chat=chat, messages=msgs)
+
+
+# ---------------------------------------------------------------- analytics (first-party, anonymous) + audit log
+
+TRACK_NAMES = {"page_view", "search_performed", "listing_click", "lead_submitted", "viewing_requested", "whatsapp_click", "call_click",
+               "chat_opened", "chat_question", "valuation_requested", "share_click", "favorite_added", "partner_application"}
+
+
+async def track_event(request):
+    if too_many(request, "track", 120, 60):
+        return ok()
+    d = await body_json(request)
+    name = str(d.get("name") or "")
+    if name not in TRACK_NAMES:
+        return err("unknown event")
+    props = d.get("props") if isinstance(d.get("props"), dict) else {}
+    props = {str(k)[:30]: (v if isinstance(v, (int, float)) else str(v)[:120]) for k, v in list(props.items())[:12]}
+    ref = str(d.get("ref") or "")
+    if ref:
+        props["ref"] = urllib.parse.urlparse(ref).netloc[:80]
+    with _LOCK, db() as con:
+        track(con, name, str(d.get("page") or "")[:200], props, re.sub(r"[^a-zA-Z0-9]", "", str(d.get("sid") or ""))[:40] or "anon")
+        con.execute("DELETE FROM events WHERE ts<?", (time.time() - 400 * 86400,))
+    return ok()
+
+
+async def admin_analytics(request):
+    u, e = need_user(request, admin=True)
+    if e:
+        return e
+    try:
+        days = max(1, min(365, int(request.query_params.get("days", 30))))
+    except ValueError:
+        days = 30
+    since = time.time() - days * 86400
+    with db() as con:
+        totals = {r[0]: r[1] for r in con.execute("SELECT name, COUNT(*) FROM events WHERE ts>? GROUP BY name", (since,))}
+        visitors = con.execute("SELECT COUNT(DISTINCT sid) FROM events WHERE ts>? AND name='page_view'", (since,)).fetchone()[0]
+        daily = [dict(r) for r in con.execute("""SELECT date(ts,'unixepoch','+4 hours') AS day,
+                    COUNT(DISTINCT CASE WHEN name='page_view' THEN sid END) AS visitors,
+                    SUM(name='page_view') AS views, SUM(name='search_performed') AS searches,
+                    SUM(name IN ('lead_submitted','viewing_requested','valuation_requested')) AS leads,
+                    SUM(name IN ('whatsapp_click','call_click')) AS contacts, SUM(name='chat_opened') AS chats
+                    FROM events WHERE ts>? GROUP BY day ORDER BY day""", (since,))]
+        pages = [dict(r) for r in con.execute("SELECT page, COUNT(*) AS n FROM events WHERE ts>? AND name='page_view' GROUP BY page ORDER BY n DESC LIMIT 10", (since,))]
+        refs = [dict(r) for r in con.execute("""SELECT json_extract(props,'$.ref') AS ref, COUNT(*) AS n FROM events
+                    WHERE ts>? AND name='page_view' AND json_extract(props,'$.ref') IS NOT NULL AND json_extract(props,'$.ref')!=''
+                    GROUP BY ref ORDER BY n DESC LIMIT 10""", (since,))]
+        searches = [dict(r) for r in con.execute("""SELECT COALESCE(json_extract(props,'$.district'),'') AS district, COALESCE(json_extract(props,'$.deal'),'') AS deal,
+                    COUNT(*) AS n FROM events WHERE ts>? AND name='search_performed' GROUP BY district, deal ORDER BY n DESC LIMIT 10""", (since,))]
+        listings = [dict(r) for r in con.execute("""SELECT json_extract(e.props,'$.listing_id') AS lid, COUNT(*) AS n, l.title, l.district, l.price, l.currency
+                    FROM events e LEFT JOIN listings l ON l.id=json_extract(e.props,'$.listing_id')
+                    WHERE e.ts>? AND e.name='listing_viewed' GROUP BY lid ORDER BY n DESC LIMIT 10""", (since,))]
+    return ok(days=days, totals=totals, visitors=visitors, daily=daily, pages=pages, refs=refs, searches=searches, listings=listings)
+
+
+async def admin_audit(request):
+    u, e = need_user(request, admin=True)
+    if e:
+        return e
+    with db() as con:
+        rows = con.execute("SELECT * FROM audit ORDER BY id DESC LIMIT 300").fetchall()
+    return ok(log=[dict(r) for r in rows])
 
 
 # ---------------------------------------------------------------- app
@@ -1014,6 +1228,10 @@ routes = [
     Route("/api/admin/users", admin_users, methods=["GET", "POST"]),
     Route("/api/admin/settings", admin_settings, methods=["GET", "POST"]),
     Route("/api/chat/start", chat_start, methods=["POST"]),
+    Route("/api/track", track_event, methods=["POST"]),
+    Route("/api/admin/analytics", admin_analytics),
+    Route("/api/admin/audit", admin_audit),
+    Route("/api/my/listings/{lid:int}/confirm", confirm_listing, methods=["POST"]),
     Route("/api/chat/send", chat_send, methods=["POST"]),
     Route("/api/chat/poll", chat_poll),
     Route("/api/admin/chats", admin_chats),

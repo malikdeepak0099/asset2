@@ -3,6 +3,25 @@
   if (window.__kgChat) return; window.__kgChat = 1;
   var store = {get: function (k, d) { try { var v = localStorage.getItem(k); return v == null ? d : v; } catch (e) { return d; } },
     set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} }};
+  // ---- first-party anonymous analytics (no cookies, no personal data)
+  var SID = store.get('kg_sid', '');
+  if (!SID) { SID = Math.random().toString(36).slice(2) + Date.now().toString(36); store.set('kg_sid', SID); }
+  window.kgTrack = function (name, props) {
+    try {
+      var body = JSON.stringify({name: name, props: props || {}, page: location.pathname + location.search.slice(0, 40), sid: SID, ref: name === 'page_view' && document.referrer.indexOf(location.host) < 0 ? document.referrer : ''});
+      if (navigator.sendBeacon) navigator.sendBeacon('/api/track', new Blob([body], {type: 'application/json'}));
+      else fetch('/api/track', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: body, keepalive: true});
+    } catch (e) {}
+  };
+  if (location.pathname.indexOf('/admin') !== 0) window.kgTrack('page_view');
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest && e.target.closest('a'); if (!a) return;
+    var h = a.getAttribute('href') || '';
+    if (/myhome\.ge\/pr\/|\/p\/\?id=/.test(h) && !a.closest('.kgc-p')) window.kgTrack('listing_click', {href: h.slice(0, 80)});
+    else if (h.indexOf('wa.me/995') >= 0 && location.pathname.indexOf('/p/') !== 0) window.kgTrack('whatsapp_click');
+    else if (h.indexOf('tel:') === 0 && location.pathname.indexOf('/p/') !== 0) window.kgTrack('call_click');
+  }, true);
+
   function lang() {
     var l = store.get('kg_lang', '') || (document.documentElement.lang || 'ka').slice(0, 2);
     return l === 'ru' || l === 'en' ? l : 'ka';
@@ -190,6 +209,7 @@
     if (!on && t) t.remove();
   }
   function send(text, label) {
+    window.kgTrack('chat_question', {q: text.indexOf('__') === 0 ? text : 'text'});
     if (label) render({id: S.last + 0.001, who: 'visitor', text: label});
     scroll();
     var botMode = S.status === 'bot';
@@ -227,6 +247,7 @@
     S.open = !S.open;
     hideTeaser();
     if (S.open) {
+      window.kgTrack('chat_opened');
       if (!panel) build();
       panel.style.display = 'flex';
       btn.style.display = window.innerWidth <= 520 ? 'none' : '';

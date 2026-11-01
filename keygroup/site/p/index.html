@@ -60,14 +60,14 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
     var per = l.deal === 'sale' ? '' : (l.deal === 'daily' ? t(' / day', ' / დღე') : t(' / month', ' / თვე'));
     var badges = '<span class="pill" style="background:var(--sky);color:var(--blue)">' + esc(KG.DEAL(l.deal)) + '</span>';
     if (l.tier === 'super') badges += ' <span class="pill t-super">Super VIP</span>'; else if (l.tier === 'vip') badges += ' <span class="pill t-vip">VIP</span>';
-    if (l.verified) badges += ' <span class="pill t-ver">' + KG.icon('check') + t('Verified by KEY GROUP', 'შემოწმებულია KEY GROUP-ის მიერ') + '</span>';
+    if (l.verify_level) badges += ' <span class="pill t-ver">' + KG.icon('check') + esc(KG.VLABEL(l.verify_level)) + (l.verify_level >= 2 ? ' · KEY GROUP' : '') + '</span>';
     var col = KG.COL[l.type === 'commercial' ? 'commercial' : l.deal] || KG.COL.rent;
     var gal = photos.length ? '<div class="gal"><div class="main" data-i="0" style="background-image:url(' + KG.photo(photos[0]) + ')"><span class="cnt">' + KG.icon('image') + ' ' + photos.length + '</span></div>' +
       (photos.length > 1 ? '<div class="side"><div data-i="1" style="background-image:url(' + KG.photo(photos[1], true) + ')"></div><div data-i="2" style="background-image:url(' + KG.photo(photos[2] || photos[1], true) + ')"></div></div>' : '<div class="side"></div>') + '</div>'
       : '<div class="noph" style="background:linear-gradient(135deg,' + col[0] + ',' + col[1] + ')">' + esc(l.district || KG.TYPE(l.type)) + '</div>';
     var facts = [[t('Type', 'ტიპი'), KG.TYPE(l.type)], [t('Area', 'ფართი'), l.area ? l.area + ' m²' : ''], [t('Rooms', 'ოთახები'), l.rooms || ''], [t('Bedrooms', 'საძინებელი'), l.bedrooms || ''],
       [t('Floor', 'სართული'), l.floor ? l.floor + (l.total_floors ? ' / ' + l.total_floors : '') : ''], [t('Price per m²', 'ფასი მ²-ზე'), l.area && l.deal === 'sale' ? KG.money(l.price / l.area, l.currency) : ''],
-      [t('Views', 'ნახვები'), (l.views || 0) + 1], ['ID', l.id]].filter(function (f) { return f[1] !== '' && f[1] !== 0; });
+      [t('Views', 'ნახვები'), (l.views || 0) + 1], [t('Availability confirmed', 'აქტუალურობა დადასტურდა'), l.confirmed ? new Date(l.confirmed * 1000).toLocaleDateString(KG.lang === 'ka' ? 'ka-GE' : 'en-GB', {day: 'numeric', month: 'short', year: 'numeric'}) : ''], ['ID', l.id]].filter(function (f) { return f[1] !== '' && f[1] !== 0; });
     var mapQ = encodeURIComponent([l.address, l.district, l.city || 'Tbilisi'].filter(Boolean).join(', '));
     var waText = encodeURIComponent(t('Hello KEY GROUP! I am interested in listing #', 'გამარჯობა KEY GROUP! მაინტერესებს განცხადება #') + l.id + ' ' + location.href);
     var phone = l.contact_phone, contact = phone ?
@@ -91,6 +91,7 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       '<aside><div class="card"><h3>' + (phone ? esc(l.contact_name || t('Owner', 'მესაკუთრე')) : 'KEY GROUP Real Estate') + '</h3><span class="muted" style="font-size:13px">' + t('Mention listing #', 'ახსენე განცხადება #') + l.id + '</span>' + contact +
       '<form id="cb" style="display:flex;flex-direction:column;gap:10px;border-top:1px solid var(--line);padding-top:12px"><b>' + t('Request a call back', 'დამირეკეთ') + '</b>' +
       '<label class="f">' + t('Your name', 'თქვენი სახელი') + '<input name="name" autocomplete="name"></label><label class="f">' + t('Phone / WhatsApp', 'ტელეფონი / WhatsApp') + '<input name="phone" type="tel" required autocomplete="tel"></label>' +
+      '<label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;line-height:1.4;color:var(--muted)"><input type="checkbox" name="consent" required style="margin-top:2px;flex:none"><span>' + t('I agree to be contacted about this property (<a href="/privacy/" target="_blank">privacy</a>).', 'ვეთანხმები დაკავშირებას ამ ქონების შესახებ (<a href="/privacy/" target="_blank">კონფიდენციალურობა</a>).') + '</span></label>' +
       '<input name="website" class="hidden" tabindex="-1" autocomplete="off"><button class="btn b-coral" type="submit">' + t('Call me back', 'დამირეკეთ') + '</button><div id="cbm"></div></form>' +
       '<div class="share"><button class="btn sm b-ghost" type="button" id="cp">' + KG.icon('share') + t('Copy link', 'ბმულის კოპირება') + '</button>' +
       '<a class="btn sm b-ghost" target="_blank" rel="noopener" href="https://wa.me/?text=' + encodeURIComponent(location.href) + '">WhatsApp</a>' +
@@ -122,7 +123,9 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
     if (calc) { ['#c-dp', '#c-r', '#c-y'].forEach(function (s) { $(s).oninput = calcRun; }); calcRun(); }
     // actions
     $('#cp').onclick = function () { (navigator.clipboard ? navigator.clipboard.writeText(location.href) : Promise.reject()).then(function () { $('#cp').lastChild.textContent = t('Copied', 'დაკოპირდა'); }, function () {}); };
-    $('#fv').onclick = function () { $('#fv').setAttribute('aria-pressed', KG.toggleFav('o' + l.id)); };
+    $('#fv').onclick = function () { var on = KG.toggleFav('o' + l.id); $('#fv').setAttribute('aria-pressed', on); if (on) KG.track('favorite_added', {listing_id: l.id}); };
+    KG.$$('a[href*="wa.me/"]').forEach(function (a) { a.addEventListener('click', function () { KG.track(a.href.indexOf('?text=') > 0 && a.href.indexOf('wa.me/?') < 0 ? 'whatsapp_click' : 'share_click', {listing_id: l.id}); }); });
+    KG.$$('a[href^="tel:"]').forEach(function (a) { a.addEventListener('click', function () { KG.track('call_click', {listing_id: l.id}); }); });
     $('#rp').onclick = function () { $('#rd').showModal(); };
     $('#rd').addEventListener('close', function () {
       if ($('#rd').returnValue !== 'send') return;
@@ -132,7 +135,8 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
     $('#cb').onsubmit = function (e) {
       e.preventDefault();
       var f = e.target;
-      lead({type: 'Call back: listing #' + l.id, name: f.name.value, phone: f.phone.value, listing: location.href, website: f.website.value}).then(function (okk) {
+      KG.track('viewing_requested', {listing_id: l.id});
+      lead({type: 'Call back: listing #' + l.id, name: f.name.value, phone: f.phone.value, listing: location.href, website: f.website.value, consent: 'yes ' + new Date().toISOString()}).then(function (okk) {
         $('#cbm').className = 'msg ' + (okk ? 'ok' : 'err');
         $('#cbm').textContent = okk ? t('Thank you! We will call you soon.', 'გმადლობთ! მალე დაგირეკავთ.') : t('Could not send — please use WhatsApp.', 'ვერ გაიგზავნა — მოგვწერეთ WhatsApp-ზე.');
         if (okk) f.reset();

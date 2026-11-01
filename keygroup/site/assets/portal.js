@@ -61,6 +61,8 @@
   };
 
   // ---------- labels
+  KG.VLABEL = function (lvl) { return {1: KG.t('Contact verified', 'კონტაქტი შემოწმებულია'), 2: KG.t('Verified listing', 'შემოწმებული განცხადება'), 3: KG.t('Inspected', 'ადგილზე შემოწმებული')}[lvl] || ''; };
+  KG.track = function (name, props) { if (window.kgTrack) window.kgTrack(name, props); };
   KG.DEAL = function (d) { return {sale: KG.t('For sale', 'იყიდება'), rent: KG.t('For rent', 'ქირავდება'), daily: KG.t('Daily rent', 'დღიური ქირა')}[d] || d; };
   KG.TYPE = function (t) { return {flat: KG.t('Apartment', 'ბინა'), house: KG.t('House', 'სახლი'), commercial: KG.t('Commercial', 'კომერციული'), land: KG.t('Land', 'მიწა'), hotel: KG.t('Hotel', 'სასტუმრო')}[t] || t; };
   KG.money = function (n, cur) { return (cur === 'GEL' ? '₾' : cur === 'EUR' ? '€' : '$') + Math.round(Number(n) || 0).toLocaleString('en-US'); };
@@ -75,7 +77,8 @@
     if (l.tier === 'super') badges += '<span class="pill t-super">' + KG.icon('star') + 'Super VIP</span>';
     else if (l.tier === 'vip') badges += '<span class="pill t-vip">' + KG.icon('star') + 'VIP</span>';
     badges += '<span class="pill" style="background:rgba(8,26,48,.75);color:#fff">' + KG.esc(KG.DEAL(l.deal)) + '</span>';
-    if (l.verified) badges += '<span class="pill t-ver">' + KG.icon('check') + KG.t('Verified', 'შემოწმებული') + '</span>';
+    if (l.vlevel >= 2) badges += '<span class="pill t-ver">' + KG.icon('check') + KG.VLABEL(l.vlevel) + '</span>';
+    else if (l.verified) badges += '<span class="pill t-ver">' + KG.icon('check') + KG.t('Verified', 'შემოწმებული') + '</span>';
     var specs = [];
     if (l.rooms) specs.push(l.rooms + ' ' + KG.t('rooms', 'ოთახი'));
     if (l.area) specs.push(l.area + ' m²');
@@ -104,7 +107,7 @@
   KG.fromOwner = function (r) {
     return {key: 'o' + r.id, src: 'owner', id: r.id, deal: r.deal, type: r.type, district: r.district, address: r.address, rooms: r.rooms,
       area: r.area, floor: r.floor ? r.floor + (r.total_floors ? '/' + r.total_floors : '') : '', price: r.price, cur: r.currency,
-      photo: KG.photo((r.photos || [])[0], true), tier: r.tier, verified: !!r.verified, url: '/p/?id=' + r.id, title: r.title, views: r.views,
+      photo: KG.photo((r.photos || [])[0], true), tier: r.tier, verified: !!r.verified, vlevel: r.verify_level || 0, url: '/p/?id=' + r.id, title: r.title, views: r.views,
       created: r.approved || r.created};
   };
   var KA_EN = {'ვაკე': 'Vake', 'საბურთალო': 'Saburtalo', 'დიდუბე': 'Didube', 'ვერა': 'Vera', 'მთაწმინდა': 'Mtatsminda', 'ისანი': 'Isani', 'სამგორი': 'Samgori',

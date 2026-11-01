@@ -69,19 +69,19 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
       var pend = (STATS.listings || {}).pending || 0;
       $('#app').innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"><h1>KEY GROUP admin</h1>' +
         '<div style="display:flex;gap:8px"><a class="btn b-ghost" href="/account/">Owner view</a><button class="btn b-ghost" id="out">Log out</button></div></div>' +
-        '<div class="tabs">' + [['dash', 'Dashboard', 0], ['listings', 'Listings', pend], ['chats', 'Chats', STATS.chats_waiting], ['orders', 'Payments', STATS.orders_waiting], ['reports', 'Reports', STATS.reports_open], ['users', 'Users', 0], ['settings', 'Plans & settings', 0]].map(function (x) {
+        '<div class="tabs">' + [['dash', 'Dashboard', 0], ['listings', 'Listings', pend], ['chats', 'Chats', STATS.chats_waiting], ['orders', 'Payments', STATS.orders_waiting], ['reports', 'Reports', STATS.reports_open], ['users', 'Users', 0], ['analytics', 'Analytics', 0], ['log', 'Activity log', 0], ['settings', 'Plans & settings', 0]].map(function (x) {
           return '<button data-t="' + x[0] + '" aria-pressed="' + (TAB === x[0]) + '">' + x[1] + (x[2] ? ' <span class="n">' + x[2] + '</span>' : '') + '</button>';
         }).join('') + '</div><div id="tab"></div>';
       $$('[data-t]').forEach(function (b) { b.onclick = function () { TAB = b.dataset.t; shell(); }; });
       $('#out').onclick = function () { api('/api/logout', {method: 'POST'}).then(login); };
       clearInterval(window.__chatTimer);
-      ({dash: dash, chats: chats, listings: listings, orders: orders, reports: reports, users: users, settings: settings})[TAB]();
+      ({analytics: analytics, log: activity, dash: dash, chats: chats, listings: listings, orders: orders, reports: reports, users: users, settings: settings})[TAB]();
     });
   }
   function dash() {
     var L = STATS.listings || {}, cur = STATS.currency === 'GEL' ? '₾' : STATS.currency;
     $('#tab').innerHTML = '<div class="kpis">' + [[L.pending || 0, 'Waiting for approval'], [L.active || 0, 'Live owner listings'], [STATS.vip_active, 'VIP / Super VIP live'], [STATS.orders_waiting, 'Payments to confirm'],
-      [cur + Math.round(STATS.revenue_30d), 'Paid in last 30 days'], [STATS.owners, 'Owner accounts'], [STATS.reports_open, 'Open reports'], [STATS.chats_today || 0, 'Website chats (24h)'], [L.expired || 0, 'Expired']].map(function (k) {
+      [cur + Math.round(STATS.revenue_30d), 'Paid in last 30 days'], [STATS.owners, 'Owner accounts'], [STATS.reports_open, 'Open reports'], [STATS.duplicates || 0, 'Possible duplicates'], [L.changes || 0, 'Waiting for owner changes'], [STATS.chats_today || 0, 'Website chats (24h)'], [L.expired || 0, 'Expired']].map(function (k) {
         return '<div class="card"><b>' + esc(k[0]) + '</b><span>' + esc(k[1]) + '</span></div>'; }).join('') + '</div>' +
       '<p class="muted" style="margin-top:18px">New listings, plan orders and reports also come to the KEY GROUP Telegram bot.</p>';
   }
@@ -141,17 +141,53 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
   }
   function confirmClose() { return true; }
   function alertMsg(t) { var d = document.createElement('div'); d.className = 'msg err'; d.textContent = t; $('#thread').prepend(d); }
+  function analytics() {
+    var days = window.__anDays || 30;
+    api('/api/admin/analytics?days=' + days).then(function (j) {
+      if (!j.ok) { $('#tab').innerHTML = '<div class="msg err">' + esc(j.error) + '</div>'; return; }
+      var T = j.totals || {}, D = j.daily || [], max = Math.max.apply(null, [1].concat(D.map(function (d) { return d.visitors; })));
+      var leads = (T.lead_submitted || 0) + (T.viewing_requested || 0) + (T.valuation_requested || 0);
+      var tbl = function (title, rows, cols) {
+        return '<div class="card" style="padding:16px"><h3 style="margin-bottom:8px">' + title + '</h3>' + (rows.length ? '<table><tbody>' + rows.map(function (r) { return '<tr>' + cols.map(function (c) { return '<td>' + c(r) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table>' : '<p class="muted">No data yet.</p>') + '</div>';
+      };
+      $('#tab').innerHTML = '<div class="seg" style="max-width:360px;margin-bottom:14px">' + [7, 30, 90].map(function (d) { return '<button data-d="' + d + '" aria-pressed="' + (d === days) + '">Last ' + d + ' days</button>'; }).join('') + '</div>' +
+        '<div class="kpis">' + [[j.visitors, 'Visitors'], [T.page_view || 0, 'Page views'], [T.search_performed || 0, 'Searches'], [T.listing_viewed || 0, 'Owner listing views'],
+          [leads, 'Leads (call back, valuation, viewing, chat)'], [(T.whatsapp_click || 0) + (T.call_click || 0), 'WhatsApp / call clicks'], [T.chat_opened || 0, 'Chats opened'], [T.listing_submitted || 0, 'Owner listings submitted']].map(function (k) {
+          return '<div class="card"><b>' + esc(k[0]) + '</b><span>' + esc(k[1]) + '</span></div>'; }).join('') + '</div>' +
+        '<div class="card" style="padding:16px;margin-top:16px"><h3>Visitors per day</h3><div style="display:flex;align-items:flex-end;gap:3px;height:140px;margin-top:12px">' +
+        (D.length ? D.map(function (d) { return '<div title="' + esc(d.day) + ': ' + d.visitors + ' visitors, ' + (d.leads || 0) + ' leads" style="flex:1;min-width:4px;max-width:48px;background:' + (d.leads ? 'var(--coral)' : 'var(--teal)') + ';border-radius:4px 4px 0 0;height:' + Math.max(3, Math.round(d.visitors / max * 130)) + 'px"></div>'; }).join('') : '<p class="muted">Data starts collecting after this update.</p>') +
+        '</div><p class="muted" style="font-size:12px">Red bars = days with leads. Anonymous first-party statistics; no cookies or personal data.</p></div>' +
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-top:16px">' +
+        tbl('Top pages', j.pages, [function (r) { return esc(r.page); }, function (r) { return '<b>' + r.n + '</b>'; }]) +
+        tbl('Where visitors come from', j.refs, [function (r) { return esc(r.ref); }, function (r) { return '<b>' + r.n + '</b>'; }]) +
+        tbl('What people search', j.searches, [function (r) { return esc(r.deal || 'any') + ' · ' + esc(r.district || 'any district'); }, function (r) { return '<b>' + r.n + '</b>'; }]) +
+        tbl('Most viewed owner listings', j.listings, [function (r) { return '<a href="/p/?id=' + esc(r.lid) + '" target="_blank" style="color:var(--blue)">#' + esc(r.lid) + '</a> ' + esc(r.title || r.district || ''); }, function (r) { return '<b>' + r.n + '</b>'; }]) + '</div>';
+      $$('[data-d]').forEach(function (b) { b.onclick = function () { window.__anDays = +b.dataset.d; analytics(); }; });
+    });
+  }
+  function activity() {
+    api('/api/admin/audit').then(function (j) {
+      var A = j.log || [];
+      $('#tab').innerHTML = '<div class="card tablewrap"><table><thead><tr><th>When</th><th>Who</th><th>Action</th><th>On</th><th>Details</th></tr></thead><tbody>' +
+        (A.length ? A.map(function (a) {
+          var on = a.entity === 'listing' ? '<a href="/p/?id=' + a.entity_id + '" target="_blank" style="color:var(--blue)">listing #' + a.entity_id + '</a>' : esc(a.entity) + (a.entity_id ? ' #' + a.entity_id : '');
+          return '<tr><td>' + fmtDate(a.ts) + '</td><td>' + esc(a.actor) + '</td><td><b>' + esc(a.action.replace(/_/g, ' ')) + '</b></td><td>' + on + '</td><td class="muted">' + esc(a.detail || '') + '</td></tr>';
+        }).join('') : '<tr><td colspan="5" class="muted">No activity yet.</td></tr>') + '</tbody></table></div>';
+    });
+  }
   function listings() {
     api('/api/admin/listings?status=' + LSTAT).then(function (j) {
       var L = j.listings || [];
-      $('#tab').innerHTML = '<div class="seg" style="max-width:640px;margin-bottom:14px">' + ['pending', 'active', 'rejected', 'expired', 'paused', 'all'].map(function (s) {
+      $('#tab').innerHTML = '<div class="seg" style="max-width:760px;margin-bottom:14px">' + ['pending', 'changes', 'active', 'rejected', 'expired', 'paused', 'all'].map(function (s) {
         return '<button data-s="' + s + '" aria-pressed="' + (LSTAT === s) + '">' + s[0].toUpperCase() + s.slice(1) + '</button>'; }).join('') + '</div>' +
         '<div class="card">' + (L.length ? L.map(item).join('') : '<div class="empty" style="border:0">Nothing here.</div>') + '</div>';
       $$('[data-s]').forEach(function (b) { b.onclick = function () { LSTAT = b.dataset.s; listings(); }; });
       $$('[data-a]').forEach(function (b) {
         b.onclick = function () {
           var a = b.dataset.a, id = b.dataset.id, body = {action: a};
-          if (a === 'reject') { var r = prompt('Reason shown to the owner (e.g. "add real photos", "price missing"):'); if (r === null) return; body.reason = r; }
+          if (a === 'reject') { var r = prompt('Reason shown to the owner (e.g. "not authorised", "already rented"):'); if (r === null) return; body.reason = r; }
+          if (a === 'changes') { var c = prompt('What should the owner fix? (shown to the owner, e.g. "add real photos of the kitchen", "price missing")'); if (!c) return; body.reason = c; }
+          if (a === 'level') body.level = +b.dataset.l;
           if (a === 'delete' && !confirm('Delete listing #' + id + '?')) return;
           api('/api/admin/listings/' + id, {method: 'POST', json: body}).then(function (r) { if (!r.ok) alert(r.error); shell(); });
         };
@@ -163,15 +199,21 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
     var tier = l.tier === 'super' ? '<span class="pill t-super">Super VIP</span>' : l.tier === 'vip' ? '<span class="pill t-vip">VIP</span>' : '';
     var btn = function (a, label, cls) { return '<button class="btn sm ' + (cls || 'b-ghost') + '" data-a="' + a + '" data-id="' + l.id + '">' + label + '</button>'; };
     return '<div class="item"><div class="th" style="' + (ph[0] ? 'background-image:url(' + KG.photo(ph[0], true) + ')' : '') + '"></div><div>' +
-      '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span class="pill st-' + esc(l.status) + '">' + esc(l.status) + '</span>' + tier + (l.verified ? '<span class="pill t-ver">Verified</span>' : '') +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span class="pill st-' + esc(l.status) + '">' + esc(l.status === 'changes' ? 'changes requested' : l.status) + '</span>' + tier + (l.verify_level ? '<span class="pill t-ver">L' + l.verify_level + ' · ' + esc(l.verify_label) + '</span>' : '') +
       '<b>#' + l.id + ' · ' + esc(KG.DEAL(l.deal)) + ' · ' + esc(KG.TYPE(l.type)) + ' · ' + KG.money(l.price, l.currency) + '</b></div>' +
       '<div style="margin-top:4px">' + esc(l.title || '') + ' <span class="muted">' + esc([l.city, l.district, l.address].filter(Boolean).join(', ')) + ' · ' + (l.rooms || '—') + ' rooms · ' + (l.area || '—') + ' m² · floor ' + esc(l.floor || '—') + '</span></div>' +
       '<div class="muted" style="font-size:13px">Owner: <b>' + esc(l.owner_name || '') + '</b> ' + esc(l.owner_phone || '') + ' · contact ' + esc(l.contact_name || '') + ' ' + esc(l.contact_phone || '') + ' · created ' + fmtDate(l.created) + ' · ' + (l.views || 0) + ' views</div>' +
+      (l.dup_of ? '<div class="msg err" style="margin-top:6px;padding:8px 10px">⚠️ Possible duplicate of ' + esc(l.dup_of).replace(/#(\d+)/g, '<a href="/p/?id=$1" target="_blank" style="text-decoration:underline">#$1</a>') + ' ' + btn('not_duplicate', 'Not a duplicate') + '</div>' : '') +
+      (l.reject_reason && (l.status === 'changes' || l.status === 'rejected') ? '<div class="msg info" style="margin-top:6px;padding:8px 10px">Note to owner: ' + esc(l.reject_reason) + '</div>' : '') +
+      '<div class="muted" style="font-size:12px;margin-top:4px">Availability confirmed: ' + fmtDate(l.confirmed) + '</div>' +
       (l.description ? '<div class="desc">' + esc(l.description) + '</div>' : '') +
       '<div class="thumbs">' + ph.map(function (p) { return '<a href="' + KG.photo(p) + '" target="_blank" style="background-image:url(' + KG.photo(p, true) + ')"></a>'; }).join('') + '</div>' +
       '<div class="acts">' + (l.status !== 'active' ? btn('approve', '✓ Approve', 'b-teal') : '') + (l.status !== 'rejected' ? btn('reject', 'Reject', 'b-red') : '') +
       (l.status === 'active' ? btn('pause', 'Pause') + '<a class="btn sm b-ghost" target="_blank" href="/p/?id=' + l.id + '">Open</a>' : '') + (l.status === 'expired' ? btn('renew', 'Renew 30 days') : '') +
-      btn(l.verified ? 'unverify' : 'verify', l.verified ? 'Remove verified' : 'Mark verified') + btn('vip', '+ VIP', 'b-ghost') + btn('super', '+ Super VIP', 'b-ghost') + btn('boost', 'Boost') +
+      (l.status !== 'changes' ? btn('changes', 'Request changes') : '') +
+      '<span style="display:inline-flex;gap:2px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:2px 4px"><span class="muted" style="font-size:12px;padding:0 4px">Verify</span>' +
+      [0, 1, 2, 3].map(function (n) { return '<button class="btn sm ' + ((l.verify_level || 0) === n ? 'b-navy' : 'b-ghost') + '" style="min-height:30px;padding:4px 9px" title="' + ['None', 'Contact verified', 'Verified listing (authority, photos, price, availability)', 'Inspected (registry / on site)'][n] + '" data-a="level" data-l="' + n + '" data-id="' + l.id + '">' + (n ? 'L' + n : '—') + '</button>'; }).join('') + '</span>' +
+      btn('vip', '+ VIP', 'b-ghost') + btn('super', '+ Super VIP', 'b-ghost') + btn('boost', 'Boost') +
       (l.tier !== 'free' ? btn('clear_plan', 'Clear plan') : '') + btn('delete', 'Delete', 'b-red') + '</div></div></div>';
   }
   function orders() {
@@ -209,8 +251,8 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
       var U = j.users || [];
       $('#tab').innerHTML = '<div class="card tablewrap"><table><thead><tr><th>Name</th><th>Phone</th><th>Role</th><th>Listings</th><th>Joined</th><th></th></tr></thead><tbody>' +
         U.map(function (u) {
-          return '<tr><td>' + esc(u.name) + (u.blocked ? ' <span class="pill st-rejected">blocked</span>' : '') + '</td><td>' + esc(u.phone) + '</td><td>' + esc(u.role) + '</td><td>' + u.listings + '</td><td>' + fmtDate(u.created) + '</td>' +
-            '<td>' + (u.role !== 'admin' ? '<button class="btn sm b-ghost" data-u="' + (u.blocked ? 'unblock' : 'block') + '" data-id="' + u.id + '">' + (u.blocked ? 'Unblock' : 'Block') + '</button> <button class="btn sm b-ghost" data-u="reset_password" data-id="' + u.id + '">Reset password</button>' : '') + '</td></tr>';
+          return '<tr><td>' + esc(u.name) + (u.blocked ? ' <span class="pill st-rejected">blocked</span>' : '') + (u.contact_verified ? ' <span class="pill t-ver">contact verified</span>' : '') + (u.consent_at ? '<br><span class="muted" style="font-size:11px">consent ' + fmtDate(u.consent_at) + '</span>' : '') + '</td><td>' + esc(u.phone) + '</td><td>' + esc(u.role) + '</td><td>' + u.listings + '</td><td>' + fmtDate(u.created) + '</td>' +
+            '<td>' + (u.role !== 'admin' ? '<button class="btn sm b-ghost" data-u="' + (u.blocked ? 'unblock' : 'block') + '" data-id="' + u.id + '">' + (u.blocked ? 'Unblock' : 'Block') + '</button> <button class="btn sm b-ghost" data-u="reset_password" data-id="' + u.id + '">Reset password</button> <button class="btn sm b-ghost" data-u="' + (u.contact_verified ? 'unverify_contact' : 'verify_contact') + '" data-id="' + u.id + '">' + (u.contact_verified ? 'Unverify contact' : 'Verify contact (L1)') + '</button>' : '') + '</td></tr>';
         }).join('') + '</tbody></table></div>';
       $$('[data-u]').forEach(function (b) {
         b.onclick = function () {
@@ -232,6 +274,8 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
           return '<tr><td><b>' + esc(P[p[0]].name) + '</b></td><td><input type="number" min="0" step="0.5" name="price_' + p[0] + '" value="' + P[p[0]].price + '" style="width:90px"' + (p[0] === 'free' ? ' disabled' : '') + '></td>' +
             '<td><input type="number" min="0" name="days_' + p[0] + '" value="' + P[p[0]].days + '" style="width:80px"' + (p[0] === 'boost' ? ' disabled' : '') + '></td><td class="muted">' + p[1] + '</td></tr>';
         }).join('') + '</tbody></table></div>' +
+        '<div class="grid2"><label class="f">Free listings per owner (0 = unlimited)<input type="number" min="0" name="free_listing_limit" value="' + (s.free_listing_limit == null ? 2 : s.free_listing_limit) + '"></label>' +
+        '<label class="f">Ask owners to re-confirm availability after (days)<input type="number" min="1" name="reconfirm_days" value="' + (s.reconfirm_days || 15) + '"></label></div>' +
         '<label class="f">Currency<select name="currency">' + ['GEL', 'USD', 'EUR'].map(function (c) { return '<option' + (s.currency === c ? ' selected' : '') + '>' + c + '</option>'; }).join('') + '</select></label>' +
         '<label class="f">Payment instructions shown to owners (bank account, office address)<textarea name="payment_info">' + esc(s.payment_info) + '</textarea></label>' +
         '<label style="display:flex;gap:8px;align-items:center;font:600 14px var(--display)"><input type="checkbox" name="show_owner_phone"' + (s.show_owner_phone ? ' checked' : '') + '> Show the owner\'s phone on listings (off = buyers contact KEY GROUP)</label>' +
@@ -242,7 +286,7 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
         e.preventDefault();
         var f = e.target, plans = {};
         ['free', 'vip', 'super', 'boost'].forEach(function (p) { plans[p] = {}; if (f['price_' + p] && !f['price_' + p].disabled) plans[p].price = f['price_' + p].value; if (f['days_' + p] && !f['days_' + p].disabled) plans[p].days = f['days_' + p].value; });
-        api('/api/admin/settings', {method: 'POST', json: {plans: plans, currency: f.currency.value, payment_info: f.payment_info.value, show_owner_phone: f.show_owner_phone.checked}}).then(function (r) {
+        api('/api/admin/settings', {method: 'POST', json: {plans: plans, free_listing_limit: f.free_listing_limit.value, reconfirm_days: f.reconfirm_days.value, currency: f.currency.value, payment_info: f.payment_info.value, show_owner_phone: f.show_owner_phone.checked}}).then(function (r) {
           $('#sm').className = 'msg ' + (r.ok ? 'ok' : 'err'); $('#sm').textContent = r.ok ? 'Saved.' : r.error; });
       };
       $('#pw').onsubmit = function (e) {

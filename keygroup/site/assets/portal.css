@@ -71,3 +71,4 @@ label.f input,label.f select,label.f textarea{width:100%;min-width:0}
 .empty{background:#fff;border:1px dashed var(--line);border-radius:18px;padding:40px;text-align:center;color:var(--muted)}
 @media (max-width:900px){.grid3,.grid4{grid-template-columns:1fr 1fr}}
 @media (max-width:600px){.grid2,.grid3,.grid4{grid-template-columns:1fr}.top nav{gap:14px;font-size:14px}}
+.st-changes{background:var(--sky);color:#1D4FB8}

@@ -374,12 +374,23 @@ def reply_waiting(con, state, text, settings, site):
     return msgs
 
 
+def consent_note(lang):
+    return T(lang, "\n\n🔒 By sharing your name and phone you agree that KEY GROUP may contact you about this request (see our privacy policy).",
+             "\n\n🔒 სახელის და ტელეფონის მოწოდებით ეთანხმებით, რომ KEY GROUP დაგიკავშირდეთ ამ მოთხოვნის შესახებ (იხ. კონფიდენციალურობის პოლიტიკა).",
+             "\n\n🔒 Оставляя имя и телефон, вы соглашаетесь, что KEY GROUP свяжется с вами по этому запросу (см. политику конфиденциальности).")
+
+
+def privacy_button(lang):
+    return {"label": T(lang, "🔒 Privacy policy", "🔒 კონფიდენციალურობა", "🔒 Конфиденциальность"), "url": "/privacy/"}
+
+
 def handoff_start(state, lang, topic):
     state["step"] = "ask_name"
     state["topic"] = topic
     return {"text": T(lang, "Sure — I'll connect you with an agent. What is your name?",
                       "რა თქმა უნდა — დაგაკავშირებთ აგენტთან. როგორ გქვიათ?",
-                      "Конечно — соединю вас с агентом. Как вас зовут?")}
+                      "Конечно — соединю вас с агентом. Как вас зовут?") + consent_note(lang),
+            "buttons": [privacy_button(lang)]}
 
 
 TOPIC_OF = {"list": "owner", "foreigner": "process", "residence": "trc", "mortgage": "mortgage", "documents": "process", "fees": "fees"}
@@ -397,7 +408,7 @@ def answer(intent, state, lang, settings, site):
         r = handoff_start(state, lang, "Free valuation")
         r["text"] = T(lang, "We value your property for free, usually within 24 hours. An agent will contact you — what is your name?",
                       "თქვენს ქონებას უფასოდ შევაფასებთ, ჩვეულებრივ 24 საათში. აგენტი დაგიკავშირდებათ — როგორ გქვიათ?",
-                      "Мы бесплатно оценим ваш объект, обычно в течение 24 часов. Агент свяжется с вами — как вас зовут?")
+                      "Мы бесплатно оценим ваш объект, обычно в течение 24 часов. Агент свяжется с вами — как вас зовут?") + consent_note(lang)
         return r
     if intent == "list":
         P = s["plans"]
@@ -422,7 +433,7 @@ def answer(intent, state, lang, settings, site):
         r = handoff_start(state, lang, "Viewing request")
         r["text"] = T(lang, "Happy to arrange a viewing. An agent will confirm the time with you — what is your name?",
                       "სიამოვნებით მოვაწყობთ დათვალიერებას. აგენტი შეგითანხმებთ დროს — როგორ გქვიათ?",
-                      "С удовольствием организуем просмотр. Агент согласует с вами время — как вас зовут?")
+                      "С удовольствием организуем просмотр. Агент согласует с вами время — как вас зовут?") + consent_note(lang)
         return r
     if intent == "foreigner":
         return {"text": T(lang,

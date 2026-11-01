@@ -94,6 +94,7 @@
     });
     if (push) {
       shown = 24;
+      KG.track('search_performed', {deal: deal, type: f.type.value, district: (f.district.value || '').trim().slice(0, 40), results: res.length});
       var p = new URLSearchParams();
       if (favMode) p.set('fav', '1');
       if (deal) p.set('deal', deal);
