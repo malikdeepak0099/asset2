@@ -331,9 +331,46 @@
     };
   }
 
+  // ---------- SS.ge "my listings" page: link the agent's SS listings to their keygroup.ge listings
+  async function ssCollect() {
+    head = 'KEY GROUP ⇢ SS.ge links';
+    var code = (location.hash.match(/kgss=([A-Z0-9]{6,12})/i) || [])[1];
+    try { code = code || sessionStorage.getItem('kgss'); } catch (e) { /* storage blocked */ }
+    if (!code) code = (prompt('KEY GROUP code (keygroup.ge → My profile → “Link my SS.ge listings”):') || '').trim();
+    if (!code) { note(false, 'No code'); return; }
+    code = code.toUpperCase();
+    try { sessionStorage.setItem('kgss', code); } catch (e) { /* ignore */ }
+    for (var w = 0; w < 20 && !document.querySelector('a[href*="/udzravi-qoneba/"]'); w++) await sleep(300);
+    var seen = {}, items = [];
+    Array.prototype.forEach.call(document.querySelectorAll('a[href]'), function (a) {
+      var m = (a.getAttribute('href') || '').match(/-(\d{7,9})(?:[?#]|$)/);
+      if (!m || seen[m[1]]) return;
+      var full = function (el) { var x = el.innerText || ''; return x.indexOf(m[1]) >= 0 && /[$₾€]/.test(x) && /იყიდება|ქირავდება|გირავდება/.test(x); };
+      var card = a; for (var i = 0; i < 14 && card.parentElement && !full(card); i++) card = card.parentElement;
+      var t = card.innerText || '', pm = t.replace(/ID:\s*\d+/g, '').match(/([\d][\d,. ]*)\s*([$₾€])/);
+      var title = (t.split('\n').map(function (x) { return x.trim(); }).find(function (x) { return /^(იყიდება|ქირავდება|გირავდება)/.test(x); }) || '');
+      seen[m[1]] = 1;
+      items.push({id: m[1], title: title.slice(0, 200), price: pm ? pm[1].replace(/[ .]/g, '') : '', currency: pm ? pm[2] : '$'});
+    });
+    if (!items.length) { note(false, 'No listings found on this page — open “ჩემი განცხადებები” (my listings) and press the bookmark again'); return; }
+    note(null, 'Found ' + items.length + ' SS listings on this page — matching…');
+    var r;
+    try { r = await (await fetch(API + '/api/ss-match/' + encodeURIComponent(code), {method: 'POST', body: JSON.stringify({items: items})})).json(); }
+    catch (e) { r = {ok: false, error: 'Could not reach keygroup.ge'}; }
+    log.pop();
+    if (!r.ok) { note(false, r.error || 'Error'); return; }
+    note(true, 'Linked: ' + r.matched.length + (r.already ? ' · already linked: ' + r.already : ''));
+    if (r.ambiguous.length) note(false, r.ambiguous.length + ' with several possible keygroup.ge listings (not linked): ' + r.ambiguous.slice(0, 5).map(function (x) { return x.ss; }).join(', '));
+    if (r.unmatched.length) note(false, r.unmatched.length + ' not on keygroup.ge yet: ' + r.unmatched.slice(0, 5).map(function (x) { return x.ss; }).join(', ') + (r.unmatched.length > 5 ? '…' : ''));
+    var more = Array.prototype.some.call(document.querySelectorAll('button,a'), function (b) { return /chevron_right|შემდეგი|next/i.test(txt(b)) && !b.disabled; });
+    draw('<div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.2)">' + (more ? '<b>More pages?</b> Open the next page and press the bookmark again.' : '<b>Done.</b> The SS badges now show on keygroup.ge.') +
+      '<br><span style="opacity:.75;font-size:12px">Unclear ones can be linked by hand: keygroup.ge → listing → “MyHome / SS ⇢” → add the link.</span></div>');
+  }
+
   // ---------- run
   (async function () {
     if (!SITE) { note(false, 'Open MyHome.ge or SS.ge “add listing” first'); return; }
+    if (SITE === 'ss' && /\/user\/my-applications/.test(location.pathname)) { try { await ssCollect(); } catch (e) { note(false, 'Stopped: ' + e.message); } window.__kgpubRunning = false; return; }
     var code = (location.hash.match(/kgpub=([A-Z0-9]{6,12})/i) || [])[1];
     try { code = code || sessionStorage.getItem('kgpub'); } catch (e) { /* storage blocked */ }
     if (!code) code = (prompt('KEY GROUP publish code (from the MyHome / SS button on keygroup.ge):') || '').trim();

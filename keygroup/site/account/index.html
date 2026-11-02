@@ -187,11 +187,21 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
         '<div class="card"><b>' + (L.myhome ? '✓' : '—') + ' / ' + (L.ss ? '✓' : '—') + '</b><span>' + t('profiles linked', 'დაკავშირებული პროფილები') + '</span></div></div>' +
         (P.kg_agent ? '<p class="muted" style="font-size:12px;margin:0">' + t('MyHome / SS listings come from your agent sheet in the KEY GROUP CRM', 'MyHome / SS განცხადებები მოდის შენი CRM ცხრილიდან') + (P.crm_updated ? ' · ' + v(String(P.crm_updated).slice(0, 16).replace('T', ' ')) : '') + '. ' +
           t('New listing from MyHome / SS: send its link to the KEY GROUP Telegram bot — it appears here and on keygroup.ge.', 'ახალი განცხადება MyHome / SS-დან: გაუგზავნე ბმული KEY GROUP-ის Telegram ბოტს — გამოჩნდება აქ და keygroup.ge-ზე.') + '</p>' : '') +
+        '<div style="border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:8px"><b>' + t('Link my SS.ge listings', 'ჩემი SS.ge განცხადებების მიბმა') + '</b>' +
+        '<span class="muted" style="font-size:13px">' + t('Shows the SS badge on your keygroup.ge listings. Open your SS.ge “my listings” page with the button and press the “KEY GROUP ⇢ fill” bookmark there (on every page if you have several).',
+          'keygroup.ge-ზე შენს განცხადებებს SS-ის ბეჯი დაემატება. ღილაკით გახსენი SS.ge-ზე „ჩემი განცხადებები“ და იქ დააჭირე სანიშნეს „KEY GROUP ⇢ fill“ (თითოეულ გვერდზე, თუ რამდენიმეა).') + '</span>' +
+        '<div><button class="btn b-navy" type="button" id="sslink">🔗 ' + t('Link my SS.ge listings', 'SS.ge განცხადებების მიბმა') + '</button> <span id="sslm"></span></div></div>' +
         '</div></div>' +
         (P.kg_agent ? '<div class="card tablewrap" style="margin-top:16px"><h3 style="padding:14px 16px 0">' + t('My MyHome / SS listings', 'ჩემი MyHome / SS განცხადებები') + ' (' + (P.crm_total || 0) + ')</h3><table><thead><tr><th>' + t('Deal', 'გარიგება') + '</th><th>' + t('District', 'უბანი') + '</th><th>' + t('Address', 'მისამართი') + '</th><th>' + t('Rooms', 'ოთახი') + '</th><th>m²</th><th>' + t('Price', 'ფასი') + '</th><th>' + t('Status', 'სტატუსი') + '</th><th></th></tr></thead><tbody>' +
           (C.length ? C.slice(0, 200).map(function (r) { return '<tr><td>' + v(r.Deal) + '</td><td>' + v(r.District) + '</td><td>' + v(r.Address) + '</td><td>' + v(r.Rooms) + '</td><td>' + v(r['Area m2']) + '</td><td><b>' + v(r.Price) + ' ' + v(r.Currency) + '</b></td><td>' + v(r.Status) + '</td><td>' + (/^https?:/.test(r['Listing Link'] || '') ? '<a target="_blank" rel="noopener" style="color:var(--blue)" href="' + v(r['Listing Link']) + '">' + t('open', 'გახსნა') + ' ↗</a>' : '') + '</td></tr>'; }).join('')
             : '<tr><td colspan="8" class="muted">' + t('Nothing from the CRM yet for your name.', 'CRM-ში შენი სახელით ჯერ არაფერია.') + '</td></tr>') + '</tbody></table></div>' : '');
       bindHead();
+      $('#sslink').onclick = function () {
+        api('/api/my/ss-link-code', {method: 'POST'}).then(function (r) {
+          if (!r.ok) { $('#sslm').textContent = r.error; return; }
+          $('#sslm').innerHTML = t('Code', 'კოდი') + ': <b style="letter-spacing:.08em;user-select:all">' + esc(r.code) + '</b> · <a class="btn sm b-coral" target="_blank" rel="noopener" href="' + esc(r.url) + '">SS.ge ↗</a>';
+        });
+      };
       $('#pff').onsubmit = function (e) {
         e.preventDefault(); var f = e.target;
         var body = {name: f.name.value, email: f.email.value, bio: f.bio.value, slug: f.slug.value, links: {myhome: f.myhome.value, ss: f.ss.value}};

@@ -1631,6 +1631,98 @@ async def publish_data(request):
     return JSONResponse(d, headers=hdr)
 
 
+SS_DEAL = (("დღიურად", "daily"), ("ქირავდება", "rent"), ("იყიდება", "sale"), ("გირავდება", "rent"))
+SS_TYPE = (("ბინა", "flat"), ("სახლ", "house"), ("აგარაკ", "house"), ("მიწ", "land"), ("სასტუმრო", "hotel"),
+           ("კომერც", "commercial"), ("ფართ", "commercial"), ("ობიექტ", "commercial"), ("ოფის", "commercial"), ("საწყობ", "commercial"))
+
+
+def ss_title_facts(title):
+    """'ქირავდება 2 ოთახიანი ბინა სამგორში' -> deal, rooms, type (what an SS.ge list card says)."""
+    t = str(title or "")
+    deal = next((v for k, v in SS_DEAL if k in t), "")
+    typ = next((v for k, v in SS_TYPE if k in t), "")
+    m = re.search(r"(\d+)\s*ოთახ", t)
+    return deal, (int(m.group(1)) if m else 0), typ
+
+
+def match_ss_items(con, user_id, items):
+    """Link the agent's SS.ge listings (from their 'my listings' page) to their keygroup.ge listings.
+    Only a single clear candidate is linked (same deal, type, rooms, price ±1%; district breaks ties); the rest is reported."""
+    rows = con.execute("SELECT * FROM listings WHERE user_id=? AND status IN ('active','paused')", (user_id,)).fetchall()
+    have = {r["listing_id"] for r in con.execute(f"SELECT listing_id FROM ext_posts WHERE site='ss' AND listing_id IN ({','.join('?' * len(rows)) or '0'})",
+                                                     [r["id"] for r in rows])}
+    linked_ss = {r["ext_id"] for r in con.execute("SELECT ext_id FROM ext_posts WHERE site='ss'")}
+    out = {"matched": [], "already": 0, "ambiguous": [], "unmatched": []}
+    for it in items[:500]:
+        sid = str(it.get("id") or "")
+        if not re.fullmatch(r"\d{6,10}", sid):
+            continue
+        if sid in linked_ss:
+            out["already"] += 1
+            continue
+        title = str(it.get("title") or "")[:200]
+        deal, rooms, typ = ss_title_facts(title)
+        try:
+            price = float(str(it.get("price") or "0").replace(",", "").replace(" ", ""))
+        except ValueError:
+            price = 0
+        cur = {"$": "USD", "₾": "GEL", "€": "EUR"}.get(str(it.get("currency") or "$"), "USD")
+        cands = []
+        for r in rows:
+            if r["id"] in have or not price:
+                continue
+            if deal and r["deal"] != deal or typ and r["type"] != typ or rooms and r["rooms"] and int(r["rooms"]) != rooms:
+                continue
+            if r["currency"] != cur or abs(float(r["price"] or 0) - price) > max(1.0, price * 0.01):
+                continue
+            cands.append(r)
+        if len(cands) > 1:
+            stem = lambda w: (w or "")[:-1] if len(w or "") > 4 else (w or "")
+            near = [r for r in cands if district_ka(r["district"]) and stem(district_ka(r["district"])) in title]
+            cands = near if near else cands
+        if len(cands) == 1:
+            r = cands[0]
+            save_ext(con, r["id"], "ss", sid, user_id, source="agent")
+            have.add(r["id"]); linked_ss.add(sid)
+            out["matched"].append({"ss": sid, "listing": r["id"], "title": title})
+        else:
+            (out["ambiguous"] if cands else out["unmatched"]).append({"ss": sid, "title": title, "price": it.get("price")})
+    return out
+
+
+async def ss_link_code(request):
+    """An agent asks to link their SS.ge listings: a short code for the bookmark on the SS 'my listings' page (2 hours)."""
+    u, e = need_user(request)
+    if e:
+        return e
+    code = "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(8))
+    with _LOCK, db() as con:
+        con.execute("INSERT INTO publish_codes (code, listing_id, user_id, expires, promo) VALUES (?,?,?,?,?)", (code, 0, u["id"], time.time() + 7200, "ss-link"))
+    return ok(code=code, url=f"https://home.ss.ge/ka/user/my-applications#kgss={code}")
+
+
+async def ss_match(request):
+    """The bookmark posts the cards from the agent's SS.ge 'my listings' page (CORS, code-protected, text/plain body)."""
+    code = str(request.path_params["code"]).upper()[:12]
+    origin = request.headers.get("origin", "")
+    hdr = {"Access-Control-Allow-Origin": origin if origin in PUBLISH_ORIGINS else "https://home.ss.ge", "Vary": "Origin"}
+    if request.method == "OPTIONS":
+        hdr.update({"Access-Control-Allow-Methods": "POST", "Access-Control-Allow-Headers": "Content-Type"})
+        return Response("", headers=hdr)
+    try:
+        d = json.loads((await request.body())[:400000] or b"{}")
+    except Exception:
+        d = {}
+    with _LOCK, db() as con:
+        c = con.execute("SELECT * FROM publish_codes WHERE code=? AND expires>? AND promo='ss-link'", (code, time.time())).fetchone()
+        if not c:
+            return JSONResponse({"ok": False, "error": "Code expired — press “Link my SS.ge listings” on keygroup.ge again"}, status_code=404, headers=hdr)
+        res = match_ss_items(con, c["user_id"], d.get("items") if isinstance(d.get("items"), list) else [])
+        audit(con, {"id": c["user_id"], "name": "SS link bookmark"}, "ss_match", "user", c["user_id"],
+              f"matched={len(res['matched'])} ambiguous={len(res['ambiguous'])} unmatched={len(res['unmatched'])}")
+    return JSONResponse(dict(ok=True, **res), headers=hdr)
+
+
 async def publish_done(request):
     """The publisher reports back after MyHome / SS accepted the listing (CORS, code-protected; text/plain body to skip preflight)."""
     code = str(request.path_params["code"]).upper()[:12]
@@ -1645,7 +1737,7 @@ async def publish_done(request):
         d = {}
     with _LOCK, db() as con:
         c = con.execute("SELECT * FROM publish_codes WHERE code=? AND expires>?", (code, time.time() - 6 * 3600)).fetchone()
-        okk = bool(c) and save_ext(con, c["listing_id"], d.get("site"), d.get("ext_id"), c["user_id"],
+        okk = bool(c) and bool(c["listing_id"]) and save_ext(con, c["listing_id"], d.get("site"), d.get("ext_id"), c["user_id"],
                                    json.dumps(d.get("promo")) if d.get("promo") else "", d.get("account"), "publisher")
         if okk:
             con.execute("UPDATE publish_codes SET used=1 WHERE code=?", (code,))
@@ -2876,6 +2968,8 @@ routes = [
     Route("/api/my/listings/{lid:int}/publish-code", publish_code, methods=["POST"]),
     Route("/api/my/listings/{lid:int}/ext", listing_ext, methods=["POST"]),
     Route("/api/publish/{code}/done", publish_done, methods=["POST", "OPTIONS"]),
+    Route("/api/my/ss-link-code", ss_link_code, methods=["POST"]),
+    Route("/api/ss-match/{code}", ss_match, methods=["POST", "OPTIONS"]),
     Route("/api/publish/{code}", publish_data),
     Route("/api/bot/outbox", bot_outbox, methods=["POST"]),
     Route("/api/bot/source-gone", bot_source_gone, methods=["POST"]),
