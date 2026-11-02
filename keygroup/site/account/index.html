@@ -305,7 +305,8 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       (needConfirm(l) ? '<div class="msg info" style="margin-top:6px;padding:8px 10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">' + (l.status === 'expired' ? t('This listing expired. Still available?', 'განცხადებას ვადა გაუვიდა. ისევ აქტუალურია?') : t('Is this property still available? Confirm to keep buyers\' trust.', 'ქონება ისევ ხელმისაწვდომია? დაადასტურეთ.')) +
         ' <button class="btn sm b-teal" data-act="confirm" data-id="' + l.id + '">' + KG.icon('check') + t('Yes, still available', 'დიახ, აქტუალურია') + '</button></div>' : '') +
       (!(l.photos || []).length && l.status !== 'deleted' ? '<div class="msg info" style="margin-top:6px;padding:8px 10px">📸 ' + t('Add photos — listings with photos get many more calls and are approved faster.', 'დაამატეთ ფოტოები — ფოტოიან განცხადებას მეტი ზარი აქვს და უფრო სწრაფად მტკიცდება.') + '</div>' : '') +
-      (l.verify_label ? '<div style="margin-top:6px"><span class="pill t-ver">' + KG.icon('check') + esc(KG.VLABEL(l.verify_level)) + '</span></div>' : '') + '</div>' +
+      (l.verify_label ? '<div style="margin-top:6px"><span class="pill t-ver">' + KG.icon('check') + esc(KG.VLABEL(l.verify_level)) + '</span></div>' : '') +
+      (l.ext && (l.ext.myhome || l.ext.ss) ? '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">' + KG.extBadges(l.ext) + '</div>' : '') + '</div>' +
       '<div class="acts">' + (l.status === 'active' ? '<a class="btn sm b-ghost" href="/p/?id=' + l.id + '" target="_blank">' + t('View', 'ნახვა') + '</a>' : '') +
       '<button class="btn sm b-ghost" data-act="edit" data-id="' + l.id + '">' + KG.icon('edit') + t('Edit', 'რედაქტირება') + '</button>' +
       '<button class="btn sm b-gold" data-act="promo" data-id="' + l.id + '">' + KG.icon('rocket') + t('Promote', 'VIP / Boost') + '</button>' +
@@ -346,10 +347,20 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       '<p class="muted" style="margin:0;font-size:13px" id="pubnote">' + t('Paid options are only pre-selected on MyHome / SS — you check the total and press Pay there yourself. Top up the balance on MyHome / SS first.',
         'ფასიანი სერვისი მხოლოდ წინასწარ მოინიშნება MyHome / SS-ზე — ჯამს შენ ამოწმებ და გადახდას თავად აჭერ. ჯერ შეავსე ბალანსი MyHome / SS-ზე.') + '</p>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn b-gold" type="button" id="pubgo">' + t('Get code', 'კოდის მიღება') + '</button>' +
-      '<button class="btn b-ghost" type="button" id="pubx">' + t('Close', 'დახურვა') + '</button></div><div id="pubout"></div></div>';
+      '<button class="btn b-ghost" type="button" id="pubx">' + t('Close', 'დახურვა') + '</button></div><div id="pubout"></div>' +
+      '<details style="border-top:1px solid var(--line);padding-top:10px"' + (l.ext && (l.ext.myhome || l.ext.ss) ? ' open' : '') + '><summary style="cursor:pointer;font-weight:600">' + t('Already on MyHome / SS? Add the link', 'უკვე არის MyHome / SS-ზე? დაამატე ლინკი') + '</summary>' +
+      '<div id="pubext" style="margin:8px 0">' + KG.extBadges(l.ext) + '</div>' +
+      '<div style="display:flex;gap:8px"><input id="publink" placeholder="https://www.myhome.ge/pr/… / https://home.ss.ge/…" style="flex:1"><button class="btn b-navy" type="button" id="publinkgo">' + t('Save', 'შენახვა') + '</button></div>' +
+      '<div class="muted" style="font-size:12px;margin-top:6px" id="publinkmsg"></div></details></div>';
     document.body.appendChild(box);
     var c = box.querySelector('#pubc');
-    box.querySelector('#pubx').onclick = function () { box.remove(); };
+    box.querySelector('#pubx').onclick = function () { box.remove(); dash(); };
+    box.querySelector('#publinkgo').onclick = function () {
+      api('/api/my/listings/' + l.id + '/ext', {method: 'POST', json: {url: box.querySelector('#publink').value}}).then(function (r) {
+        box.querySelector('#publinkmsg').textContent = r.ok ? t('Saved ✓', 'შენახულია ✓') : r.error;
+        if (r.ok) { l.ext = r.ext; box.querySelector('#pubext').innerHTML = KG.extBadges(r.ext); box.querySelector('#publink').value = ''; }
+      });
+    };
     function cost() {
       var tier = c.querySelector('input[name=tier]:checked').value, p = PROMO.filter(function (x) { return x[0] === tier; })[0];
       var days = Math.max(1, Math.min(30, +c.querySelector('input[name=days]').value || 1)), mhDays = tier === 'vip' ? days : Math.min(days, 4);

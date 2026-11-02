@@ -17,6 +17,19 @@
     bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0"/>'
   };
   KG.icon = function (n, extra) { return '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"' + (extra || '') + '>' + (ICONS[n] || '') + '</svg>'; };
+  // where a listing is live on MyHome / SS (ext = {myhome: {id, url, promo, source}, ss: {...}})
+  KG.extBadges = function (ext) {
+    ext = ext || {};
+    return ['myhome', 'ss'].filter(function (k) { return ext[k]; }).map(function (k) {
+      var x = ext[k], name = k === 'myhome' ? 'MyHome' : 'SS', tier = '';
+      try { tier = x.promo ? {vip: ' · VIP', vipplus: ' · VIP+', supervip: ' · Super VIP'}[JSON.parse(x.promo).tier] || '' : ''; } catch (e) { /* old value */ }
+      var num = /^\d+$/.test(x.id) ? ' #' + x.id : '';
+      var label = (x.source === 'import' ? '🔗 ' : '✅ ') + name + num + tier;
+      var url = x.url || (k === 'myhome' ? 'https://statements.myhome.ge/ka/user-profile/my-statements' : 'https://home.ss.ge/ka/udzravi-qoneba/user-applications');
+      return '<a class="pill ' + (x.source === 'import' ? 'st-paused' : 'st-active') + '" target="_blank" rel="noopener" href="' + KG.esc(url) + '" title="' +
+        KG.esc(x.source === 'import' ? 'Imported from this link' : 'Published ' + new Date((x.at || 0) * 1000).toLocaleDateString()) + '">' + KG.esc(label) + ' ↗</a>';
+    }).join(' ');
+  };
   KG.esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; }); };
   KG.$ = function (s, r) { return (r || document).querySelector(s); };
   KG.$$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };

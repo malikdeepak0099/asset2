@@ -287,6 +287,50 @@
     if (d.promo) { promoSS(d.promo); note(null, 'Paid: ' + TIER[d.promo.tier] + ' — it will be selected on the next step (after “გაგრძელება”)'); }
   }
 
+  // ---------- after the person presses Publish: tell keygroup.ge the MyHome / SS id (so the admin sees where each listing is live)
+  var ACC = '';
+  function watchPublish(code, d) {
+    if (window.__kgWatch) return; window.__kgWatch = true;
+    function report(site, extId) {
+      var body = JSON.stringify({site: site, ext_id: String(extId), promo: d.promo || null, account: ACC});
+      fetch(API + '/api/publish/' + code + '/done', {method: 'POST', body: body, keepalive: true})
+        .then(function (r) { return r.json(); })
+        .then(function (j) { note(!!j.ok, j.ok ? 'Saved on keygroup.ge: ' + (site === 'myhome' ? 'MyHome' : 'SS') + ' #' + extId : 'Could not save the ' + site + ' id on keygroup.ge'); })
+        .catch(function () { note(false, 'Could not reach keygroup.ge to save the ' + site + ' id'); });
+    }
+    async function myhomeId(uuid) {      // the success page may show the new listing's number; otherwise keep the uuid
+      for (var i = 0; i < 30; i++) {
+        await sleep(500);
+        var a = document.querySelector('a[href*="/pr/"]'), m = a && a.href.match(/\/pr\/(\d{5,10})/);
+        if (!m) m = (document.body.innerText.match(/ID[:\s]+(\d{6,10})/) || null);
+        if (m) return m[1];
+      }
+      return uuid;
+    }
+    function seen(url, text) {
+      try {
+        if (/statements\/create/.test(url)) {
+          var j = JSON.parse(text);
+          if (j && j.result && j.data && j.data.uuid) myhomeId(j.data.uuid).then(function (id) { report('myhome', id); });
+        } else if (/PaidService\/create-application/i.test(url)) {
+          var k = JSON.parse(text), id = k && k.application && k.application.success && k.application.realEstateApplicationId;
+          if (id) report('ss', id);
+        }
+      } catch (e) { /* not JSON */ }
+    }
+    var oo = XMLHttpRequest.prototype.open, os = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (m, u) { this.__kgu = String(u); return oo.apply(this, arguments); };
+    XMLHttpRequest.prototype.send = function () {
+      var x = this; this.addEventListener('load', function () { if (x.status < 300) seen(x.__kgu || x.responseURL, String(x.responseText || '')); });
+      return os.apply(this, arguments);
+    };
+    var of = window.fetch;
+    window.fetch = function (i, o) {
+      var u = typeof i === 'string' ? i : (i && i.url) || '';
+      return of.apply(this, arguments).then(function (r) { if (/statements\/create|create-application/i.test(u) && r.ok) r.clone().text().then(function (t) { seen(u, t); }); return r; });
+    };
+  }
+
   // ---------- run
   (async function () {
     if (!SITE) { note(false, 'Open MyHome.ge or SS.ge “add listing” first'); return; }
@@ -302,6 +346,7 @@
     if (!d.ok) { note(false, d.error || 'Code not valid'); return; }
     head += ' · #' + d.id;
     note(true, 'Listing #' + d.id + ' loaded');
+    watchPublish(code.toUpperCase(), d);
     try { if (SITE === 'myhome') await fillMyHome(d); else await fillSS(d); } catch (e) { note(false, 'Stopped: ' + e.message); }
     // Plan B: every agent publishes from their own MyHome / SS account — warn if the wrong account is signed in
     var acc = '';
@@ -311,6 +356,7 @@
       acc = pi ? (pi.value || '').replace(/\D/g, '').slice(-9) : '';
       if (!acc) await sleep(300);
     }
+    ACC = acc;
     var want = String(d.contact_phone || '').replace(/\D/g, '').slice(-9);
     if (acc && want && acc !== want) {
       log.unshift([false, '<b style="color:#ffb4a8">Wrong account?</b> You are signed in as <b>' + acc + '</b>, but this listing belongs to <b>' +

@@ -132,6 +132,9 @@ def init_db():
         CREATE TABLE IF NOT EXISTS login_tokens (token TEXT PRIMARY KEY, user_id INTEGER, expires REAL, used REAL DEFAULT 0, purpose TEXT DEFAULT 'login');
         CREATE TABLE IF NOT EXISTS bot_outbox (id INTEGER PRIMARY KEY, tg_id TEXT, text TEXT, button_url TEXT DEFAULT '', button_text TEXT DEFAULT '', created REAL, sent REAL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS publish_codes (code TEXT PRIMARY KEY, listing_id INTEGER, user_id INTEGER, expires REAL, used INTEGER DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS ext_posts (
+            id INTEGER PRIMARY KEY, listing_id INTEGER, site TEXT, ext_id TEXT, url TEXT DEFAULT '', promo TEXT DEFAULT '',
+            account TEXT DEFAULT '', user_id INTEGER, source TEXT DEFAULT '', created REAL, UNIQUE(listing_id, site));
         CREATE TABLE IF NOT EXISTS imports (
             id INTEGER PRIMARY KEY, user_id INTEGER, filename TEXT, total INTEGER, imported INTEGER, errors TEXT DEFAULT '[]',
             status TEXT DEFAULT 'imported', created REAL);
@@ -162,6 +165,12 @@ def init_db():
                 con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
         con.execute("UPDATE listings SET verify_level=2 WHERE verified=1 AND verify_level=0")
         con.execute("UPDATE listings SET confirmed=COALESCE(NULLIF(approved,0), created) WHERE confirmed=0")
+        # listings imported from a MyHome / SS link before ext_posts existed: remember where they came from
+        for r in con.execute("SELECT l.id, l.user_id, l.source_url FROM listings l WHERE l.source_url!='' AND l.status!='deleted' "
+                             "AND NOT EXISTS (SELECT 1 FROM ext_posts x WHERE x.listing_id=l.id)").fetchall():
+            xs, xid = ext_from_url(r["source_url"])
+            if xs:
+                save_ext(con, r["id"], xs, xid, r["user_id"], source="import", url=r["source_url"].split("?")[0])
 
 
 def get_settings():
@@ -625,8 +634,12 @@ async def my_listings(request):
         rows = con.execute(f"""SELECT l.*, u.name AS agent_name FROM listings l LEFT JOIN users u ON u.id=l.user_id
                                WHERE l.user_id IN ({','.join('?' * len(ids))}) AND l.status!='deleted' ORDER BY l.id DESC""", ids).fetchall()
         orders = con.execute("SELECT * FROM orders WHERE user_id=? ORDER BY id DESC LIMIT 50", (u["id"],)).fetchall()
+        ext = ext_map(con, [r["id"] for r in rows])
     s = get_settings()
-    return ok(listings=[listing_out(r, owner_view=True, settings=s) for r in rows], orders=[dict(o) for o in orders])
+    out = [listing_out(r, owner_view=True, settings=s) for r in rows]
+    for o in out:
+        o["ext"] = ext.get(o["id"], {})
+    return ok(listings=out, orders=[dict(o) for o in orders])
 
 
 def record_price(con, row, new_price, new_cur):
@@ -1093,6 +1106,9 @@ async def bot_listing(request):
                                (adm["id"], *f.values(), now, now, now, exp, now, json.dumps(photos), src, agent))
             lid = cur_.lastrowid
         find_duplicates(con, lid)
+        xs, xid = ext_from_url(src)
+        if xs:
+            save_ext(con, lid, xs, xid, adm["id"], source="import", url=src)
         audit(con, {"id": 0, "name": "Telegram bot · " + agent}, "bot_listing", "listing", lid, src)
         track(con, "listing_submitted", props={"deal": f["deal"], "type": f["type"], "source": "bot"})
     notify(f"🤖 {esc(agent or 'Agent')} listed #{lid} on the website via the bot\n{esc(f['deal'])} · {esc(f['district'] or f['address'])} · "
@@ -1433,6 +1449,50 @@ def split_desc(text):
     return "\n\n".join(ka), "\n\n".join(en), "\n\n".join(ru)
 
 
+EXT_RE = (("myhome", re.compile(r"myhome\.ge/(?:[a-z]{2}/)?(?:pr/(\d{5,10})|[^?#]*?-(\d{5,10})/?(?:[?#]|$))")),
+          ("ss", re.compile(r"ss\.ge/[^?#]*?-(\d{5,10})/?(?:[?#]|$)")))
+
+
+def ext_from_url(url):
+    """MyHome / SS listing link -> (site, id) or (None, None)."""
+    url = str(url or "").strip()
+    for site, rx in EXT_RE:
+        m = rx.search(url)
+        if m:
+            return site, next(g for g in m.groups() if g)
+    return None, None
+
+
+def ext_url(site, ext_id):
+    return f"https://www.myhome.ge/pr/{ext_id}/" if site == "myhome" else f"https://home.ss.ge/ka/udzravi-qoneba/{ext_id}"
+
+
+def save_ext(con, lid, site, ext_id, user_id=None, promo="", account="", source="", url=""):
+    """Remember that a keygroup.ge listing is live on MyHome / SS (one row per site; the newest wins)."""
+    if site not in ("myhome", "ss") or not re.fullmatch(r"[0-9a-f-]{5,40}", str(ext_id)):
+        return False
+    url = url if str(ext_id).isdigit() and url else (ext_url(site, ext_id) if str(ext_id).isdigit() else "")
+    con.execute("""INSERT INTO ext_posts (listing_id, site, ext_id, url, promo, account, user_id, source, created) VALUES (?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(listing_id, site) DO UPDATE SET ext_id=excluded.ext_id, url=excluded.url, promo=excluded.promo,
+                   account=excluded.account, source=excluded.source, created=excluded.created""",
+                (lid, site, str(ext_id), url, promo or "", str(account or "")[-9:], user_id, source, time.time()))
+    return True
+
+
+def ext_map(con, ids):
+    """{listing_id: {"myhome": {...}, "ss": {...}}} for the account / admin tables."""
+    out = {}
+    ids = list(ids)
+    for i in range(0, len(ids), 500):
+        part = ids[i:i + 500]
+        if not part:
+            continue
+        for r in con.execute(f"SELECT * FROM ext_posts WHERE listing_id IN ({','.join('?' * len(part))})", part):
+            out.setdefault(r["listing_id"], {})[r["site"]] = {"id": r["ext_id"], "url": r["url"], "promo": r["promo"], "account": r["account"],
+                                                               "source": r["source"], "at": r["created"]}
+    return out
+
+
 PROMO_TIERS = ("vip", "vipplus", "supervip")
 
 
@@ -1513,6 +1573,48 @@ async def publish_data(request):
     if not d["bedrooms"] and d["rooms"] and d["type"] == "flat":
         d["bedrooms"] = max(1, int(d["rooms"]) - 1)
     return JSONResponse(d, headers=hdr)
+
+
+async def publish_done(request):
+    """The publisher reports back after MyHome / SS accepted the listing (CORS, code-protected; text/plain body to skip preflight)."""
+    code = str(request.path_params["code"]).upper()[:12]
+    origin = request.headers.get("origin", "")
+    hdr = {"Access-Control-Allow-Origin": origin if origin in PUBLISH_ORIGINS else "https://statements.myhome.ge", "Vary": "Origin"}
+    if request.method == "OPTIONS":
+        hdr.update({"Access-Control-Allow-Methods": "POST", "Access-Control-Allow-Headers": "Content-Type"})
+        return Response("", headers=hdr)
+    try:
+        d = json.loads((await request.body())[:4000] or b"{}")
+    except Exception:
+        d = {}
+    with _LOCK, db() as con:
+        c = con.execute("SELECT * FROM publish_codes WHERE code=? AND expires>?", (code, time.time() - 6 * 3600)).fetchone()
+        okk = bool(c) and save_ext(con, c["listing_id"], d.get("site"), d.get("ext_id"), c["user_id"],
+                                   json.dumps(d.get("promo")) if d.get("promo") else "", d.get("account"), "publisher")
+        if okk:
+            con.execute("UPDATE publish_codes SET used=1 WHERE code=?", (code,))
+    return JSONResponse({"ok": okk}, headers=hdr, status_code=200 if okk else 400)
+
+
+async def listing_ext(request):
+    """Owner / agent / admin attaches (or removes) the MyHome / SS link of a listing by hand."""
+    u, e = need_user(request)
+    if e:
+        return e
+    lid = int(request.path_params["lid"])
+    d = await body_json(request)
+    with _LOCK, db() as con:
+        if not own_listing(u, lid, con):
+            return err("Not found", 404)
+        if d.get("remove") in ("myhome", "ss"):
+            con.execute("DELETE FROM ext_posts WHERE listing_id=? AND site=?", (lid, d["remove"]))
+            return ok(ext=ext_map(con, [lid]).get(lid, {}))
+        site, ext_id = ext_from_url(d.get("url"))
+        if not site:
+            return err("Paste the full MyHome.ge or SS.ge link of this listing")
+        save_ext(con, lid, site, ext_id, u["id"], source="manual", url=str(d.get("url")).split("?")[0][:300])
+        audit(con, u, "listing_ext", "listing", lid, f"{site}:{ext_id}")
+        return ok(ext=ext_map(con, [lid]).get(lid, {}))
 
 
 async def public_listings(request):
@@ -2083,8 +2185,12 @@ async def admin_listings(request):
         else:
             rows = con.execute("SELECT l.*, u.name AS owner_name, u.phone AS owner_phone FROM listings l LEFT JOIN users u ON u.id=l.user_id "
                                "WHERE l.status=? ORDER BY l.id DESC LIMIT 500", (status,)).fetchall()
+        ext = ext_map(con, [r["id"] for r in rows])
     s = get_settings()
-    return ok(listings=[listing_out(r, admin_view=True, settings=s) for r in rows])
+    out = [listing_out(r, admin_view=True, settings=s) for r in rows]
+    for o in out:
+        o["ext"] = ext.get(o["id"], {})
+    return ok(listings=out)
 
 
 async def admin_listing_action(request):
@@ -2712,6 +2818,8 @@ routes = [
     Route("/api/bot/agent-access", bot_agent_access, methods=["POST"]),
     Route("/api/bot/reset-link", bot_reset_link, methods=["POST"]),
     Route("/api/my/listings/{lid:int}/publish-code", publish_code, methods=["POST"]),
+    Route("/api/my/listings/{lid:int}/ext", listing_ext, methods=["POST"]),
+    Route("/api/publish/{code}/done", publish_done, methods=["POST", "OPTIONS"]),
     Route("/api/publish/{code}", publish_data),
     Route("/api/bot/outbox", bot_outbox, methods=["POST"]),
     Route("/api/my/profile", my_profile, methods=["GET", "POST"]),
