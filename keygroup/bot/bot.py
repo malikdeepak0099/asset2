@@ -481,7 +481,7 @@ def site_record_payload(uid, name, r):
             "price_usd": r.get("price_usd") or None, "price": r.get("price_gel") or None, "currency": "USD" if r.get("price_usd") else "GEL",
             "title": r.get("title"), "description": r.get("description"), "agent": name, "contact_phone": agent_phone_of(uid, name),
             "with_photos": True, "photos": (r.get("images") or [])[:12], "profiles": drafts.profile_links(uid),
-            "own": True, "quiet": True}
+            "own": True, "quiet": True, "tg": str(uid)}
 
 
 def site_push_loop():

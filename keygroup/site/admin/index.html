@@ -161,26 +161,40 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
       var A = j.agents || [], ago = function (ts) { if (!ts) return '—'; var d = (Date.now() / 1000 - ts) / 86400; return d < 1 ? 'today' : d < 2 ? 'yesterday' : Math.floor(d) + ' days ago'; };
       var tot = A.reduce(function (s, a) { return [s[0] + a.active, s[1] + a.crm_active, s[2] + a.leads_new]; }, [0, 0, 0]);
       $('#tab').innerHTML = '<div class="kpis">' + [[A.length, 'KEY GROUP agents'], [tot[0], 'Live on keygroup.ge'], [tot[1], 'Active in CRM (MyHome / SS)'], [tot[2], 'New leads not answered'],
-          [A.filter(function (a) { return a.last_login && Date.now() / 1000 - a.last_login < 7 * 86400; }).length, 'Logged in this week']].map(function (k) { return '<div class="card"><b>' + esc(k[0]) + '</b><span>' + esc(k[1]) + '</span></div>'; }).join('') + '</div>' +
+          [A.filter(function (a) { return a.last_login && Date.now() / 1000 - a.last_login < 7 * 86400; }).length, 'Logged in this week'],
+          [A.reduce(function (s, a) { return s + (a.on_ss || 0); }, 0) + ' / ' + tot[0], 'Live listings with an SS link'],
+          [A.reduce(function (s, a) { return s + (a.no_photos || 0); }, 0), 'Live listings without photos']].map(function (k) { return '<div class="card"><b>' + esc(k[0]) + '</b><span>' + esc(k[1]) + '</span></div>'; }).join('') + '</div>' +
         '<details class="card" style="padding:14px 16px;margin:14px 0"' + (A.length ? '' : ' open') + '><summary style="cursor:pointer;font-weight:700">+ Add agents</summary>' +
         '<p class="muted" style="font-size:13px">Paste one agent per line: <code>577 15 11 41 ნინი n.name@gmail.com</code> (phone, name, optional email). Existing agents are updated, never duplicated. Each agent then opens their account with a login link (here or <b>/login</b> in the Telegram bot) and sets a password.</p>' +
         '<textarea id="agtxt" style="width:100%;min-height:120px;border:1.5px solid var(--line);border-radius:10px;padding:10px;font:inherit"></textarea>' +
         '<div style="margin-top:8px;display:flex;gap:8px;align-items:center"><button class="btn b-navy" id="agadd">Create / update accounts</button><span id="agm"></span></div></details>' +
-        '<div class="card tablewrap"><table><thead><tr><th>Agent</th><th>Contact</th><th>keygroup.ge</th><th>CRM (MyHome / SS)</th><th>Leads 30 d</th><th>Avg reply</th><th>Last login</th><th>Profiles</th><th></th></tr></thead><tbody>' +
+        '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 12px"><button class="btn b-gold" id="agsend">📨 Send every agent a login link (Telegram)</button>' +
+        '<span class="muted" style="font-size:13px">' + A.filter(function (a) { return a.tg; }).length + ' of ' + A.length + ' agents can get it in Telegram</span><span id="agsm"></span></div>' +
+        '<div class="card tablewrap"><table><thead><tr><th>Agent</th><th>Contact</th><th>keygroup.ge</th><th>On MyHome / SS</th><th>CRM (MyHome / SS)</th><th>Leads 30 d</th><th>Avg reply</th><th>Last login</th><th>Profiles</th><th></th></tr></thead><tbody>' +
         (A.length ? A.map(function (a) {
           var h = a.avg_hours;
           return '<tr' + (a.blocked ? ' style="opacity:.5"' : '') + '><td><b>' + esc(a.name) + '</b>' + (a.trusted ? ' <span class="pill t-vip">Trusted</span>' : '') + '<br><a href="/' + esc(a.slug) + '/" target="_blank" style="color:var(--blue);font-size:12px">keygroup.ge/' + esc(a.slug) + '/</a></td>' +
             '<td><a href="tel:' + esc(a.phone) + '" style="color:var(--blue)">' + esc(a.phone) + '</a><br><span class="muted" style="font-size:12px">' + esc(a.email || '') + '</span></td>' +
             '<td><b>' + a.active + '</b> live' + (a.pending ? ' · ' + a.pending + ' pending' : '') + (a.no_photos ? '<br><span style="color:var(--coral);font-size:12px">' + a.no_photos + ' without photos</span>' : '') + '<br><span class="muted" style="font-size:12px">last: ' + ago(a.last_listing) + '</span></td>' +
+            '<td>MyHome <b>' + (a.on_myhome || 0) + '</b> · SS <b>' + (a.on_ss || 0) + '</b>' + (a.paid ? '<br><span class="pill t-vip" style="font-size:11px">' + a.paid + ' paid</span>' : '') +
+              (a.dups ? '<br><span style="color:var(--coral);font-size:12px">' + a.dups + ' possible duplicates</span>' : '') + '</td>' +
             '<td><b>' + a.crm_active + '</b> active</td>' +
             '<td>' + a.leads30 + (a.leads_new ? ' · <b style="color:var(--coral)">' + a.leads_new + ' new</b>' : '') + '</td>' +
             '<td' + (h > 24 ? ' style="color:var(--coral);font-weight:700"' : '') + '>' + (h == null ? '—' : h < 1 ? Math.round(h * 60) + ' min' : h.toFixed(1) + ' h') + '</td>' +
-            '<td>' + (a.pw_set ? ago(a.last_login) : a.last_login ? ago(a.last_login) + '<br><span class="muted" style="font-size:12px">no password yet</span>' : '<span class="muted">never logged in</span>') + '</td>' +
+            '<td>' + (a.tg ? '' : '<span class="muted" style="font-size:12px">no Telegram yet</span><br>') + (a.pw_set ? ago(a.last_login) : a.last_login ? ago(a.last_login) + '<br><span class="muted" style="font-size:12px">no password yet</span>' : '<span class="muted">never logged in</span>') + '</td>' +
             '<td>' + (a.links.myhome ? '<a href="' + esc(a.links.myhome) + '" target="_blank" style="color:var(--blue)">MyHome ↗</a> ' : '<span class="muted">MyHome —</span> ') + (a.links.ss ? '<a href="' + esc(a.links.ss) + '" target="_blank" style="color:var(--blue)">SS ↗</a>' : '<span class="muted">SS —</span>') + '</td>' +
             '<td style="white-space:nowrap"><button class="btn sm b-ghost" data-ag="link" data-id="' + a.id + '">Login link</button> <button class="btn sm b-ghost" data-ed="' + a.id + '">Edit</button> <button class="btn sm b-ghost" data-pw="' + a.id + '">🔑 Reset password</button> <button class="btn sm ' + (a.blocked ? 'b-ghost' : 'b-red') + '" data-ag="' + (a.blocked ? 'unblock' : 'block') + '" data-id="' + a.id + '">' + (a.blocked ? 'Unblock' : 'Block') + '</button></td></tr>';
-        }).join('') : '<tr><td colspan="9" class="muted">No KEY GROUP agents yet — add them above.</td></tr>') + '</tbody></table></div>' +
+        }).join('') : '<tr><td colspan="10" class="muted">No KEY GROUP agents yet — add them above.</td></tr>') + '</tbody></table></div>' +
         '<p class="muted" style="font-size:12px;margin-top:10px">CRM numbers come from each agent\'s Google Sheet (their MyHome / SS listings) and refresh every 10 minutes. Agents see the same list in their own dashboard.</p>';
       $('#agadd').onclick = function () { api('/api/admin/agents', {method: 'POST', json: {action: 'create', text: $('#agtxt').value}}).then(function (r) { $('#agm').className = 'msg ' + (r.ok ? 'ok' : 'err'); $('#agm').textContent = r.ok ? r.created.length + ' agent(s) saved' + (r.created.some(function (c) { return c.error; }) ? ' — some lines were skipped' : '') : r.error; if (r.ok) setTimeout(agentsTab, 900); }); };
+      $('#agsend').onclick = function () {
+        var b = this; b.disabled = true;
+        api('/api/admin/agents', {method: 'POST', json: {action: 'send_links'}}).then(function (r) {
+          b.disabled = false;
+          $('#agsm').className = 'msg ' + (r.ok ? 'ok' : 'err');
+          $('#agsm').textContent = r.ok ? '✅ Sent to ' + r.sent.length + (r.sent.length ? ' (' + r.sent.join(', ') + ')' : '') + (r.missing.length ? ' · no Telegram yet: ' + r.missing.join(', ') : '') : r.error;
+        });
+      };
       $$('[data-pw]').forEach(function (b) { b.onclick = function () { pwReset(b.dataset.pw, agentsTab); }; });
       $$('[data-ed]').forEach(function (b) { b.onclick = function () { editProfile(b.dataset.ed, agentsTab); }; });
       $$('[data-ag]').forEach(function (b) { b.onclick = function () {

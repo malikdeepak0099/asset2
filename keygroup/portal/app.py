@@ -1381,6 +1381,28 @@ async def admin_agents(request):
                     made.append({"name": nm, "phone": a["phone"], "slug": a["slug"]})
                 audit(con, u, "agents_create", "user", 0, json.dumps(made, ensure_ascii=False)[:900])
                 return ok(created=made)
+            if act == "send_links":
+                # every KEY GROUP agent with a known Telegram id gets a one-time login link from the bot (24 h)
+                sent, missing = [], []
+                ids = [int(x) for x in d.get("ids") or [] if str(x).isdigit()]
+                for a in con.execute("SELECT * FROM users WHERE role='agent' AND UPPER(company)='KEY GROUP' AND blocked=0").fetchall():
+                    if ids and a["id"] not in ids:
+                        continue
+                    if not str(a["tg_id"] or "").isdigit():
+                        missing.append(a["name"])
+                        continue
+                    tok = secrets.token_urlsafe(24)
+                    con.execute("INSERT INTO login_tokens (token, user_id, expires) VALUES (?,?,?)", (tok, a["id"], time.time() + 86400))
+                    first = not a["last_login"]
+                    text = (f"👋 {a['name']}, " + ("შენი KEY GROUP ანგარიში keygroup.ge-ზე მზადაა" if first else "შენი keygroup.ge ანგარიშის ბმული") +
+                            " — შენი განცხადებები (MyHome-დან), ლიდები და MyHome / SS-ზე გამოქვეყნება ერთ ადგილას.\n"
+                            "დააჭირე ღილაკს (ბმული 24 საათი მოქმედებს)" + (" და შესვლის შემდეგ დააყენე პაროლი." if not a["pw_set"] else ".") +
+                            "\n\n👋 Your keygroup.ge account: your listings, leads and MyHome / SS publishing in one place. Tap the button (valid 24 h).")
+                    con.execute("INSERT INTO bot_outbox (tg_id, text, button_url, button_text, created) VALUES (?,?,?,?,?)",
+                                (a["tg_id"], text, f"{SITE}/api/login/link?t={tok}", "🔑 შესვლა keygroup.ge", time.time()))
+                    sent.append(a["name"])
+                audit(con, u, "agents_send_links", "user", 0, f"sent={len(sent)} missing={len(missing)}")
+                return ok(sent=sent, missing=missing)
             aid = int(d.get("id") or 0)
             a = con.execute("SELECT * FROM users WHERE id=?", (aid,)).fetchone()
             if not is_kg_agent(a):
@@ -1417,7 +1439,11 @@ async def admin_agents(request):
                 links = json.loads(a["links"] or "{}")
             except ValueError:
                 links = {}
+            x = con.execute("""SELECT SUM(x.site='myhome') AS mh, SUM(x.site='ss') AS ss, SUM(x.promo!='') AS paid
+                               FROM ext_posts x JOIN listings l ON l.id=x.listing_id WHERE l.user_id=? AND l.status='active'""", (a["id"],)).fetchone()
+            dup = con.execute("SELECT COUNT(*) AS n FROM listings WHERE user_id=? AND status='active' AND dup_of!=''", (a["id"],)).fetchone()["n"]
             out.append({"id": a["id"], "name": a["name"], "phone": a["phone"], "email": a["email"] or "", "slug": a["slug"] or "", "links": links,
+                        "tg": bool(str(a["tg_id"] or "").isdigit()), "on_myhome": x["mh"] or 0, "on_ss": x["ss"] or 0, "paid": x["paid"] or 0, "dups": dup,
                         "blocked": a["blocked"], "pw_set": a["pw_set"], "last_login": a["last_login"] or 0, "created": a["created"],
                         "active": l["active"] or 0, "pending": l["pending"] or 0, "total": l["total"] or 0, "last_listing": l["last_listing"] or 0,
                         "no_photos": l["no_photos"] or 0, "leads30": ld["n"] or 0, "leads_new": ld["new"] or 0, "avg_hours": st["avg_hours"], "trusted": st["trusted"]})
