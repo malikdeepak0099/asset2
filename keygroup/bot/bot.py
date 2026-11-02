@@ -428,7 +428,7 @@ def sync_agent(uid, notify=True):
     if not recs and DB.counts(uid).get(uid, {}).get("myhome", {}).get("Active", 0) > 3:
         stats["error"] = "profile returned 0 listings (skipped, possible site problem)"
         return stats
-    new, upd, rem, same = DB.apply_snapshot(uid, "myhome", recs, full=True)
+    new, upd, rem, same = DB.apply_snapshot(uid, "myhome", recs, full=getattr(recs, "complete", True))
     stats.update(new=new, updated=upd, removed=rem, total=len(recs))
     queue_site(uid, name, recs, rem)
     push_to_crm(uid, name, new, upd, rem, same)
@@ -558,6 +558,8 @@ def fmt_price(r):
 
 def agent_report(st, uid=None):
     en = uid is not None and lang_of(uid) == "en"
+    if st.get("error") and st["error"] != "no profile":
+        return "⚠️ " + f"<b>{e(st.get('name') or '')}</b>: " + ("could not read the MyHome profile — " if en else "MyHome პროფილის წაკითხვა ვერ მოხერხდა — ") + e(st["error"])
     who = "" if not en or str(uid) not in admins() else f" — {st['name']}"
     if en:
         lines = [f"📊 <b>Listings{e(who)} — {datetime.now(TBILISI):%d.%m %H:%M}</b>",

@@ -110,26 +110,57 @@ def fingerprint(rec):
     return hashlib.md5(raw.encode("utf-8")).hexdigest()[:16]
 
 
-def myhome_profile(user_id, fetch=extract.fetch, pause=1.0):
-    """All listings on a MyHome profile, as mapped records."""
-    out, seen = [], set()
+class Records(list):
+    """A list of listing records; .complete is False when MyHome would not show every listing (then nothing is marked removed)."""
+    complete = True
+
+
+SEARCH_PAGES = 5          # MyHome shows at most 5 pages (120 listings) per search to visitors; page 6 answers HTTP 500
+MH_DEALS = (1, 2, 3, 7)   # sale, rent, pledge, daily rent
+
+
+def _crawl(user_id, extra, fetch, pause):
+    """One search (users=<id> + extra filters). Returns (ids->item, capped) — capped when MyHome stopped at its page limit."""
+    found = {}
     for page in range(1, MAX_PAGES + 1):
-        items = _statements(fetch(MH_PROFILE.format(uid=user_id, page=page)))
+        url = MH_PROFILE.format(uid=user_id, page=page) + extra
+        try:
+            items = _statements(fetch(url))
+        except extract.Blocked as ex:
+            if page > SEARCH_PAGES and getattr(ex, "status", 0) >= 500:
+                return found, True
+            raise
         for _ in range(2):                     # an empty first page is usually a hiccup on MyHome's side: try again
             if items or page > 1:
                 break
             time.sleep(pause * 4 + 2)
-            items = _statements(fetch(MH_PROFILE.format(uid=user_id, page=page)))
+            items = _statements(fetch(url))
         for it in items:
-            if str(it.get("user_id")) != str(user_id):
-                continue
-            rec = map_myhome_item(it)
-            if rec["id"] not in seen:
-                seen.add(rec["id"])
-                out.append(rec)
+            if str(it.get("user_id")) == str(user_id):
+                found.setdefault(str(it.get("id")), it)
         if len(items) < PAGE_SIZE:
-            break
+            return found, False
         time.sleep(pause)
+    return found, True
+
+
+def myhome_profile(user_id, fetch=extract.fetch, pause=1.0):
+    """All listings on a MyHome profile, as mapped records.
+    Profiles above MyHome's 120-per-search limit are read per deal type, and from both price ends when one deal type is
+    still above the limit; .complete tells whether every listing was certainly reached."""
+    items, capped = _crawl(user_id, "", fetch, pause)
+    complete = not capped
+    if capped:
+        # MyHome honours deal_types and order_by=price (newest first vs cheapest first); with both a deal type of up to
+        # ~240 listings is read. We cannot prove every listing was seen, so nothing is marked removed for such profiles.
+        for deal in MH_DEALS:
+            got, cap = _crawl(user_id, f"&deal_types={deal}", fetch, pause)
+            items.update(got)
+            if cap:
+                by_price, _ = _crawl(user_id, f"&deal_types={deal}&order_by=price", fetch, pause)
+                items.update(by_price)
+    out = Records(map_myhome_item(it) for it in items.values())
+    out.complete = complete
     return out
 
 
