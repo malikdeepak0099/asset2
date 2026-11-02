@@ -38,7 +38,7 @@ DATA_DIR = os.environ.get("DATA_DIR", "/data")
 STATE_FILE = os.path.join(DATA_DIR, "state.json")
 TBILISI = timezone(timedelta(hours=4))
 DAILY_SYNC_HOUR = int(os.environ.get("DAILY_SYNC_HOUR", "9"))
-AGENT_NAMES = [n.strip() for n in os.environ.get("AGENT_NAMES", "Demetre,Nini,Ana,Dato,Nika,Giorgi,Zura,Amiko,Irina").split(",") if n.strip()]
+AGENT_NAMES = [n.strip() for n in os.environ.get("AGENT_NAMES", "Demetre,Nini,Ana,Dato,Nika,Giorgi,Zura").split(",") if n.strip()]
 DB = Store(os.path.join(DATA_DIR, "agents.db"))
 SYNC_LOCK = threading.Lock()
 
