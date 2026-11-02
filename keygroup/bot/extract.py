@@ -274,7 +274,32 @@ def parse_myhome(page, url):
         "posted_by_agency": str((st.get("user_type") or {}).get("type") or "physical").lower() != "physical",
         "images": [i.get("large") for i in (st.get("images") or []) if isinstance(i, dict) and i.get("large")][:20],
         "user_id": str(st.get("user_id") or ""),
+        "features": mh_features(st), "details": mh_details(st),
+        "lat": num(st.get("lat")), "lon": num(st.get("lng")), "posted_at": str(st.get("created_at") or ""),
+        "video_url": str(st.get("youtube_link") or ""),
     }
+
+
+def mh_features(st):
+    """Amenities ticked on MyHome (internet, gas, furniture, conditioner…) — Georgian display names."""
+    out = []
+    for p in st.get("parameters") or []:
+        if isinstance(p, dict) and p.get("display_name"):
+            v = p.get("parameter_value")
+            out.append(p["display_name"] + (f": {v}" if v not in (None, "", True) else ""))
+    return out[:40]
+
+
+def mh_details(st):
+    """Extra specifications as (Georgian label, value) pairs."""
+    rows = [("მდგომარეობა", st.get("condition")), ("აშენების წელი", st.get("build_year")),
+            ("აივანი", st.get("balconies") and f"{st.get('balconies')}" + (f" ({st.get('balcony_area')} მ²)" if st.get("balcony_area") else "")),
+            ("ჭერის სიმაღლე", st.get("height") and f"{st.get('height')} მ"), ("ცხელი წყალი", st.get("hot_water_type")),
+            ("კარ-ფანჯარა", st.get("door_window_type")), ("მისაღები", st.get("living_room_type")),
+            ("ეზო", st.get("yard_area") and f"{st.get('yard_area')} მ²"), ("სათავსო", st.get("storeroom_area") and f"{st.get('storeroom_area')} მ²"),
+            ("ლოჯი", st.get("loggia_area") and f"{st.get('loggia_area')} მ²"), ("აუზი", st.get("swimming_pool_type")),
+            ("ფასი შეთანხმებით", "კი" if st.get("price_negotiable") else ""), ("გაცვლა", "შესაძლებელია" if st.get("can_exchanged") else "")]
+    return [[k, str(v)] for k, v in rows if v not in (None, "", 0, False)]
 
 
 SS_DEAL = {1: "rent", 2: "pledge", 4: "sale"}  # fallback only; the deal text is used first
@@ -317,7 +342,22 @@ def parse_ss(page, url):
         "user_uuid": str(a.get("userId") or "").lower(),
         "images": [i.get("fileName") for i in sorted(a.get("appImages") or [], key=lambda x: x.get("orderNo") or 0)
                    if isinstance(i, dict) and i.get("fileName")][:20],
+        "features": ss_features(a), "details": [],
+        "lat": num(addr.get("latitude") or addr.get("lat")), "lon": num(addr.get("longitude") or addr.get("lng")),
+        "posted_at": str(a.get("orderDate") or a.get("createDate") or ""),
+        "video_url": str(a.get("videoUrl") or a.get("youtubeLink") or ""),
     }
+
+
+def ss_features(a):
+    """SS.ge keeps amenities as lists of {title, value/isChecked} — collect every ticked one, best effort."""
+    out = []
+    for d in walk(a):
+        title = d.get("title") or d.get("name") or d.get("displayName")
+        flag = d.get("isChecked", d.get("checked", d.get("value", d.get("isSelected"))))
+        if isinstance(title, str) and 1 < len(title) < 40 and flag is True and title not in out:
+            out.append(title)
+    return out[:40]
 
 
 def extract(url):

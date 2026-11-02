@@ -12,6 +12,7 @@ import html
 import json
 import os
 import re
+import sys
 import threading
 import time
 import traceback
@@ -19,6 +20,7 @@ from datetime import datetime, timezone, timedelta
 
 import requests
 
+import drafts
 import extract
 import profiles
 import texts
@@ -144,7 +146,10 @@ HELP_EN = (
     "1️⃣ Send me an owner's listing <b>link</b> (myhome.ge or ss.ge).\n"
     "2️⃣ I extract all the details and the owner's phone.\n"
     "3️⃣ Call the owner. If they agree, tap <b>“✅ Owner agreed”</b>.\n"
-    "4️⃣ I give you the ready listing (GE/EN/RU), the form fields and photos. It goes live on keygroup.ge under KEY GROUP at once and is saved to the CRM.\n\n"
+    "4️⃣ Ask the owner for the <b>original photos</b> and forward them to me (as files = full quality). I never remove logos or edit photos.\n"
+    "5️⃣ Tap <b>“👁 Preview”</b>: you see exactly what will be published (title, texts, price, specs, photos, your contact, MyHome and SS format). Fix anything with ✏️.\n"
+    "6️⃣ Tap <b>“✅ Approve and publish”</b> once: keygroup.ge + CRM + a ready MyHome / SS package. Nothing is published without your approval.\n\n"
+    "/new — new listing without a link · /draft — my open draft · /phone — my contact number (shown instead of the owner's)\n"
     "/myid — your Telegram ID · /lang — ქართული / English"
 )
 
@@ -158,7 +163,10 @@ HELP = (
     "1️⃣ გამომიგზავნე მესაკუთრის განცხადების <b>ბმული</b> (myhome.ge ან ss.ge).\n"
     "2️⃣ ამოვიღებ ყველა ინფორმაციას და მესაკუთრის ნომერს.\n"
     "3️⃣ დაურეკე მესაკუთრეს. თუ თანახმაა, დააჭირე <b>„✅ მესაკუთრე თანახმაა“</b>.\n"
-    "4️⃣ მოგცემ მზა განცხადებას (ქართ/ინგ/რუს), ველებს და ფოტოებს. განცხადება მაშინვე გამოქვეყნდება keygroup.ge-ზე KEY GROUP-ის სახელით და ჩაიწერება CRM-ში.\n\n"
+    "4️⃣ სთხოვე მესაკუთრეს <b>ორიგინალი ფოტოები</b> და გადმომიგზავნე (ფაილად = სრული ხარისხი). ლოგოებს არ ვშლი და ფოტოებს არ ვცვლი.\n"
+    "5️⃣ დააჭირე <b>„👁 გადახედვა“</b>: ნახავ ზუსტად რა გამოქვეყნდება (სათაური, ტექსტი, ფასი, მონაცემები, ფოტოები, შენი კონტაქტი, MyHome და SS ფორმატი). ✏️ ღილაკებით შეასწორე.\n"
+    "6️⃣ დააჭირე <b>„✅ დამტკიცება და გამოქვეყნება“</b> ერთხელ: keygroup.ge + CRM + მზა პაკეტი MyHome / SS-ისთვის. შენი თანხმობის გარეშე არაფერი ქვეყნდება.\n\n"
+    "/new — ახალი განცხადება ბმულის გარეშე · /draft — ჩემი დრაფტი · /phone — ჩემი ნომერი (ჩანს მესაკუთრის ნაცვლად)\n"
     "/myid — შენი Telegram ID · /lang — ქართული / English"
 )
 
@@ -497,24 +505,6 @@ PRIVATE_PROFILE_KA = ("⚠️ ეს შენი <b>პირადი კა�
                       "ან საჯარო პროფილის ბმული: <code>/profile https://www.myhome.ge/udzravi-qoneba/?users=1234567</code>")
 
 
-def publish_to_site(d, agent, with_photos):
-    """Post the listing to keygroup.ge under KEY GROUP (company phone). Returns (ok, url_or_error, photos)."""
-    if not CRM_SECRET:
-        return False, "secret not set", 0
-    payload = {k: d.get(k) for k in ("url", "deal", "type", "city", "district", "address", "rooms", "bedrooms", "area", "floor",
-                                     "total_floors", "price", "price_usd", "currency")}
-    tx = d.get("texts") or {}
-    payload.update(title=tx.get("title_en") or tx.get("title_ka") or d.get("title"),
-                   description="\n\n".join(x for x in (tx.get("en"), tx.get("ka"), tx.get("ru")) if x) or d.get("description"),
-                   agent=agent, with_photos=bool(with_photos), photos=(d.get("images") or [])[:12])
-    try:
-        r = requests.post(PORTAL_URL + "/api/bot/listing", json=payload, headers={"X-Bot-Secret": CRM_SECRET}, timeout=120)
-        j = r.json()
-        return (True, j.get("url"), j.get("photos", 0)) if j.get("ok") else (False, j.get("error") or r.status_code, 0)
-    except Exception as ex:
-        return False, str(ex)[:120], 0
-
-
 def on_message(msg):
     chat = msg["chat"]["id"]
     uid = msg["from"]["id"]
@@ -596,6 +586,38 @@ def on_message(msg):
         if admins() and not is_admin(uid):
             ask_admin_to_register(msg["from"])
         send(chat, "👋 ეს KEY GROUP-ის აგენტების ასისტენტია. მოთხოვნა გაეგზავნა ადმინისტრატორს — დადასტურების შემდეგ მოგწერ.")
+        return
+    if msg.get("photo") or (msg.get("document") and str(msg["document"].get("mime_type", "")).startswith("image/")):
+        drafts.add_photo(msg, uid)
+        return
+    if (not text.startswith("/") or text.startswith("/cancel")) and drafts.apply_edit(chat, uid, text):
+        return
+    if text.startswith("/phone"):
+        ph = re.sub(r"[^\d+]", "", text[len("/phone"):])
+        if len(re.sub(r"\D", "", ph)) >= 9:
+            if not ph.startswith("+"):
+                ph = "+995" + ph[-9:]
+            STATE["phones"][str(uid)] = ph
+            save_state()
+            send(chat, f"✅ შენი საკონტაქტო ნომერი: <b>{e(ph)}</b> — ეს გამოჩნდება შენს განცხადებებში.")
+        else:
+            send(chat, f"შენი ნომერი: <b>{e(STATE['phones'].get(str(uid)) or '—')}</b>\nშესაცვლელად: <code>/phone 599123456</code>")
+        return
+    if text.startswith("/new"):
+        dr = drafts.new_draft(uid, name)
+        send(chat, f"🆕 ახალი განცხადება #{e(dr['id'])}\n\n1️⃣ გამომიგზავნე ორიგინალი ფოტოები (უმჯობესია „ფაილად“ — სრული ხარისხი).\n"
+                   "2️⃣ დააჭირე „👁 გადახედვა“ და შეავსე ველები ✏️ ღილაკებით.\n3️⃣ დაამტკიცე — გამოქვეყნდება.",
+             [[{"text": "👁 გადახედვა", "callback_data": "pv|" + dr["id"]}]])
+        return
+    if text.startswith("/draft"):
+        dr = drafts.current(uid)
+        if dr:
+            drafts.preview(chat, dr)
+        else:
+            send(chat, "აქტიური დრაფტი არ გაქვს. გამომიგზავნე ბმული ან /new")
+        return
+    if text.startswith("/cancel"):
+        send(chat, "OK.")
         return
     if text.startswith("/start") or text.startswith("/help"):
         send(chat, help_for(uid))
@@ -691,8 +713,7 @@ def on_message(msg):
         for k in sorted(STATE["pending"], key=lambda k: STATE["pending"][k]["created"])[:-200]:
             STATE["pending"].pop(k, None)
     save_state()
-    send(chat, summary(d), [[{"text": "✅ თანახმაა — საიტზე ფოტოებით", "callback_data": "ok|" + key}],
-                           [{"text": "✅ თანახმაა — ფოტოების გარეშე", "callback_data": "okn|" + key}],
+    send(chat, summary(d), [[{"text": "✅ მესაკუთრე თანახმაა", "callback_data": "ok|" + key}],
                            [{"text": "❌ გაუქმება", "callback_data": "no|" + key}]])
 
 
@@ -721,6 +742,30 @@ def on_callback(cb):
         send(new_uid, f"✅ გამარჯობა {e(agent)}! შენი პირადი ასისტენტი მზადაა.\n\n" + help_for(new_uid))
         send(new_uid, "👉 გამომიგზავნე შენი <b>MyHome.ge პროფილის ბმული</b> ან შენი ნებისმიერი განცხადების ბმული:\n<code>/profile ბმული</code>")
         return
+    if action in ("pv", "ed", "uo", "ap", "dc"):
+        uid = cb["from"]["id"]
+        did, _, field = key.partition("|")
+        dr = STATE.get("drafts", {}).get(did)
+        if not dr or (str(uid) != dr["uid"] and not is_admin(uid)):
+            send(chat, "ეს დრაფტი ვერ ვიპოვე.")
+            return
+        if action == "pv":
+            drafts.preview(chat, dr)
+        elif action == "ed":
+            drafts.ask_edit(chat, uid, did, field)
+        elif action == "uo":
+            dr["desc_ka"] = dr.get("source_desc") or dr["desc_ka"]
+            if "desc_ka" not in dr["edited"]:
+                dr["edited"].append("desc_ka")
+            save_state()
+            drafts.preview(chat, dr, with_photos=False)
+        elif action == "ap":
+            tg("editMessageReplyMarkup", chat_id=chat, message_id=cb["message"]["message_id"], reply_markup={"inline_keyboard": []})
+            drafts.publish(chat, uid, did)
+        elif action == "dc":
+            tg("editMessageReplyMarkup", chat_id=chat, message_id=cb["message"]["message_id"], reply_markup={"inline_keyboard": []})
+            drafts.discard(chat, uid, did)
+        return
     item = STATE["pending"].get(key)
     if not item:
         send(chat, "ეს განცხადება ვადაგასულია. გამომიგზავნე ბმული თავიდან.")
@@ -728,7 +773,7 @@ def on_callback(cb):
     if str(cb["from"]["id"]) != str(item["uid"]) and not is_admin(cb["from"]["id"]):
         return
     tg("editMessageReplyMarkup", chat_id=chat, message_id=cb["message"]["message_id"], reply_markup={"inline_keyboard": []})
-    if action not in ("ok", "okn", "no"):
+    if action not in ("ok", "no"):
         return
     if action == "no":
         STATE["pending"].pop(key, None)
@@ -738,36 +783,14 @@ def on_callback(cb):
 
     d = item["data"]
     consent_at = datetime.now(TBILISI).strftime("%Y-%m-%d %H:%M")
-    send(chat, f"✅ თანხმობა ჩაწერილია: {consent_at}. ვამზადებ განცხადებას…")
-    tx, ai_used = texts.build(d, COMPANY_PHONE, item["agent"])
-    d["texts"] = tx
-
-    send(chat, fields_block(d))
-    for lang, flag in (("ka", "🇬🇪"), ("en", "🇬🇧"), ("ru", "🇷🇺")):
-        send(chat, f"{flag} <b>სათაური:</b>\n<code>{e(tx.get('title_' + lang, ''))}</code>\n\n<b>აღწერა:</b>\n<code>{e(tx.get(lang, ''))}</code>")
-
-    imgs = d.get("images") or []
-    sent_photos = 0
-    for i in range(0, min(len(imgs), 20), 10):
-        chunk = imgs[i:i + 10]
-        res = send_photos(chat, chunk)
-        if res:
-            sent_photos += len(chunk)
-    if imgs and not sent_photos:
-        send(chat, "📷 ფოტოები ვერ გადმოვწერე. ნახე ორიგინალ განცხადებაში:\n" + e(d.get("url")))
-
-    ok, info = save_to_crm(d, item["agent"], item["uid"], consent_at, ai_used)
-    site_ok, site_info, site_ph = publish_to_site(d, item["agent"], action == "ok")
     STATE["pending"].pop(key, None)
-    save_state()
-    send(chat, ("🌐 <b>გამოქვეყნდა keygroup.ge-ზე</b> KEY GROUP-ის სახელით" + (f" ({site_ph} ფოტო)" if site_ph else "") + f":\n{e(site_info)}\n\n"
-                if site_ok else f"⚠️ საიტზე გამოქვეყნება ვერ მოხერხდა ({e(site_info)}) — ადმინისტრატორს ვაცნობე.\n\n")
-         + ("💾 ჩაწერილია Master CRM-ში." if ok else "⚠️ CRM-ში ჩაწერა ვერ მოხერხდა — ადმინისტრატორს ვაცნობე.")
-         + "\n\n➡️ MyHome.ge / SS.ge-ზე: დადე Key Group-ის ანგარიშზე — ტექსტზე ერთი დაჭერით დაკოპირდება.")
-    if not ok:
-        send_admins(f"⚠️ CRM error for {e(item['agent'])}: {e(info)}")
-    if not site_ok:
-        send_admins(f"⚠️ Website publish error for {e(item['agent'])}: {e(site_info)}")
+    dr = drafts.new_draft(item["uid"], item["agent"], d, consent_at)
+    txt, link = drafts.owner_photo_request(d)
+    send(chat, f"✅ თანხმობა ჩაწერილია: {consent_at}. შეიქმნა დრაფტი #{e(dr['id'])}.\n\n"
+               "📷 <b>ახლა სთხოვე მესაკუთრეს ორიგინალი ფოტოები</b> (ლოგოს გარეშე, როგორც მის ტელეფონშია) და გადმომიგზავნე აქ — "
+               "უმჯობესია „ფაილად“, რომ ხარისხი არ დაიკარგოს. MyHome / SS-ის ფოტოებს არ ვიყენებ.\n\n"
+               f"WhatsApp-ის ტექსტი მესაკუთრისთვის:\n<code>{e(txt)}</code>",
+         ([[{"text": "💬 WhatsApp მესაკუთრეს", "url": link}]] if link else []) + [[{"text": "👁 გადახედვა", "callback_data": "pv|" + dr["id"]}]])
 
 
 # ---------------------------------------------------------------- main loop
@@ -781,6 +804,9 @@ def main():
                                   {"command": "profile", "description": "ჩემი MyHome.ge / SS.ge პროფილი"},
                                   {"command": "sync", "description": "ჩემი განცხადებების განახლება"},
                                   {"command": "my", "description": "ჩემი ბაზა"},
+                                  {"command": "new", "description": "ახალი განცხადება ფოტოებით"},
+                                  {"command": "draft", "description": "ჩემი დრაფტის გადახედვა"},
+                                  {"command": "phone", "description": "ჩემი საკონტაქტო ნომერი"},
                                   {"command": "myid", "description": "ჩემი Telegram ID"}])
     for adm in admins():
         tg("setMyCommands", scope={"type": "chat", "chat_id": int(adm)}, commands=[
@@ -809,6 +835,8 @@ def main():
             traceback.print_exc()
             time.sleep(5)
 
+
+drafts.init(sys.modules[__name__])
 
 if __name__ == "__main__":
     main()

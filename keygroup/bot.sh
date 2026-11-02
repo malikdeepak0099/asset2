@@ -5,7 +5,7 @@ RAW=https://raw.githubusercontent.com/malikdeepak0099/asset2/main/keygroup/bot
 CRM='https://script.google.com/macros/s/AKfycbxrhM71nw5yFyxWobNt1afBS2uhoq0CGEJguudYHT4ZQuRg809CxWIxEXJZvJDXslSA/exec'
 command -v docker >/dev/null || { echo "STOP: docker not found"; exit 1; }
 mkdir -p "$DIR/data" && cd "$DIR"
-for f in bot.py extract.py profiles.py store.py texts.py requirements.txt Dockerfile docker-compose.yml; do
+for f in bot.py drafts.py extract.py profiles.py store.py texts.py requirements.txt Dockerfile docker-compose.yml; do
   curl -fsSL "$RAW/$f?$(date +%s)" -o "$f.new" || { echo "STOP: could not download $f - nothing changed"; rm -f ./*.new; exit 1; }
 done
 for f in *.new; do mv "$f" "${f%.new}"; done

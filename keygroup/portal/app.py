@@ -943,7 +943,17 @@ async def bot_listing(request):
     sec = request.headers.get("x-bot-secret", "")
     if not CRM_SECRET or not hmac.compare_digest(sec, CRM_SECRET):
         return err("unauthorized", 401)
-    d = await body_json(request)
+    uploads = []
+    if request.headers.get("content-type", "").startswith("multipart/"):
+        form_ = await request.form()
+        try:
+            d = json.loads(form_.get("data") or "{}")
+        except ValueError:
+            return err("bad data")
+        for up in form_.getlist("photos")[:15]:
+            uploads.append(await up.read())
+    else:
+        d = await body_json(request)
     st = get_settings()
     deal = {"pledge": "rent"}.get(d.get("deal"), d.get("deal"))
     price, cur = d.get("price_usd") or d.get("price"), "USD" if d.get("price_usd") else (str(d.get("currency") or "USD").upper())
@@ -956,7 +966,9 @@ async def bot_listing(request):
         "district": chatbot.KA_TO_EN.get(dist, dist), "address": d.get("address"), "rooms": d.get("rooms"), "bedrooms": d.get("bedrooms"),
         "area": d.get("area"), "floor": d.get("floor"), "total_floors": d.get("total_floors"), "price": price, "currency": cur,
         "title": d.get("title"), "description": d.get("description"),
-        "contact_name": ("KEY GROUP" + (" · " + agent if agent else ""))[:80], "contact_phone": st.get("company_phone") or "+995577114118",
+        "contact_name": ("KEY GROUP" + (" · " + agent if agent else ""))[:80],
+        "contact_phone": norm_phone(d.get("contact_phone")) if len(norm_phone(d.get("contact_phone"))) >= 12 else (st.get("company_phone") or "+995577114118"),
+        "video_url": d.get("video_url"), "lat": d.get("lat"), "lon": d.get("lon"),
     }
     f, msg = clean_listing(form)
     if msg:
@@ -968,8 +980,13 @@ async def bot_listing(request):
     if not adm:
         return err("no admin account", 500)
     photos = []
-    if d.get("with_photos"):
-        loop = asyncio.get_running_loop()
+    loop = asyncio.get_running_loop()
+    for raw in uploads:   # originals sent by the agent; the website keeps web-size copies
+        try:
+            photos.append(await loop.run_in_executor(None, save_photo, raw))
+        except Exception:
+            pass
+    if d.get("with_photos") and not photos:
         for u in [str(x) for x in (d.get("photos") or [])][:12]:
             name = await loop.run_in_executor(None, bot_photo, u)
             if name:
