@@ -130,13 +130,22 @@ def site_payload(dr):
             "profiles": profile_links(dr["uid"]), "tg": dr["uid"]}
 
 
+def is_own_listing(uid, d):
+    """True when the link is the agent's own listing (same MyHome user id / SS user as the agent's saved profile)."""
+    p = B.STATE.get("profiles", {}).get(str(uid), {})
+    if d.get("user_id") and p.get("myhome") and str(d["user_id"]) == str(p["myhome"]):
+        return True
+    return bool(d.get("user_uuid") and p.get("ss") and str(d["user_uuid"]).lower() == str(p["ss"]).lower())
+
+
 def quick_publish(chat, dr, d):
     """Owner agreed -> the listing goes live on keygroup.ge at once with the listing's own photos (as they are, nothing removed)
     and the agent's contact. The draft stays open: edits or original photos later update the same listing."""
     compose(dr)
     payload = site_payload(dr)
-    agency = bool(d.get("posted_by_agency"))
-    payload.update(with_photos=not agency, photos=(d.get("images") or [])[:15])
+    own = is_own_listing(dr["uid"], d)
+    agency = bool(d.get("posted_by_agency")) and not own     # the agent's own listing: its photos are theirs to use
+    payload.update(with_photos=not agency, photos=(d.get("images") or [])[:15], own=own)
     try:
         r = requests.post(B.PORTAL_URL + "/api/bot/listing", json=payload, headers={"X-Bot-Secret": B.CRM_SECRET}, timeout=240)
         j = r.json()

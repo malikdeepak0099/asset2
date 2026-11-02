@@ -1075,6 +1075,11 @@ async def bot_listing(request):
         if not owner:
             owner = con.execute("SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1").fetchone()
         old = con.execute("SELECT id FROM listings WHERE source_url=? AND source_url!='' AND status!='deleted'", (src,)).fetchone() if src else None
+        if not old and src:   # same MyHome / SS listing reached by another link form (/pr/123/ vs /udzravi-qoneba/...-123/)
+            xs_, xid_ = ext_from_url(src)
+            if xs_:
+                old = con.execute("SELECT l.id FROM ext_posts x JOIN listings l ON l.id=x.listing_id WHERE x.site=? AND x.ext_id=? "
+                                  "AND l.status!='deleted' ORDER BY l.id LIMIT 1", (xs_, xid_)).fetchone()
     if not owner:
         return err("no admin account", 500)
     adm = owner
