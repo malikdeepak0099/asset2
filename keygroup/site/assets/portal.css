@@ -72,3 +72,21 @@ label.f input,label.f select,label.f textarea{width:100%;min-width:0}
 @media (max-width:900px){.grid3,.grid4{grid-template-columns:1fr 1fr}}
 @media (max-width:600px){.grid2,.grid3,.grid4{grid-template-columns:1fr}.top nav{gap:14px;font-size:14px}}
 .st-changes{background:var(--sky);color:#1D4FB8}
+/* competitor features: price drop, trusted, compare, investor tools */
+.t-drop{background:#E8F7EE;color:#137A43;border:1px solid #BFE6CF}
+.trust{display:inline-flex;align-items:center;gap:3px;background:#FFF6DF;color:#8A6410;border:1px solid #F0DCA4;border-radius:999px;padding:1px 8px;font:700 11px var(--display)}
+.trust .ic{width:13px;height:13px}
+.lc .cmpb{margin:0 16px 14px;align-self:flex-start;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:10px;padding:6px 10px;font:600 12px var(--display);color:var(--muted);cursor:pointer}
+.lc .cmpb .ic{width:15px;height:15px}
+.cmpb[aria-pressed="true"]{background:var(--navy);color:#fff;border-color:var(--navy)}
+#cmpbar{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:40;background:var(--navy);color:#fff;border-radius:999px;padding:12px 20px;font:700 14px var(--display);display:flex;align-items:center;gap:8px;box-shadow:0 10px 30px rgba(8,26,48,.35);text-decoration:none}
+#cmpbar b{background:var(--gold,#D4A853);color:var(--navy);border-radius:999px;padding:1px 8px}
+.mkt{display:flex;flex-direction:column;gap:10px}
+.mkt .bar{position:relative;height:10px;border-radius:99px;background:linear-gradient(90deg,#2BB673,#E9EEF3 50%,#F45D48)}
+.mkt .bar i{position:absolute;top:-5px;width:4px;height:20px;border-radius:3px;background:var(--navy);transform:translateX(-2px)}
+.mkt .lab{display:flex;justify-content:space-between;font-size:12px;color:var(--muted)}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.kpis div{background:var(--page,#F4F7FA);border-radius:12px;padding:12px}.kpis b{display:block;font:800 22px var(--display)}.kpis span{font-size:12px;color:var(--muted)}
+.vid{position:relative;padding-top:56.25%;border-radius:16px;overflow:hidden;background:#000}.vid iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+.hist{font-size:14px}.hist div{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed var(--line)}
+@media (max-width:640px){.kpis{grid-template-columns:1fr 1fr}#cmpbar{bottom:84px}}

@@ -37,11 +37,14 @@
       <div class="grid2"><label class="f"><span id="l-rooms">ოთახები</span><select name="rooms"><option value="">—</option><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option><option value="4">4+</option></select></label><label class="f"><span id="l-area">ფართი მ², დან</span><input name="area" type="number" min="0" inputmode="numeric"></label></div>
       <label class="f"><span id="l-sort">დალაგება</span><select name="sort"><option value=""></option><option value="new"></option><option value="price_asc"></option><option value="price_desc"></option><option value="area_desc"></option></select></label>
       <label style="display:flex;gap:8px;align-items:center;font:600 14px var(--display)"><input type="checkbox" name="photos"> <span id="l-photos">მხოლოდ ფოტოებით</span></label>
+      <label style="display:flex;gap:8px;align-items:center;font:600 14px var(--display)"><input type="checkbox" name="verified"> <span id="l-ver">მხოლოდ შემოწმებული</span></label>
+      <label style="display:flex;gap:8px;align-items:center;font:600 14px var(--display)"><input type="checkbox" name="drop"> <span id="l-drop">ფასი შემცირდა</span></label>
       <button class="btn b-coral" type="submit" id="go">ძიება</button>
       <button class="btn b-ghost" type="button" id="reset">გასუფთავება</button>
     </form>
     <section aria-live="polite">
-      <div class="bar"><h1 id="h">განცხადებები</h1><span style="display:flex;gap:12px;align-items:center"><span class="muted" id="count"></span><span class="vt" role="group" aria-label="View"><button type="button" data-v="list" aria-pressed="true" id="v-list">☰</button><button type="button" data-v="map" aria-pressed="false" id="v-map">🗺</button></span></span></div>
+      <div class="bar"><h1 id="h">განცხადებები</h1><span style="display:flex;gap:12px;align-items:center"><span class="muted" id="count"></span><button type="button" class="btn sm b-ghost" id="ssave"></button><span class="vt" role="group" aria-label="View"><button type="button" data-v="list" aria-pressed="true" id="v-list">☰</button><button type="button" data-v="map" aria-pressed="false" id="v-map">🗺</button></span></span></div>
+      <div id="saved" style="margin-bottom:14px"></div>
       <div id="map" class="hidden"></div>
       <div class="lgrid" id="grid"><div class="empty">…</div></div>
       <div class="more"><button class="btn b-ghost hidden" id="moreBtn" type="button"></button></div>
@@ -61,6 +64,8 @@
   $('#l-type').textContent = t('Property type', 'ქონების ტიპი'); $('#l-dist').textContent = t('District / address', 'უბანი / მისამართი');
   $('#l-pmin').textContent = t('Price from', 'ფასი, დან'); $('#l-pmax').textContent = t('to', 'მდე'); $('#l-rooms').textContent = t('Rooms', 'ოთახები');
   $('#l-area').textContent = t('Area from, m²', 'ფართი მ², დან'); $('#l-sort').textContent = t('Sort', 'დალაგება'); $('#l-photos').textContent = t('Only with photos', 'მხოლოდ ფოტოებით');
+  $('#l-ver').textContent = t('Only verified', 'მხოლოდ შემოწმებული'); $('#l-drop').textContent = t('Price reduced', 'ფასი შემცირდა');
+  $('#ssave').innerHTML = KG.icon('bell') + t('Save search', 'ძიების შენახვა'); if (favMode) $('#ssave').classList.add('hidden');
   $('#go').textContent = t('Show results', 'ძიება'); $('#reset').textContent = t('Clear filters', 'გასუფთავება');
   var ts = $('select[name=type]').options; ts[0].text = t('Any type', 'ყველა'); ts[1].text = KG.TYPE('flat'); ts[2].text = KG.TYPE('house'); ts[3].text = KG.TYPE('commercial'); ts[4].text = KG.TYPE('land');
   var so = $('select[name=sort]').options; so[0].text = t('Recommended (VIP first)', 'რეკომენდებული (VIP პირველი)'); so[1].text = t('Newest', 'ახალი'); so[2].text = t('Price: low to high', 'ფასი: ზრდადობით'); so[3].text = t('Price: high to low', 'ფასი: კლებადობით'); so[4].text = t('Largest area', 'დიდი ფართი');
@@ -92,26 +97,65 @@
   $$('.vt button').forEach(function (b) { b.onclick = function () { setView(b.dataset.v); }; });
   var f = $('#f');
   ['type', 'district', 'min', 'max', 'rooms', 'area', 'sort'].forEach(function (k) { if (params.get(k)) f[k].value = params.get(k); });
-  if (params.get('photos')) f.photos.checked = true;
+  ['photos', 'verified', 'drop'].forEach(function (k) { if (params.get(k)) f[k].checked = true; });
   function setDeal(d) { deal = d; $$('.seg button', f).forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.deal === d ? 'true' : 'false'); }); }
   setDeal(deal);
   $$('.seg button', f).forEach(function (b) { b.onclick = function () { setDeal(b.dataset.deal); run(true); }; });
 
   function rank(l) { return l.tier === 'super' ? 2 : l.tier === 'vip' ? 1 : 0; }
+  function formParams() {
+    var p = new URLSearchParams();
+    if (deal) p.set('deal', deal);
+    ['type', 'district', 'min', 'max', 'rooms', 'area', 'sort'].forEach(function (k) { if (f[k].value) p.set(k, f[k].value); });
+    ['photos', 'verified', 'drop'].forEach(function (k) { if (f[k].checked) p.set(k, '1'); });
+    return p;
+  }
+  function matches(l, p) {
+    var q = (p.get('district') || '').trim().toLowerCase(), min = +p.get('min') || 0, max = +p.get('max') || 0, rooms = +p.get('rooms') || 0, area = +p.get('area') || 0;
+    if (p.get('deal') && l.deal !== p.get('deal')) return false;
+    if (p.get('type') && l.type !== p.get('type')) return false;
+    if (q && ((l.district || '') + ' ' + (l.districtKa || '') + ' ' + (l.address || '') + ' ' + (l.title || '')).toLowerCase().indexOf(q) < 0) return false;
+    if (min && l.price < min) return false;
+    if (max && l.price > max) return false;
+    if (rooms && (l.rooms || 0) < rooms) return false;
+    if (area && (l.area || 0) < area) return false;
+    if (p.get('photos') && !l.photo) return false;
+    if (p.get('verified') && !(l.vlevel >= 2 || l.src === 'crm')) return false;
+    if (p.get('drop') && !l.drop) return false;
+    return true;
+  }
+  // ---------- saved searches (this browser): remember the results you have seen, show how many are new
+  function SS() { try { return JSON.parse(localStorage.getItem('kg_ss') || '[]'); } catch (e) { return []; } }
+  function SSsave(a) { try { localStorage.setItem('kg_ss', JSON.stringify(a.slice(0, 10))); } catch (e) {} }
+  function ssName(p) {
+    var parts = [p.get('deal') ? KG.DEAL(p.get('deal')) : t('All', 'ყველა'), p.get('type') ? KG.TYPE(p.get('type')) : '', p.get('district') || '',
+      p.get('max') ? t('up to ', 'მდე ') + p.get('max') : '', p.get('rooms') ? p.get('rooms') + '+ ' + t('rooms', 'ოთახი') : ''];
+    return parts.filter(Boolean).join(' · ');
+  }
+  function drawSaved() {
+    var a = SS();
+    if (favMode || !a.length) { $('#saved').innerHTML = ''; return; }
+    $('#saved').innerHTML = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><b style="font:700 13px var(--display);color:var(--muted)">' + KG.icon('bell') + ' ' + t('Saved searches', 'შენახული ძიებები') + '</b>' + a.map(function (x) {
+      var p = new URLSearchParams(x.qs), n = 0;
+      if (ALL.length) ALL.forEach(function (l) { if (matches(l, p) && x.seen.indexOf(l.key) < 0) n++; });
+      return '<span class="pill" style="background:#fff;border:1px solid var(--line);display:inline-flex;gap:6px;align-items:center;padding:6px 10px"><a href="?' + x.qs + '&ss=' + x.id + '" style="color:var(--ink);font-weight:600">' + KG.esc(x.name) + '</a>' +
+        (n ? '<b style="background:var(--coral);color:#fff;border-radius:99px;padding:0 7px">' + n + ' ' + t('new', 'ახალი') + '</b>' : '') + '<button type="button" data-ssrm="' + x.id + '" style="border:0;background:none;cursor:pointer;color:var(--muted)" aria-label="' + t('Remove', 'წაშლა') + '">×</button></span>';
+    }).join('') + '</div>';
+    KG.$$('[data-ssrm]').forEach(function (b) { b.onclick = function () { SSsave(SS().filter(function (x) { return String(x.id) !== b.dataset.ssrm; })); drawSaved(); }; });
+  }
+  $('#ssave').onclick = function () {
+    var p = formParams(); p.delete('sort');
+    var qs = p.toString(), a = SS().filter(function (x) { return x.qs !== qs; });
+    a.unshift({id: Date.now(), qs: qs, name: ssName(p), seen: LAST.map(function (l) { return l.key; }).slice(0, 800), at: Date.now()});
+    SSsave(a); drawSaved(); KG.track('search_saved', {n: LAST.length});
+    $('#ssave').innerHTML = KG.icon('check') + t('Saved — we will show new matches here', 'შენახულია — ახალ განცხადებებს აქ ნახავთ');
+  };
   function run(push) {
-    var q = (f.district.value || '').trim().toLowerCase(), min = +f.min.value || 0, max = +f.max.value || 0, rooms = +f.rooms.value || 0, area = +f.area.value || 0;
+    var cur = formParams();
     var favs = KG.favs();
     var res = ALL.filter(function (l) {
       if (favMode && favs.indexOf(l.key) < 0) return false;
-      if (deal && l.deal !== deal) return false;
-      if (f.type.value && l.type !== f.type.value) return false;
-      if (q && ((l.district || '') + ' ' + (l.districtKa || '') + ' ' + (l.address || '') + ' ' + (l.title || '')).toLowerCase().indexOf(q) < 0) return false;
-      if (min && l.price < min) return false;
-      if (max && l.price > max) return false;
-      if (rooms && (l.rooms || 0) < rooms) return false;
-      if (area && (l.area || 0) < area) return false;
-      if (f.photos.checked && !l.photo) return false;
-      return true;
+      return matches(l, cur);
     });
     var s = f.sort.value;
     res.sort(function (a, b) {
@@ -124,11 +168,8 @@
     if (push) {
       shown = 24;
       KG.track('search_performed', {deal: deal, type: f.type.value, district: (f.district.value || '').trim().slice(0, 40), results: res.length});
-      var p = new URLSearchParams();
+      var p = formParams();
       if (favMode) p.set('fav', '1');
-      if (deal) p.set('deal', deal);
-      ['type', 'district', 'min', 'max', 'rooms', 'area', 'sort'].forEach(function (k) { if (f[k].value) p.set(k, f[k].value); });
-      if (f.photos.checked) p.set('photos', '1');
       history.replaceState(null, '', '?' + p.toString());
     }
     LAST = res;
@@ -147,7 +188,12 @@
   $('#reset').onclick = function () { f.reset(); setDeal(''); run(true); };
   $('#moreBtn').onclick = function () { shown += 24; run(false); };
   KG.bindFavs(document, function () { if (favMode) run(false); });
-  KG.loadAll().then(function (all) { ALL = all; run(false); if (VIEW === 'map') setView('map'); });
+  KG.loadAll().then(function (all) {
+    ALL = all; run(false); if (VIEW === 'map') setView('map');
+    var ssid = params.get('ss');
+    if (ssid) { var a = SS(); a.forEach(function (x) { if (String(x.id) === ssid) { LAST.forEach(function (l) { if (x.seen.indexOf(l.key) < 0) x.seen.unshift(l.key); }); x.seen = x.seen.slice(0, 800); } }); SSsave(a); }
+    drawSaved(); KG.cmpBar();
+  });
 })();
 </script>
 </body>

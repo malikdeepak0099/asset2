@@ -117,7 +117,7 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       $('#app').innerHTML = head() + '<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button class="btn b-navy" id="np">' + KG.icon('plus') + t('New project', 'ახალი პროექტი') + '</button></div>' +
         '<div class="card">' + (P.length ? P.map(function (p) {
           return '<div class="row" style="grid-template-columns:1fr auto"><div><b style="font:700 17px var(--display)">' + esc(p.name) + '</b> <span class="muted">' + esc([p.district, p.address, p.city].filter(Boolean).join(', ')) + '</span>' +
-            '<div class="muted" style="font-size:13px">' + t('Completion: ', 'დასრულება: ') + esc(p.completion || '—') + ' · ' + t('units live ', 'აქტიური ბინები ') + (p.units || 0) + ' / ' + p.all_units + (p.min_price ? ' · ' + t('from ', 'დან ') + KG.money(p.min_price, p.currency) : '') + (p.min_ppm ? ' · ' + KG.money(p.min_ppm, p.currency) + '/m²' : '') + '</div></div>' +
+            '<div class="muted" style="font-size:13px">' + t('Completion: ', 'დასრულება: ') + esc(p.handover || p.completion || '—') + (p.inst_months ? ' · ' + t('installment ', 'განვადება ') + p.inst_months + t(' mo', ' თვე') : '') + ' · ' + t('units live ', 'აქტიური ბინები ') + (p.units || 0) + ' / ' + p.all_units + (p.min_price ? ' · ' + t('from ', 'დან ') + KG.money(p.min_price, p.currency) : '') + (p.min_ppm ? ' · ' + KG.money(p.min_ppm, p.currency) + '/m²' : '') + '</div></div>' +
             '<div class="acts"><a class="btn sm b-ghost" href="/project/?id=' + p.id + '" target="_blank">' + t('Public page', 'საჯარო გვერდი') + '</a><button class="btn sm b-ghost" data-pe="' + p.id + '">' + KG.icon('edit') + t('Edit', 'რედაქტირება') + '</button><button class="btn sm b-coral" data-pu="' + p.id + '">' + KG.icon('plus') + t('Add unit', 'ბინის დამატება') + '</button></div></div>';
         }).join('') : '<div class="empty" style="border:0">' + t('No projects yet. Create your first project, then add its units (or upload them by CSV with the project_id column).', 'პროექტები ჯერ არ არის. შექმენით პროექტი და დაამატეთ ბინები.') + '</div>') + '</div>';
       bindHead();
@@ -133,12 +133,17 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       '<label class="f">' + t('Project name', 'პროექტის სახელი') + '<input name="name" required value="' + v('name') + '"></label>' +
       '<div class="grid3"><label class="f">' + t('City', 'ქალაქი') + '<input name="city" value="' + (v('city') || 'Tbilisi') + '"></label><label class="f">' + t('District', 'უბანი') + '<input name="district" value="' + v('district') + '"></label><label class="f">' + t('Completion', 'დასრულება') + '<input name="completion" value="' + v('completion') + '" placeholder="Q4 2027 / ' + t('completed', 'დასრულებული') + '"></label></div>' +
       '<label class="f">' + t('Address', 'მისამართი') + '<input name="address" value="' + v('address') + '"></label>' +
-      '<label class="f">' + t('Description (frame type, amenities, payment plan)', 'აღწერა (კარკასი, ინფრასტრუქტურა, განვადება)') + '<textarea name="description">' + v('description') + '</textarea></label>' +
+      '<div class="grid2"><label class="f">' + t('Condition at handover', 'ჩაბარების მდგომარეობა') + sel('frame', [['', '—'], ['black', KG.FRAME('black')], ['white', KG.FRAME('white')], ['green', KG.FRAME('green')], ['mixed', KG.FRAME('mixed')]], p.frame || '') + '</label>' +
+      '<label class="f">' + t('Handover (month)', 'ჩაბარება (თვე)') + '<input name="handover" type="month" value="' + v('handover') + '"></label></div>' +
+      '<div class="grid3"><label class="f">' + t('Installment: down payment, %', 'განვადება: პირველადი, %') + '<input name="down_pct" type="number" min="0" max="100" value="' + (p.down_pct || '') + '"></label>' +
+      '<label class="f">' + t('Installment: months (0 = none)', 'განვადება: თვეები (0 = არა)') + '<input name="inst_months" type="number" min="0" max="120" value="' + (p.inst_months || '') + '"></label>' +
+      '<label class="f">' + t('Installment note', 'შენიშვნა') + '<input name="inst_note" maxlength="300" value="' + v('inst_note') + '" placeholder="' + t('0% interest, no bank', '0% პროცენტი, ბანკის გარეშე') + '"></label></div>' +
+      '<label class="f">' + t('Description (amenities, parking, materials)', 'აღწერა (ინფრასტრუქტურა, პარკინგი, მასალები)') + '<textarea name="description">' + v('description') + '</textarea></label>' +
       '<div style="display:flex;gap:8px"><button class="btn b-coral" type="submit">' + t('Save project', 'შენახვა') + '</button><button class="btn b-ghost" type="button" id="pjb">' + t('Back', 'უკან') + '</button></div><div id="pjm"></div></form>';
     $('#pjb').onclick = projects;
     $('#pjf').onsubmit = function (e) {
       e.preventDefault();
-      var d = {id: p.id || 0}; ['name', 'city', 'district', 'completion', 'address', 'description'].forEach(function (k) { d[k] = e.target[k].value; });
+      var d = {id: p.id || 0}; ['name', 'city', 'district', 'completion', 'address', 'description', 'frame', 'handover', 'down_pct', 'inst_months', 'inst_note'].forEach(function (k) { d[k] = e.target[k].value; });
       var c = KG.center(d.district, d.city); if (c && !p.lat) { d.lat = c[0]; d.lon = c[1]; } else { d.lat = p.lat; d.lon = p.lon; }
       api('/api/my/projects', {method: 'POST', json: d}).then(function (r) { if (!r.ok) { $('#pjm').className = 'msg err'; $('#pjm').textContent = r.error; return; } TAB = 'projects'; projects(); });
     };
@@ -279,6 +284,7 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       '<div class="grid3"><label class="f">' + t('Price', 'ფასი') + '<input name="price" type="number" min="0" value="' + v('price') + '" required></label><label class="f">' + t('Currency', 'ვალუტა') + sel('currency', [['USD', '$ USD'], ['GEL', '₾ GEL'], ['EUR', '€ EUR']], l.currency) + '</label><span></span></div>' +
       '<label class="f">' + t('Title (optional)', 'სათაური (არასავალდებულო)') + '<input name="title" maxlength="140" value="' + v('title') + '" placeholder="' + t('Renovated 3-room apartment near Vake Park', 'გარემონტებული 3 ოთახიანი ბინა ვაკის პარკთან') + '"></label>' +
       '<label class="f">' + t('Description', 'აღწერა') + '<textarea name="description" maxlength="5000">' + v('description') + '</textarea></label>' +
+      '<label class="f">' + t('Video tour link (optional — YouTube or Vimeo)', 'ვიდეო ტურის ბმული (არასავალდებულო — YouTube ან Vimeo)') + '<input name="video_url" type="url" value="' + v('video_url') + '" placeholder="https://www.youtube.com/watch?v=…"></label>' +
       '<div class="grid2"><label class="f">' + t('Contact name', 'საკონტაქტო პირი') + '<input name="contact_name" value="' + v('contact_name') + '"></label><label class="f">' + t('Contact phone', 'საკონტაქტო ტელეფონი') + '<input name="contact_phone" type="tel" value="' + v('contact_phone') + '" required></label></div>' +
       '<div><b>' + t('Photos', 'ფოტოები') + '</b> <span class="muted" style="font-size:13px">' + t('up to 15, the first one is the main photo', 'მაქს. 15, პირველი მთავარია') + '</span>' +
       '<div class="photos" id="phs" style="margin-top:10px"></div>' +

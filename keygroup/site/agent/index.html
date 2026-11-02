@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ka">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KEY Trusted Agent — KEY GROUP Real Estate</title>
+<meta name="description" content="KEY Trusted Agent: agents, agencies and developers on KEY GROUP who answer fast, keep listings verified and have no open complaints. See the rules and profiles.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Noto+Sans+Georgian:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/assets/portal.css">
+<style>
+.pg{padding:28px 0 64px}
+.hero{display:grid;grid-template-columns:1fr auto;gap:18px;align-items:center;padding:24px}
+.big{width:72px;height:72px;border-radius:20px;display:grid;place-items:center;background:var(--navy);color:#fff;font:800 28px var(--display)}
+.rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:16px 0}
+.rules .card{padding:16px;display:flex;gap:10px;align-items:flex-start}
+.ok{color:#137A43}.no{color:var(--muted)}
+.rules .ic{width:22px;height:22px;flex:none}
+.tl{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+@media (max-width:640px){.hero{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main class="wrap pg" id="app"><div class="empty">…</div></main>
+<script src="/assets/portal.js"></script>
+<script src="/assets/chat.js" defer></script>
+<script>
+(function () {
+  var t = KG.t, esc = KG.esc, $ = KG.$;
+  KG.header('search');
+  document.documentElement.lang = KG.lang === 'en' ? 'en' : 'ka';
+  var id = new URLSearchParams(location.search).get('id');
+  function rulesHtml(R, checks) {
+    var items = [
+      ['listings', t('At least ', 'მინიმუმ ') + R.min_listings + t(' active listings', ' აქტიური განცხადება')],
+      ['verified', Math.round(R.min_verified_share * 100) + '% ' + t('of listings verified by KEY GROUP', 'განცხადებების შემოწმებულია KEY GROUP-ის მიერ')],
+      ['response', t('Answers enquiries within ', 'პასუხობს მოთხოვნებს ') + R.max_avg_hours + t(' hours on average (', ' საათში საშუალოდ (') + Math.round(R.min_answered_share * 100) + '% ' + t('answered, last ', 'პასუხი, ბოლო ') + R.days + t(' days)', ' დღე)')],
+      ['reports', t('No open complaints about their listings', 'მათ განცხადებებზე ღია საჩივარი არ არის')]
+    ];
+    return '<div class="rules">' + items.map(function (it) {
+      var cls = checks ? (checks[it[0]] ? 'ok' : 'no') : 'ok';
+      return '<div class="card ' + cls + '">' + KG.icon(checks && !checks[it[0]] ? 'eye' : 'check') + '<span style="color:var(--ink)">' + it[1] + '</span></div>';
+    }).join('') + '</div>';
+  }
+  if (!id) {
+    KG.api('/api/agents').then(function (j) {
+      var R = j.rules || {}, T = j.trusted || [];
+      $('#app').innerHTML = '<span class="pill trust" style="padding:6px 12px;font-size:13px">' + KG.icon('shield') + 'KEY Trusted</span><h1 style="margin-top:12px">' + t('KEY Trusted Agent', 'KEY სანდო აგენტი') + '</h1>' +
+        '<p class="muted" style="max-width:720px">' + t('The badge is earned automatically from real behaviour on KEY GROUP — nobody can buy it. It is checked every day and removed as soon as a rule is no longer met.', 'ნიშანი ავტომატურად მიენიჭება KEY GROUP-ზე რეალური ქცევის მიხედვით — მისი ყიდვა შეუძლებელია. მოწმდება ყოველდღე და ქრება, თუ წესი აღარ სრულდება.') + '</p>' +
+        rulesHtml(R) +
+        '<h2 style="margin:26px 0 12px">' + t('Trusted partners', 'სანდო პარტნიორები') + '</h2>' +
+        (T.length ? '<div class="tl">' + T.map(function (a) { return '<a class="card" style="padding:16px;display:block" href="/agent/?id=' + a.id + '"><span class="muted" style="font-size:12px">' + esc(KG.ROLE(a.role)) + '</span><h3 style="margin:4px 0">' + esc(a.name) + '</h3><span class="trust">' + KG.icon('shield') + 'Trusted</span></a>'; }).join('') + '</div>'
+          : '<div class="empty">' + t('The first Trusted partners will appear here soon.', 'პირველი სანდო პარტნიორები მალე გამოჩნდება.') + '</div>') +
+        '<div class="card" style="padding:20px;margin-top:22px"><h3>' + t('Are you an agent, agency or developer?', 'ხართ აგენტი, სააგენტო ან დეველოპერი?') + '</h3><p class="muted">' + t('Join KEY GROUP as a partner, answer your leads fast and keep listings verified — the badge follows.', 'შემოგვიერთდით პარტნიორად, სწრაფად უპასუხეთ მოთხოვნებს და ნიშანი თავად მოვა.') + '</p><a class="btn b-gold" href="/partners/">' + t('Become a partner', 'გახდით პარტნიორი') + '</a></div>';
+    });
+    return;
+  }
+  KG.api('/api/agents?id=' + encodeURIComponent(id)).then(function (j) {
+    if (!j.ok) { $('#app').innerHTML = '<div class="empty"><h2>' + t('Profile not found', 'პროფილი ვერ მოიძებნა') + '</h2><a class="btn b-navy" href="/agent/">KEY Trusted</a></div>'; return; }
+    var a = j.agent, L = (j.listings || []).map(KG.fromOwner);
+    document.title = a.name + ' — ' + KG.ROLE(a.role) + ' · KEY GROUP';
+    KG.track('agent_profile_viewed', {agent_id: a.id});
+    var since = new Date(a.since * 1000).toLocaleDateString(KG.lang === 'ka' ? 'ka-GE' : 'en-GB', {month: 'long', year: 'numeric'});
+    var vshare = a.listings ? Math.round(a.verified / a.listings * 100) : 0;
+    $('#app').innerHTML = '<div class="card hero"><div style="display:flex;gap:16px;align-items:center"><div class="big">' + esc((a.name || '?').charAt(0).toUpperCase()) + '</div><div>' +
+      '<span class="muted" style="font-size:13px">' + esc(KG.ROLE(a.role)) + (a.person ? ' · ' + esc(a.person) : '') + ' · ' + t('on KEY GROUP since ', 'KEY GROUP-ზე ') + since + '</span><h1 style="margin:4px 0">' + esc(a.name) + '</h1>' +
+      (a.trusted ? '<span class="pill trust" style="padding:5px 12px;font-size:13px">' + KG.icon('shield') + 'KEY Trusted ' + esc(KG.ROLE(a.role)) + '</span>' : '') + '</div></div>' +
+      '<a class="btn b-wa" target="_blank" rel="noopener" href="https://wa.me/995577114118?text=' + encodeURIComponent(t('Hello KEY GROUP! I want to contact ', 'გამარჯობა KEY GROUP! მინდა დავუკავშირდე ') + a.name + ' ' + location.href) + '">' + KG.icon('chat') + 'WhatsApp</a></div>' +
+      '<div class="kpis" style="margin-top:14px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))"><div><b>' + a.listings + '</b><span>' + t('active listings', 'აქტიური განცხადება') + '</span></div><div><b>' + vshare + '%</b><span>' + t('verified', 'შემოწმებული') + '</span></div>' +
+      '<div><b>' + (a.avg_hours == null ? '—' : (a.avg_hours < 1 ? '<1' : Math.round(a.avg_hours)) + ' ' + t('h', 'სთ')) + '</b><span>' + t('average reply time', 'საშუალო პასუხის დრო') + '</span></div>' +
+      '<div><b>' + (a.leads ? Math.round(a.answered / a.leads * 100) + '%' : '—') + '</b><span>' + t('enquiries answered', 'პასუხგაცემული მოთხოვნები') + '</span></div></div>' +
+      '<h2 style="margin:26px 0 4px">' + t('KEY Trusted checks', 'KEY სანდოობის შემოწმება') + '</h2><p class="muted" style="margin:0"><a href="/agent/">' + t('How the badge works', 'როგორ მუშაობს ნიშანი') + ' →</a></p>' + rulesHtml(j.rules || {}, a.checks) +
+      '<h2 style="margin:26px 0 12px">' + t('Listings', 'განცხადებები') + ' (' + L.length + ')</h2><div class="lgrid" id="g">' + (L.length ? L.map(KG.card).join('') : '<div class="empty">' + t('No active listings right now.', 'ახლა აქტიური განცხადება არ არის.') + '</div>') + '</div>';
+    KG.bindFavs($('#g'));
+    KG.cmpBar();
+  });
+})();
+</script>
+</body>
+</html>

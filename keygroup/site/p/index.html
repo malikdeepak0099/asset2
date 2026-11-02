@@ -60,6 +60,8 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
     var per = l.deal === 'sale' ? '' : (l.deal === 'daily' ? t(' / day', ' / დღე') : t(' / month', ' / თვე'));
     var badges = '<span class="pill" style="background:var(--sky);color:var(--blue)">' + esc(KG.DEAL(l.deal)) + '</span>';
     if (l.tier === 'super') badges += ' <span class="pill t-super">Super VIP</span>'; else if (l.tier === 'vip') badges += ' <span class="pill t-vip">VIP</span>';
+    if (l.price_drop) badges += ' <span class="pill t-drop">' + KG.icon('down') + t('Price reduced ', 'ფასი შემცირდა ') + l.price_drop.pct + '%</span>';
+    if (l.agent && l.agent.trusted) badges += ' <span class="pill trust" style="padding:5px 10px;font-size:12px">' + KG.icon('shield') + 'KEY Trusted ' + esc(KG.ROLE(l.agent.role)) + '</span>';
     if (l.verify_level) badges += ' <span class="pill t-ver">' + KG.icon('check') + esc(KG.VLABEL(l.verify_level)) + (l.verify_level >= 2 ? ' · KEY GROUP' : '') + '</span>';
     var col = KG.COL[l.type === 'commercial' ? 'commercial' : l.deal] || KG.COL.rent;
     var gal = photos.length ? '<div class="gal"><div class="main" data-i="0" style="background-image:url(' + KG.photo(photos[0]) + ')"><span class="cnt">' + KG.icon('image') + ' ' + photos.length + '</span></div>' +
@@ -74,6 +76,34 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       '<a class="btn b-wa" target="_blank" rel="noopener" href="https://wa.me/' + phone.replace(/\D/g, '') + '?text=' + waText + '">' + KG.icon('chat') + 'WhatsApp</a><a class="btn b-ghost" href="tel:' + esc(phone) + '">' + KG.icon('phone') + esc(phone) + '</a>' :
       '<a class="btn b-wa" target="_blank" rel="noopener" href="https://wa.me/' + (s.company_phone || '+995577114118').replace(/\D/g, '') + '?text=' + waText + '">' + KG.icon('chat') + t('Ask on WhatsApp', 'კითხვა WhatsApp-ზე') + '</a>' +
       '<a class="btn b-ghost" href="tel:' + esc(s.company_phone || '+995577114118') + '">' + KG.icon('phone') + '+995 577 114 118</a>';
+    function fmtDate(ts) { return new Date(ts * 1000).toLocaleDateString(KG.lang === 'ka' ? 'ka-GE' : 'en-GB', {day: 'numeric', month: 'short', year: 'numeric'}); }
+    var mk = l.market, ppmNow = l.area ? l.price / l.area : 0;
+    var vurl = KG.videoEmbed(l.video_url);
+    var video = vurl ? '<section class="sec"><h2>' + KG.icon('play') + ' ' + t('Video tour', 'ვიდეო ტური') + '</h2><div class="vid"><iframe src="' + esc(vurl) + '" title="' + t('Video tour', 'ვიდეო ტური') + '" loading="lazy" allow="fullscreen; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div></section>' : '';
+    var market = '';
+    if (mk && mk.median_ppm) {
+      var dp = mk.diff_pct, pos = Math.max(3, Math.min(97, 50 + dp * 1.5));
+      var where = mk.scope === 'district' ? esc(l.district) : esc(l.city || 'Tbilisi');
+      var verdict = Math.abs(dp) <= 5 ? t('In line with the market', 'ბაზრის ფასის ფარგლებში') : dp < 0 ? Math.abs(dp) + '% ' + t('below the typical asking price', 'ნაკლებია საშუალო ფასზე') : dp + '% ' + t('above the typical asking price', 'მეტია საშუალო ფასზე');
+      market = '<section class="sec card mkt" style="padding:20px"><h2>' + KG.icon('scale') + ' ' + t('Price vs the market', 'ფასი ბაზართან შედარებით') + '</h2>' +
+        '<div style="font:800 20px var(--display);color:' + (dp < -5 ? '#137A43' : dp > 5 ? '#B5475E' : 'var(--ink)') + '">' + verdict + '</div>' +
+        '<div class="bar"><i style="left:' + pos + '%"></i></div><div class="lab"><span>' + t('Cheaper', 'იაფი') + '</span><span>' + t('Typical', 'საშუალო') + '</span><span>' + t('Pricier', 'ძვირი') + '</span></div>' +
+        '<div class="kpis"><div><b>' + KG.money(ppmNow, l.currency) + '</b><span>' + t('this listing, per m²', 'ეს განცხადება, მ²') + '</span></div><div><b>' + KG.money(mk.median_ppm, l.currency) + '</b><span>' + t('typical in ', 'საშუალო: ') + where + '</span></div><div><b>' + mk.n + '</b><span>' + t('comparable listings', 'მსგავსი განცხადება') + '</span></div></div>' +
+        '<p class="muted" style="font-size:12px;margin:0">' + t('Median asking price per m² of similar active listings (same deal, type and currency) on KEY GROUP. Asking prices, not sale prices.', 'მსგავსი აქტიური განცხადებების მ²-ის მედიანური ფასი KEY GROUP-ზე. მოთხოვნილი ფასი და არა გაყიდვის.') + '</p></section>';
+    }
+    var hist = (l.price_history || []).length > 1 ? '<section class="sec"><h2>' + t('Price history', 'ფასის ისტორია') + '</h2><div class="hist card" style="padding:8px 16px">' + l.price_history.slice().reverse().map(function (h) { return '<div><span class="muted">' + fmtDate(h.t) + '</span><b>' + KG.money(h.p, h.c) + '</b></div>'; }).join('') + '</div></section>' : '';
+    var proj = l.project ? '<section class="sec card" style="padding:18px"><h2>' + t('New build: ', 'ახალი პროექტი: ') + esc(l.project.name) + '</h2><div class="kpis">' +
+      (l.project.frame ? '<div><b style="font-size:16px">' + esc(KG.FRAME(l.project.frame)) + '</b><span>' + t('condition at handover', 'ჩაბარების მდგომარეობა') + '</span></div>' : '') +
+      (l.project.handover ? '<div><b style="font-size:16px">' + esc(l.project.handover) + '</b><span>' + t('handover', 'ჩაბარება') + '</span></div>' : '') +
+      (l.project.inst_months ? '<div><b style="font-size:16px">' + l.project.inst_months + ' ' + t('months', 'თვე') + '</b><span>' + t('installment, ', 'განვადება, ') + (l.project.down_pct || 0) + '% ' + t('down', 'პირველადი') + '</span></div>' : '') +
+      '</div><p style="margin:12px 0 0"><a class="btn sm b-gold" href="/project/?id=' + l.project.id + '">' + t('Project page and payment plan', 'პროექტი და გადახდის გრაფიკი') + ' →</a></p></section>' : '';
+    var rentGuess = mk && mk.rent_ppm && l.area ? Math.round(mk.rent_ppm * l.area / 10) * 10 : 0;
+    var invest = l.deal === 'sale' && ['flat', 'house', 'commercial', 'hotel'].indexOf(l.type) >= 0 ? '<section class="sec card" style="padding:20px"><h2>' + t('Investor calculator — rental yield', 'ინვესტორის კალკულატორი — შემოსავლიანობა') + '</h2>' +
+      '<div class="calc"><label class="f">' + t('Expected rent / month', 'მოსალოდნელი ქირა / თვე') + ' (' + esc(l.currency) + ')<input id="y-r" type="number" min="0" value="' + (rentGuess || '') + '" placeholder="' + t('e.g. ', 'მაგ. ') + Math.round(l.price * 0.007) + '"></label>' +
+      '<label class="f">' + t('Occupancy, %', 'დაკავებულობა, %') + '<input id="y-o" type="number" min="0" max="100" value="90"></label>' +
+      '<label class="f">' + t('Costs / month (mgmt, fees)', 'ხარჯი / თვე') + '<input id="y-c" type="number" min="0" value="0"></label></div>' +
+      '<div class="kpis" style="margin-top:14px"><div><b id="y-g">—</b><span>' + t('gross yield / year', 'მთლიანი / წელი') + '</span></div><div><b id="y-n">—</b><span>' + t('net yield after 5% tax', 'წმინდა, 5% გადასახადის შემდეგ') + '</span></div><div><b id="y-p">—</b><span>' + t('years to pay back', 'ამოგების წლები') + '</span></div></div>' +
+      '<p class="muted" style="font-size:12px;margin:8px 0 0">' + (rentGuess ? t('Rent pre-filled from similar rentals in this area (', 'ქირა შევსებულია მსგავსი განცხადებებით (') + mk.rent_n + ').' : t('Enter the rent you expect.', 'შეიყვანეთ მოსალოდნელი ქირა.')) + ' ' + t('Individuals in Georgia can register rental income at a 5% tax rate. Estimate only — not financial advice.', 'საქართველოში ფიზიკურ პირს ქირის შემოსავალზე შეუძლია 5%-იანი განაკვეთი. სავარაუდო გათვლაა.') + '</p></section>' : '';
     var calc = l.deal === 'sale' ? '<section class="sec card" style="padding:20px"><h2>' + t('Mortgage calculator', 'იპოთეკის კალკულატორი') + '</h2><div class="calc">' +
       '<label class="f">' + t('Down payment, %', 'პირველადი შენატანი, %') + '<input id="c-dp" type="number" value="20" min="0" max="90"></label>' +
       '<label class="f">' + t('Interest, % a year', 'პროცენტი, წლიური') + '<input id="c-r" type="number" value="11" min="0" step="0.1"></label>' +
@@ -83,12 +113,14 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       '<div class="crumbs"><a href="/">KEY GROUP</a> / <a href="/search/?deal=' + esc(l.deal) + '">' + esc(KG.DEAL(l.deal)) + '</a> / ' + esc(l.district || l.city) + '</div>' +
       '<div class="head"><div><div style="display:flex;gap:6px;flex-wrap:wrap">' + badges + '</div><h1 style="margin-top:10px">' + esc(title) + '</h1>' +
       '<div class="muted" style="display:flex;gap:6px;align-items:center;margin-top:4px">' + KG.icon('pin') + esc([l.address, l.district, l.city].filter(Boolean).join(', ')) + '</div></div>' +
-      '<div><div class="price">' + KG.money(l.price, l.currency) + '<small>' + per + '</small></div></div></div>' + gal +
+      '<div><div class="price">' + KG.money(l.price, l.currency) + '<small>' + per + '</small></div>' +
+      (l.price_drop ? '<div class="muted" style="text-align:right;font-size:14px"><s>' + KG.money(l.price_drop.from, l.currency) + '</s> · ' + t('reduced ', 'შემცირდა ') + fmtDate(l.price_drop.at) + '</div>' : '') + '</div></div>' + gal +
       '<div class="body"><div><div class="facts">' + facts.map(function (f) { return '<div><span>' + esc(f[0]) + '</span><b>' + esc(f[1]) + '</b></div>'; }).join('') + '</div>' +
-      (l.description ? '<section class="sec"><h2>' + t('Description', 'აღწერა') + '</h2><div class="desc">' + esc(l.description) + '</div></section>' : '') + calc +
+      (l.description ? '<section class="sec"><h2>' + t('Description', 'აღწერა') + '</h2><div class="desc">' + esc(l.description) + '</div></section>' : '') + video + market + proj + invest + calc + hist +
       '<section class="sec"><h2>' + t('Location', 'მდებარეობა') + '</h2><div id="lmap" style="height:280px;border-radius:16px;border:1px solid var(--line);overflow:hidden;background:#E8EEF3;margin-bottom:10px"></div>' + (l.project_id ? '<p><a class="btn sm b-gold" href="/project/?id=' + l.project_id + '">' + t('See the whole project', 'მთელი პროექტის ნახვა') + ' →</a></p>' : '') + '<a class="btn b-ghost" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=' + mapQ + '">' + KG.icon('pin') + t('Open in Google Maps', 'Google Maps-ზე ნახვა') + '</a></section>' +
       '<section class="sec"><h2>' + t('Similar properties', 'მსგავსი განცხადებები') + '</h2><div class="lgrid" id="sim"></div></section></div>' +
-      '<aside><div class="card"><h3>' + (phone ? esc(l.contact_name || t('Owner', 'მესაკუთრე')) : 'KEY GROUP Real Estate') + '</h3><span class="muted" style="font-size:13px">' + t('Mention listing #', 'ახსენე განცხადება #') + l.id + '</span>' + contact +
+      '<aside><div class="card">' + (l.agent ? '<a href="/agent/?id=' + l.agent.id + '" style="display:flex;justify-content:space-between;align-items:center;gap:8px;background:var(--page);border-radius:12px;padding:10px 12px;text-decoration:none;color:inherit"><span><span class="muted" style="font-size:12px;display:block">' + esc(KG.ROLE(l.agent.role)) + '</span><b>' + esc(l.agent.name) + '</b>' + (l.agent.trusted ? ' <span class="trust">' + KG.icon('shield') + 'Trusted</span>' : '') + '</span><span class="muted" style="font-size:13px">' + t('Profile', 'პროფილი') + ' →</span></a>' : '') +
+      '<h3>' + (phone ? esc(l.contact_name || t('Owner', 'მესაკუთრე')) : 'KEY GROUP Real Estate') + '</h3><span class="muted" style="font-size:13px">' + t('Mention listing #', 'ახსენე განცხადება #') + l.id + '</span>' + contact +
       '<form id="cb" style="display:flex;flex-direction:column;gap:10px;border-top:1px solid var(--line);padding-top:12px"><b>' + t('Request a call back', 'დამირეკეთ') + '</b>' +
       '<label class="f">' + t('Your name', 'თქვენი სახელი') + '<input name="name" autocomplete="name"></label><label class="f">' + t('Phone / WhatsApp', 'ტელეფონი / WhatsApp') + '<input name="phone" type="tel" required autocomplete="tel"></label>' +
       '<label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;line-height:1.4;color:var(--muted)"><input type="checkbox" name="consent" required style="margin-top:2px;flex:none"><span>' + t('I agree to be contacted about this property (<a href="/privacy/" target="_blank">privacy</a>).', 'ვეთანხმები დაკავშირებას ამ ქონების შესახებ (<a href="/privacy/" target="_blank">კონფიდენციალურობა</a>).') + '</span></label>' +
@@ -96,7 +128,7 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       '<div class="share"><button class="btn sm b-ghost" type="button" id="cp">' + KG.icon('share') + t('Copy link', 'ბმულის კოპირება') + '</button>' +
       '<a class="btn sm b-ghost" target="_blank" rel="noopener" href="https://wa.me/?text=' + encodeURIComponent(location.href) + '">WhatsApp</a>' +
       '<a class="btn sm b-ghost" target="_blank" rel="noopener" href="https://www.facebook.com/sharer/sharer.php?u=' + encodeURIComponent(location.href) + '">Facebook</a>' +
-      '<button class="btn sm b-ghost" type="button" id="fv" aria-pressed="' + KG.isFav('o' + l.id) + '">' + KG.icon('heart') + t('Save', 'შენახვა') + '</button></div>' +
+      '<button class="btn sm b-ghost" type="button" id="fv" aria-pressed="' + KG.isFav('o' + l.id) + '">' + KG.icon('heart') + t('Save', 'შენახვა') + '</button><button class="btn sm b-ghost cmpb" type="button" data-cmp="' + l.id + '" aria-pressed="' + (KG.cmp().indexOf(l.id) >= 0) + '">' + KG.icon('scale') + t('Compare', 'შედარება') + '</button></div>' +
       '<button class="btn sm b-red" type="button" id="rp">' + KG.icon('flag') + t('Report this listing', 'განცხადების გასაჩივრება') + '</button></div></aside></div>' +
       '<dialog id="rd"><form method="dialog" id="rf" style="display:flex;flex-direction:column;gap:12px"><h3>' + t('What is wrong with this listing?', 'რა არის არასწორი?') + '</h3>' +
       '<label class="f">' + t('Reason', 'მიზეზი') + '<select name="reason"><option>' + t('Already rented or sold', 'უკვე გაქირავებულია/გაყიდულია') + '</option><option>' + t('Wrong price or details', 'არასწორი ფასი ან ინფორმაცია') + '</option><option>' + t('Fake or spam', 'ყალბი ან სპამი') + '</option><option>' + t('Other', 'სხვა') + '</option></select></label>' +
@@ -125,6 +157,17 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       $('#c-out').textContent = t('About ', 'დაახლოებით ') + KG.money(m, l.currency) + t(' a month', ' თვეში') + ' · ' + t('loan ', 'სესხი ') + KG.money(P, l.currency);
     }
     if (calc) { ['#c-dp', '#c-r', '#c-y'].forEach(function (s) { $(s).oninput = calcRun; }); calcRun(); }
+    function yieldRun() {
+      var r = +$('#y-r').value || 0, occ = Math.min(+$('#y-o').value || 0, 100) / 100, c = +$('#y-c').value || 0;
+      if (!r || !l.price) { $('#y-g').textContent = $('#y-n').textContent = $('#y-p').textContent = '—'; return; }
+      var gross = r * 12 * occ, net = gross * 0.95 - c * 12;
+      $('#y-g').textContent = (gross / l.price * 100).toFixed(1) + '%';
+      $('#y-n').textContent = (net / l.price * 100).toFixed(1) + '%';
+      $('#y-p').textContent = net > 0 ? (l.price / net).toFixed(1) : '—';
+    }
+    var yTracked = false;
+    if (invest) { ['#y-r', '#y-o', '#y-c'].forEach(function (s) { $(s).oninput = function () { yieldRun(); if (!yTracked) { yTracked = true; KG.track('yield_calc', {listing_id: l.id}); } }; }); yieldRun(); }
+    KG.cmpBar();
     // actions
     $('#cp').onclick = function () { (navigator.clipboard ? navigator.clipboard.writeText(location.href) : Promise.reject()).then(function () { $('#cp').lastChild.textContent = t('Copied', 'დაკოპირდა'); }, function () {}); };
     $('#fv').onclick = function () { var on = KG.toggleFav('o' + l.id); $('#fv').setAttribute('aria-pressed', on); if (on) KG.track('favorite_added', {listing_id: l.id}); };

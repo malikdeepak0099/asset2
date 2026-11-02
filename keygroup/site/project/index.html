@@ -32,12 +32,33 @@ table.u th{font:700 12px var(--display);color:var(--muted);text-transform:upperc
   var id = new URLSearchParams(location.search).get('id');
   if (!id) {
     KG.api('/api/projects').then(function (j) {
-      var P = (j.projects || []).filter(function (p) { return p.units > 0; });
-      $('#app').innerHTML = '<h1>' + t('New build projects', 'ახალი პროექტები') + '</h1><p class="muted">' + t('Residential projects from developers on KEY GROUP — open a project to see available units.', 'დეველოპერების პროექტები — გახსენით პროექტი თავისუფალი ბინების სანახავად.') + '</p>' +
-        '<div class="lgrid" style="margin-top:18px">' + (P.length ? P.map(function (p) {
-          return '<a class="card" href="/project/?id=' + p.id + '" style="padding:20px;display:block"><span class="pill t-super">' + esc(p.completion || t('New build', 'ახალი')) + '</span><h3 style="margin:10px 0 4px">' + esc(p.name) + '</h3><div class="muted">' + esc([p.district, p.city].filter(Boolean).join(', ')) + '</div>' +
-            '<div style="margin-top:10px;font:700 15px var(--display)">' + p.units + ' ' + t('units available', 'თავისუფალი ბინა') + (p.min_price ? ' · ' + t('from ', 'დან ') + KG.money(p.min_price, p.currency) : '') + '</div></a>';
-        }).join('') : '<div class="empty">' + t('Projects will appear here soon.', 'პროექტები მალე გამოჩნდება.') + '</div>') + '</div>';
+      var ALLP = (j.projects || []).filter(function (p) { return p.units > 0; });
+      var years = []; ALLP.forEach(function (p) { var y = (p.handover || '').slice(0, 4); if (y && years.indexOf(y) < 0) years.push(y); }); years.sort();
+      $('#app').innerHTML = '<h1>' + t('New build projects', 'ახალი პროექტები') + '</h1><p class="muted">' + t('Residential projects from developers on KEY GROUP — open a project to see available units and the payment plan.', 'დეველოპერების პროექტები — გახსენით პროექტი ბინებისა და გადახდის გრაფიკის სანახავად.') + '</p>' +
+        '<form id="pf" class="card" style="padding:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-top:14px">' +
+        '<label class="f">' + t('City', 'ქალაქი') + '<select name="city"><option value="">' + t('All', 'ყველა') + '</option><option>Tbilisi</option><option>Batumi</option></select></label>' +
+        '<label class="f">' + t('Condition', 'მდგომარეობა') + '<select name="frame"><option value="">' + t('Any', 'ნებისმიერი') + '</option>' + ['black', 'white', 'green'].map(function (f) { return '<option value="' + f + '">' + KG.FRAME(f) + '</option>'; }).join('') + '</select></label>' +
+        '<label class="f">' + t('Handover by', 'ჩაბარება') + '<select name="year"><option value="">' + t('Any', 'ნებისმიერი') + '</option>' + years.map(function (y) { return '<option>' + y + '</option>'; }).join('') + '</select></label>' +
+        '<label style="display:flex;gap:6px;align-items:center;font:600 14px var(--display);padding-bottom:10px"><input type="checkbox" name="inst"> ' + t('Installment plan', 'განვადება') + '</label></form>' +
+        '<div class="lgrid" id="pl" style="margin-top:18px"></div>';
+      function drawList() {
+        var f = $('#pf');
+        var P = ALLP.filter(function (p) {
+          if (f.city.value && (p.city || '').toLowerCase() !== f.city.value.toLowerCase()) return false;
+          if (f.frame.value && p.frame !== f.frame.value) return false;
+          if (f.year.value && (!p.handover || p.handover.slice(0, 4) > f.year.value)) return false;
+          if (f.inst.checked && !p.inst_months) return false;
+          return true;
+        });
+        $('#pl').innerHTML = P.length ? P.map(function (p) {
+          return '<a class="card" href="/project/?id=' + p.id + '" style="padding:20px;display:block"><span class="pill t-super">' + esc(p.handover ? t('Handover ', 'ჩაბარება ') + p.handover : (p.completion || t('New build', 'ახალი'))) + '</span>' +
+            (p.inst_months ? ' <span class="pill t-drop">' + t('Installment ', 'განვადება ') + p.inst_months + t(' mo', ' თვე') + '</span>' : '') +
+            '<h3 style="margin:10px 0 4px">' + esc(p.name) + '</h3><div class="muted">' + esc([p.district, p.city].filter(Boolean).join(', ')) + (p.frame ? ' · ' + esc(KG.FRAME(p.frame)) : '') + '</div>' +
+            '<div style="margin-top:10px;font:700 15px var(--display)">' + p.units + ' ' + t('units available', 'თავისუფალი ბინა') + (p.min_price ? ' · ' + t('from ', 'დან ') + KG.money(p.min_price, p.currency) : '') + '</div>' +
+            (p.min_ppm ? '<div class="muted" style="font-size:13px">' + KG.money(p.min_ppm, p.currency) + ' / m² ' + t('from', 'დან') + '</div>' : '') + '</a>';
+        }).join('') : '<div class="empty">' + (ALLP.length ? t('No projects match these filters.', 'ამ ფილტრებით პროექტი ვერ მოიძებნა.') : t('Projects will appear here soon.', 'პროექტები მალე გამოჩნდება.')) + '</div>';
+      }
+      $('#pf').addEventListener('change', drawList); drawList();
     });
     return;
   }
@@ -52,7 +73,9 @@ table.u th{font:700 12px var(--display);color:var(--muted);text-transform:upperc
       '<div class="muted" style="margin-top:6px">' + KG.icon('pin') + ' ' + esc([p.address, p.district, p.city].filter(Boolean).join(', ')) + (p.company ? ' · ' + t('Developer: ', 'დეველოპერი: ') + esc(p.company) : '') + '</div>' +
       '<div class="facts"><div class="card"><b>' + U.length + '</b><span>' + t('units available', 'თავისუფალი ბინა') + '</span></div>' +
       (p.min_price ? '<div class="card"><b>' + KG.money(p.min_price, p.currency) + '</b><span>' + t('price from', 'ფასი დან') + '</span></div>' : '') +
-      (p.min_ppm ? '<div class="card"><b>' + KG.money(p.min_ppm, p.currency) + '</b><span>' + t('per m² from', 'მ²-ის ფასი დან') + '</span></div>' : '') + '</div>' +
+      (p.min_ppm ? '<div class="card"><b>' + KG.money(p.min_ppm, p.currency) + '</b><span>' + t('per m² from', 'მ²-ის ფასი დან') + '</span></div>' : '') +
+      (p.frame ? '<div class="card"><b style="font-size:16px">' + esc(KG.FRAME(p.frame)) + '</b><span>' + t('condition at handover', 'ჩაბარების მდგომარეობა') + '</span></div>' : '') +
+      (p.handover ? '<div class="card"><b>' + esc(p.handover) + '</b><span>' + t('handover', 'ჩაბარება') + '</span></div>' : '') + '</div>' +
       (p.description ? '<p class="desc">' + esc(p.description) + '</p>' : '') +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><a class="btn b-wa" target="_blank" rel="noopener" href="' + wa + '">' + KG.icon('chat') + t('Ask on WhatsApp', 'კითხვა WhatsApp-ზე') + '</a><a class="btn b-ghost" href="tel:+995577114118">' + KG.icon('phone') + '+995 577 114 118</a></div></div>' +
       '<div id="pmap"></div></div>' +
@@ -60,6 +83,22 @@ table.u th{font:700 12px var(--display);color:var(--muted);text-transform:upperc
       (U.length ? U.map(function (u) {
         return '<tr><td>' + esc(u.building || '—') + '</td><td>' + esc(u.unit_no || '—') + '</td><td>' + esc(u.floor || '—') + '</td><td>' + (u.rooms || '—') + '</td><td>' + (u.area ? u.area + ' m²' : '—') + '</td><td><b>' + KG.money(u.price, u.currency) + '</b></td><td>' + (u.area ? KG.money(u.price / u.area, u.currency) : '—') + '</td><td><a class="btn sm b-ghost" href="/p/?id=' + u.id + '">' + t('Details', 'დეტალები') + '</a></td></tr>';
       }).join('') : '<tr><td colspan="8" class="muted">' + t('No units are listed right now — ask us on WhatsApp.', 'ახლა ბინები არ არის გამოქვეყნებული — მოგვწერეთ.') + '</td></tr>') + '</tbody></table></div>';
+    if (p.inst_months && U.length) {
+      var cur = U[0].currency;
+      $('#app').insertAdjacentHTML('beforeend', '<h2 style="margin:28px 0 12px">' + t('Payment plan calculator', 'გადახდის გრაფიკის კალკულატორი') + '</h2><div class="card" style="padding:20px">' +
+        '<p class="muted" style="margin-top:0">' + t('Developer installment: ', 'დეველოპერის განვადება: ') + (p.down_pct || 0) + '% ' + t('down payment, then ', 'პირველადი შენატანი, შემდეგ ') + p.inst_months + t(' monthly payments.', ' ყოველთვიური გადახდა.') + (p.inst_note ? ' ' + esc(p.inst_note) : '') + '</p>' +
+        '<div class="facts" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))"><label class="f">' + t('Unit', 'ბინა') + '<select id="iu">' + U.map(function (u, i) { return '<option value="' + i + '">' + esc([u.building, u.unit_no ? '#' + u.unit_no : '', u.area ? u.area + ' m²' : ''].filter(Boolean).join(' · ') || ('ID ' + u.id)) + ' — ' + KG.money(u.price, u.currency) + '</option>'; }).join('') + '</select></label>' +
+        '<label class="f">' + t('Down payment, %', 'პირველადი შენატანი, %') + '<input id="id" type="number" min="' + (p.down_pct || 0) + '" max="100" value="' + (p.down_pct || 0) + '"></label>' +
+        '<label class="f">' + t('Months', 'თვეები') + '<input id="im" type="number" min="1" max="' + p.inst_months + '" value="' + p.inst_months + '"></label></div>' +
+        '<div class="facts"><div class="card"><b id="o1">—</b><span>' + t('down payment', 'პირველადი შენატანი') + '</span></div><div class="card"><b id="o2">—</b><span>' + t('per month', 'თვეში') + '</span></div><div class="card"><b id="o3">—</b><span>' + t('total', 'სულ') + '</span></div></div>' +
+        '<p class="muted" style="font-size:12px;margin:0">' + t('Indicative only — the developer confirms the final schedule in the contract.', 'საორიენტაციოა — საბოლოო გრაფიკი ხელშეკრულებით დგინდება.') + '</p></div>');
+      var inst = function () {
+        var u = U[+$('#iu').value] || U[0], dpp = Math.min(Math.max(+$('#id').value || 0, p.down_pct || 0), 100), mo = Math.min(Math.max(+$('#im').value || 1, 1), p.inst_months);
+        var down = u.price * dpp / 100;
+        $('#o1').textContent = KG.money(down, u.currency); $('#o2').textContent = KG.money((u.price - down) / mo, u.currency); $('#o3').textContent = KG.money(u.price, u.currency);
+      };
+      ['#iu', '#id', '#im'].forEach(function (x) { $(x).oninput = inst; }); inst();
+    }
     var c = p.lat ? [p.lat, p.lon] : KG.center(p.district, p.city);
     if (c) KG.leaflet().then(function (L) { var m = KG.baseMap('pmap', c, 15); L.circle(c, {radius: 150, color: '#F45D48', fillOpacity: .2}).addTo(m); }).catch(function () { $('#pmap').remove(); });
     else $('#pmap').remove();

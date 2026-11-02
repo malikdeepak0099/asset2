@@ -144,7 +144,12 @@ def init_db():
                                 ("listings", "project_id", "INTEGER DEFAULT 0"), ("listings", "building", "TEXT DEFAULT ''"),
                                 ("listings", "unit_no", "TEXT DEFAULT ''"), ("users", "org_id", "INTEGER DEFAULT 0"),
                                 ("leads", "viewing_at", "REAL DEFAULT 0"), ("leads", "assigned_to", "INTEGER DEFAULT 0"),
-                                ("leads", "first_action_at", "REAL DEFAULT 0")):
+                                ("leads", "first_action_at", "REAL DEFAULT 0"),
+                                ("listings", "video_url", "TEXT DEFAULT ''"), ("listings", "price_history", "TEXT DEFAULT '[]'"),
+                                ("listings", "prev_price", "REAL DEFAULT 0"), ("listings", "price_drop_at", "REAL DEFAULT 0"),
+                                ("projects", "frame", "TEXT DEFAULT ''"), ("projects", "handover", "TEXT DEFAULT ''"),
+                                ("projects", "down_pct", "REAL DEFAULT 0"), ("projects", "inst_months", "INTEGER DEFAULT 0"),
+                                ("projects", "inst_note", "TEXT DEFAULT ''")):
             have = [r[1] for r in con.execute(f"PRAGMA table_info({table})")]
             if col not in have:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
@@ -379,6 +384,14 @@ def listing_out(row, owner_view=False, admin_view=False, settings=None):
     d["verified"] = 1 if lvl >= 2 else 0
     d["verify_label"] = VERIFY_LABELS.get(lvl, "")
     d.pop("photo_hashes", None)
+    try:
+        d["price_history"] = json.loads(d.get("price_history") or "[]")[-12:]
+    except ValueError:
+        d["price_history"] = []
+    pp, pd = d.pop("prev_price", 0) or 0, d.pop("price_drop_at", 0) or 0
+    d["price_drop"] = None
+    if pp and d.get("price") and d["price"] < pp and pd > time.time() - 45 * 86400:
+        d["price_drop"] = {"from": pp, "pct": round((pp - d["price"]) / pp * 100), "at": pd}
     if not admin_view:
         d.pop("dup_of", None)
     if not (owner_view or admin_view) and d.get("lat"):
@@ -398,6 +411,14 @@ def check_project(con, u, f):
             f["project_id"] = 0
 
 
+_VIDEO_RE = re.compile(r"^https://(www\.|m\.)?(youtube\.com/(watch\?v=|shorts/|embed/)|youtu\.be/|vimeo\.com/)[\w\-?=&/.]{4,120}$")
+
+
+def clean_video(v):
+    v = str(v or "").strip()[:200]
+    return v if _VIDEO_RE.match(v) else ""
+
+
 def clean_listing(data):
     """Validate the owner's form. Returns (fields, error)."""
     s = lambda k, n=200: str(data.get(k) or "").strip()[:n]
@@ -415,7 +436,7 @@ def clean_listing(data):
         "currency": s("currency", 5).upper() or "USD", "title": s("title", 140), "description": s("description", 5000),
         "contact_name": s("contact_name", 80), "contact_phone": norm_phone(data.get("contact_phone")),
         "lat": num("lat"), "lon": num("lon"), "building": s("building", 40), "unit_no": s("unit_no", 40),
-        "project_id": num("project_id", int),
+        "project_id": num("project_id", int), "video_url": clean_video(data.get("video_url")),
     }
     if not (41.0 <= f["lat"] <= 43.7 and 40.0 <= f["lon"] <= 46.8):   # inside Georgia, else drop
         f["lat"], f["lon"] = 0, 0
@@ -598,6 +619,25 @@ async def my_listings(request):
     return ok(listings=[listing_out(r, owner_view=True, settings=s) for r in rows], orders=[dict(o) for o in orders])
 
 
+def record_price(con, row, new_price, new_cur):
+    """Keep a short price history; a cut in the same currency shows a 'price reduced' badge for 45 days."""
+    old, cur = row["price"] or 0, row["currency"]
+    if not old or (old == new_price and cur == new_cur):
+        return
+    now = time.time()
+    try:
+        hist = json.loads(row["price_history"] or "[]")
+    except (ValueError, IndexError, KeyError):
+        hist = []
+    if not hist:
+        hist.append({"p": old, "c": cur, "t": row["approved"] or row["created"] or now})
+    hist.append({"p": new_price, "c": new_cur, "t": now})
+    if new_cur == cur and new_price < old:
+        con.execute("UPDATE listings SET price_history=?, prev_price=?, price_drop_at=? WHERE id=?", (json.dumps(hist[-20:]), old, now, row["id"]))
+    else:
+        con.execute("UPDATE listings SET price_history=?, prev_price=0, price_drop_at=0 WHERE id=?", (json.dumps(hist[-20:]), row["id"]))
+
+
 def own_listing(u, lid, con):
     row = con.execute("SELECT * FROM listings WHERE id=? AND status!='deleted'", (lid,)).fetchone()
     if not row:
@@ -634,6 +674,7 @@ async def my_listing(request):
         # an edit goes back to the approval queue (admins' own edits stay live)
         status = row["status"] if u["role"] == "admin" else ("pending" if row["status"] in ("active", "rejected", "changes") else row["status"])
         con.execute(f"UPDATE listings SET {sets}, status=?, updated=?, confirmed=? WHERE id=?", (*f.values(), status, time.time(), time.time(), lid))
+        record_price(con, row, f["price"], f["currency"])
         find_duplicates(con, lid)
     if status == "pending" and row["status"] != "pending":
         notify(f"✏️ Owner listing #{lid} was edited and waits for approval again\n{SITE}/admin/")
@@ -741,6 +782,138 @@ def expire_old(con):
                 (now, now, now))
 
 
+# ---------------------------------------------------------------- market comparison, trusted agents
+
+def norm_district(d):
+    d = str(d or "").strip()
+    if not d or d.startswith("#"):
+        return ""
+    low = d.lower()
+    for en, ka, words in chatbot.DISTRICTS:
+        if d == ka or low == en.lower() or any(w.strip() and w.strip() in low for w in words):
+            return en.lower()
+    return low
+
+
+_CRM_TYPE = {"Flat": "flat", "House": "house", "Commercial": "commercial", "Land": "land"}
+
+
+def _median(xs):
+    xs = sorted(xs)
+    n = len(xs)
+    return 0 if not n else (xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2)
+
+
+def market_pool(con):
+    """(deal, type, currency, district, city, price_per_m2) for every active listing with an area — ours + KEY GROUP CRM."""
+    pool = []
+    for r in con.execute("SELECT deal, type, currency, district, city, price, area FROM listings WHERE status='active' AND area>5 AND price>0"):
+        pool.append((r["deal"], r["type"], r["currency"], norm_district(r["district"]), (r["city"] or "tbilisi").lower(), r["price"] / r["area"]))
+    for r in chatbot._crm_listings():
+        try:
+            area, price = float(r.get("area") or 0), float(r.get("price") or 0)
+        except (TypeError, ValueError):
+            continue
+        if area > 5 and price > 0:
+            city = "batumi" if "ბათუმ" in str(r.get("city") or "") + str(r.get("d") or "") or "atumi" in str(r.get("city") or "") else "tbilisi"
+            pool.append(("rent" if r.get("deal") == "Rent" else "sale", _CRM_TYPE.get(r.get("cat"), "flat"), r.get("cur") or "USD",
+                         norm_district(r.get("d")), city, price / area))
+    return pool
+
+
+def market_for(con, l, pool=None):
+    """Median asking price per m² for comparable listings (same district, else same city)."""
+    if not l.get("area") or l["deal"] not in ("sale", "rent"):
+        return None
+    pool = pool if pool is not None else market_pool(con)
+    dist, city = norm_district(l.get("district")), (l.get("city") or "tbilisi").lower()
+
+    def med(deal, scope):
+        xs = [x[5] for x in pool if x[0] == deal and x[1] == l["type"] and x[2] == l["currency"] and (x[3] == dist if scope == "district" else x[4] == city)]
+        return (_median(xs), len(xs)) if len(xs) >= (3 if scope == "district" else 5) else (0, len(xs))
+    out = {"currency": l["currency"]}
+    for scope in ("district", "city"):
+        m, n = med(l["deal"], scope) if (scope == "city" or dist) else (0, 0)
+        if m:
+            ppm = l["price"] / l["area"]
+            out.update(scope=scope, median_ppm=round(m, 1), n=n, diff_pct=round((ppm - m) / m * 100))
+            break
+    if l["deal"] == "sale":
+        for scope in ("district", "city"):
+            m, n = med("rent", scope) if (scope == "city" or dist) else (0, 0)
+            if m:
+                out.update(rent_ppm=round(m, 2), rent_n=n, rent_scope=scope)
+                break
+    return out if len(out) > 1 else None
+
+
+TRUSTED_RULES = {"min_listings": 3, "min_verified_share": 0.6, "min_leads": 3, "max_avg_hours": 4, "min_answered_share": 0.8, "max_open_reports": 0, "days": 90}
+_TRUST_CACHE = {"at": 0, "data": {}}
+
+
+def agent_stats(con, uid):
+    since = time.time() - TRUSTED_RULES["days"] * 86400
+    l = con.execute("SELECT COUNT(*) AS n, SUM(verify_level>=2) AS v FROM listings WHERE user_id=? AND status='active'", (uid,)).fetchone()
+    d = con.execute("""SELECT COUNT(*) AS n, SUM(first_action_at>0) AS answered,
+                              AVG(CASE WHEN first_action_at>0 THEN (first_action_at-created)/3600.0 END) AS hours
+                       FROM leads WHERE COALESCE(NULLIF(assigned_to,0), owner_id)=? AND created>?""", (uid, since)).fetchone()
+    rep = con.execute("""SELECT COUNT(*) FROM reports r JOIN listings x ON x.id=r.listing_id
+                         WHERE x.user_id=? AND r.status='open' AND r.created>?""", (uid, since)).fetchone()[0]
+    st = {"listings": l["n"] or 0, "verified": l["v"] or 0, "leads": d["n"] or 0, "answered": d["answered"] or 0,
+          "avg_hours": round(d["hours"], 1) if d["hours"] is not None else None, "open_reports": rep}
+    R = TRUSTED_RULES
+    st["checks"] = {
+        "listings": st["listings"] >= R["min_listings"],
+        "verified": st["listings"] > 0 and st["verified"] / st["listings"] >= R["min_verified_share"],
+        "response": st["leads"] >= R["min_leads"] and st["avg_hours"] is not None and st["avg_hours"] <= R["max_avg_hours"]
+                    and st["answered"] / max(st["leads"], 1) >= R["min_answered_share"],
+        "reports": rep <= R["max_open_reports"],
+    }
+    st["trusted"] = all(st["checks"].values())
+    return st
+
+
+def trusted_map(con):
+    """{user_id: True} for partner accounts that pass every Trusted Agent check (refreshed every 10 minutes)."""
+    if time.time() - _TRUST_CACHE["at"] > 600:
+        ids = [r[0] for r in con.execute(f"SELECT id FROM users WHERE blocked=0 AND role IN ({','.join('?' * len(PARTNER_ROLES))})", PARTNER_ROLES)]
+        _TRUST_CACHE["data"] = {i: True for i in ids if agent_stats(con, i)["trusted"]}
+        _TRUST_CACHE["at"] = time.time()
+    return _TRUST_CACHE["data"]
+
+
+def attach_agents(con, rows, outs):
+    """Public listings by partner accounts get a link to the agent profile and the Trusted badge."""
+    uids = {r["user_id"] for r in rows if r["user_id"]}
+    if not uids:
+        return
+    users = {u["id"]: u for u in con.execute(f"SELECT id, name, company, role FROM users WHERE id IN ({','.join('?' * len(uids))})", tuple(uids))}
+    tm = trusted_map(con)
+    for r, o in zip(rows, outs):
+        u = users.get(r["user_id"])
+        if u and u["role"] in PARTNER_ROLES:
+            o["agent"] = {"id": u["id"], "name": u["company"] or u["name"], "role": u["role"], "trusted": bool(tm.get(u["id"]))}
+
+
+async def public_agent(request):
+    """Public agent / agency / developer profile, or (no id) the Trusted Agent rules and the list of trusted partners."""
+    aid = request.query_params.get("id", "")
+    with db() as con:
+        if not aid.isdigit():
+            tm = trusted_map(con)
+            rows = con.execute(f"SELECT id, name, company, role FROM users WHERE id IN ({','.join('?' * len(tm)) or '0'})", tuple(tm)).fetchall()
+            return ok(rules=TRUSTED_RULES, trusted=[{"id": r["id"], "name": r["company"] or r["name"], "role": r["role"]} for r in rows])
+        u = con.execute("SELECT id, name, company, role, created, blocked FROM users WHERE id=?", (int(aid),)).fetchone()
+        if not u or u["blocked"] or u["role"] not in PARTNER_ROLES:
+            return err("Profile not found", 404)
+        st = agent_stats(con, u["id"])
+        rows = con.execute("SELECT * FROM listings WHERE user_id=? AND status='active' ORDER BY MAX(boosted_at, approved) DESC LIMIT 60", (u["id"],)).fetchall()
+        s = get_settings()
+        st.pop("open_reports", None)
+        return ok(agent={"id": u["id"], "name": u["company"] or u["name"], "person": u["name"] if u["company"] else "", "role": u["role"],
+                         "since": u["created"], **st}, rules=TRUSTED_RULES, listings=[listing_out(r, settings=s) for r in rows])
+
+
 async def public_listings(request):
     q = request.query_params
     now = time.time()
@@ -763,6 +936,11 @@ async def public_listings(request):
         where.append("currency=?"); args.append(q["currency"])
     if q.get("project", "").isdigit():
         where.append("project_id=?"); args.append(int(q["project"]))
+    if q.get("ids"):
+        ids = [int(x) for x in q["ids"].split(",")[:10] if x.strip().isdigit()] or [0]
+        where.append(f"id IN ({','.join('?' * len(ids))})"); args += ids
+    if q.get("verified") == "1":
+        where.append("verify_level>=2")
     if q.get("exclude"):
         where.append("id!=?"); args.append(int(q["exclude"]) if q["exclude"].isdigit() else 0)
     sort = {"price_asc": "price ASC", "price_desc": "price DESC", "area_desc": "area DESC"}.get(q.get("sort", ""), "")
@@ -773,8 +951,14 @@ async def public_listings(request):
             f"""SELECT * FROM listings WHERE {' AND '.join(where)}
                 ORDER BY (CASE WHEN super_until>? THEN 2 WHEN vip_until>? THEN 1 ELSE 0 END) DESC,
                          {sort + ',' if sort else ''} MAX(boosted_at, approved) DESC LIMIT ?""", (*args, now, now, limit)).fetchall()
-    s = get_settings()
-    return ok(listings=[listing_out(r, settings=s) for r in rows])
+        s = get_settings()
+        outs = [listing_out(r, settings=s) for r in rows]
+        attach_agents(con, rows, outs)
+        if q.get("ids"):   # compare page: add the market comparison too
+            pool = market_pool(con)
+            for o in outs:
+                o["market"] = market_for(con, o, pool)
+    return ok(listings=outs)
 
 
 async def public_listing(request):
@@ -787,7 +971,14 @@ async def public_listing(request):
                   sid=request.headers.get("x-kg-sid", "")[:40] or "server")
     if not row:
         return err("This listing is not available", 404)
-    return ok(listing=listing_out(row), settings=public_settings())
+    out = listing_out(row)
+    with db() as con:
+        attach_agents(con, [row], [out])
+        out["market"] = market_for(con, out)
+        if row["project_id"]:
+            p = con.execute("SELECT id, name, frame, handover, down_pct, inst_months FROM projects WHERE id=? AND status='active'", (row["project_id"],)).fetchone()
+            out["project"] = dict(p) if p else None
+    return ok(listing=out, settings=public_settings())
 
 
 async def listing_enquiry(request):
@@ -1006,8 +1197,18 @@ def clean_project(d):
         lat, lon = 0, 0
     if not (41.0 <= lat <= 43.7 and 40.0 <= lon <= 46.8):
         lat, lon = 0, 0
+    def num(k, lo, hi, typ=float):
+        try:
+            return min(max(typ(float(d.get(k) or 0)), lo), hi)
+        except (TypeError, ValueError):
+            return 0
+    frame = s("frame", 10)
+    handover = s("handover", 7)
     f = {"name": s("name", 120), "city": s("city", 60) or "Tbilisi", "district": s("district", 80), "address": s("address", 160),
-         "description": s("description", 5000), "completion": s("completion", 40), "lat": lat, "lon": lon}
+         "description": s("description", 5000), "completion": s("completion", 40), "lat": lat, "lon": lon,
+         "frame": frame if frame in ("black", "white", "green", "mixed") else "",
+         "handover": handover if re.match(r"^20\d\d(-(0[1-9]|1[0-2]))?$", handover) else "",
+         "down_pct": num("down_pct", 0, 100), "inst_months": num("inst_months", 0, 120, int), "inst_note": s("inst_note", 300)}
     return (None, "Enter the project name") if not f["name"] else (f, None)
 
 
@@ -1677,7 +1878,8 @@ async def admin_chat(request):
 # ---------------------------------------------------------------- analytics (first-party, anonymous) + audit log
 
 TRACK_NAMES = {"page_view", "search_performed", "listing_click", "lead_submitted", "viewing_requested", "whatsapp_click", "call_click",
-               "chat_opened", "chat_question", "valuation_requested", "share_click", "favorite_added", "partner_application"}
+               "chat_opened", "chat_question", "valuation_requested", "share_click", "favorite_added", "partner_application",
+               "yield_calc", "compare_opened", "search_saved", "video_played", "agent_profile_viewed"}
 
 
 async def track_event(request):
@@ -1869,6 +2071,7 @@ routes = [
     Route("/api/my/team", my_team, methods=["GET", "POST", "DELETE"]),
     Route("/api/my/projects", my_projects, methods=["GET", "POST", "DELETE"]),
     Route("/api/projects", public_projects),
+    Route("/api/agents", public_agent),
     Route("/api/partners/apply", partner_apply, methods=["POST"]),
     Route("/api/admin/leads", admin_leads),
     Route("/api/admin/partners", admin_partners),

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ka">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compare properties — KEY GROUP Real Estate</title>
+<meta name="description" content="Compare up to three properties side by side: price, price per m², area, rooms, verification and market price.">
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Noto+Sans+Georgian:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/assets/portal.css">
+<style>
+.pg{padding:28px 0 64px}
+.cw{overflow-x:auto;margin-top:18px}
+table.cmp{width:100%;border-collapse:separate;border-spacing:0;min-width:620px;table-layout:fixed;background:#fff;border:1px solid var(--line);border-radius:18px;overflow:hidden}
+table.cmp th,table.cmp td{padding:12px 14px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;font-size:14px}
+table.cmp th{width:170px;color:var(--muted);font:600 13px var(--display);background:var(--page)}
+table.cmp td.best{background:#EFFAF3;font-weight:700}
+.cph{height:130px;border-radius:12px;background:#DCE3EA center/cover;display:block;margin-bottom:10px}
+.cpr{font:800 20px var(--display)}
+.rm{border:0;background:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0}
+</style>
+</head>
+<body>
+<main class="wrap pg" id="app"><div class="empty">…</div></main>
+<script src="/assets/portal.js"></script>
+<script src="/assets/chat.js" defer></script>
+<script>
+(function () {
+  var t = KG.t, esc = KG.esc, $ = KG.$;
+  KG.header('search');
+  document.documentElement.lang = KG.lang === 'en' ? 'en' : 'ka';
+  function draw() {
+    var ids = KG.cmp();
+    var head = '<h1>' + t('Compare properties', 'განცხადებების შედარება') + '</h1><p class="muted">' + t('Tap “Compare” on up to three listings. The best value in each row is highlighted.', 'დააჭირეთ „შედარებას“ მაქს. სამ განცხადებაზე. საუკეთესო მნიშვნელობა მონიშნულია.') + '</p>';
+    if (!ids.length) { $('#app').innerHTML = head + '<div class="empty">' + t('Nothing to compare yet.', 'შესადარებელი ჯერ არაფერია.') + '<div style="margin-top:14px"><a class="btn b-navy" href="/search/">' + t('Browse properties', 'განცხადებების ნახვა') + '</a></div></div>'; return; }
+    KG.track('compare_opened', {n: ids.length});
+    KG.api('/api/listings?ids=' + ids.join(',') + '&limit=10').then(function (j) {
+      var by = {}; ((j && j.listings) || []).forEach(function (l) { by[l.id] = l; });
+      var L = ids.map(function (id) { return by[id]; }).filter(Boolean);
+      if (L.length < ids.length) { var keep = L.map(function (l) { return l.id; }); try { localStorage.setItem('kg_cmp', JSON.stringify(keep)); } catch (e) {} }
+      if (!L.length) { $('#app').innerHTML = head + '<div class="empty">' + t('These listings are no longer available.', 'ეს განცხადებები აღარ არის ხელმისაწვდომი.') + '</div>'; KG.cmpBar(); return; }
+      var ppm = function (l) { return l.area ? l.price / l.area : 0; };
+      var rows = [
+        [t('Price', 'ფასი'), function (l) { return '<span class="cpr">' + KG.money(l.price, l.currency) + '</span>' + (l.price_drop ? '<br><span class="pill t-drop">' + KG.icon('down') + l.price_drop.pct + '%</span>' : ''); }, function (l) { return -l.price; }],
+        [t('Price per m²', 'ფასი მ²-ზე'), function (l) { return ppm(l) ? KG.money(ppm(l), l.currency) : '—'; }, function (l) { return ppm(l) ? -ppm(l) : null; }],
+        [t('vs market', 'ბაზართან'), function (l) { return l.market && l.market.median_ppm ? (l.market.diff_pct > 0 ? '+' : '') + l.market.diff_pct + '%' : '—'; }, function (l) { return l.market && l.market.median_ppm ? -l.market.diff_pct : null; }],
+        [t('Deal', 'გარიგება'), function (l) { return esc(KG.DEAL(l.deal)); }],
+        [t('Type', 'ტიპი'), function (l) { return esc(KG.TYPE(l.type)); }],
+        [t('Location', 'მდებარეობა'), function (l) { return esc([l.district, l.city].filter(Boolean).join(', ')); }],
+        [t('Area', 'ფართი'), function (l) { return l.area ? l.area + ' m²' : '—'; }, function (l) { return l.area || null; }],
+        [t('Rooms', 'ოთახები'), function (l) { return l.rooms || '—'; }, function (l) { return l.rooms || null; }],
+        [t('Bedrooms', 'საძინებელი'), function (l) { return l.bedrooms || '—'; }, function (l) { return l.bedrooms || null; }],
+        [t('Floor', 'სართული'), function (l) { return l.floor ? esc(l.floor + (l.total_floors ? ' / ' + l.total_floors : '')) : '—'; }],
+        [t('Verification', 'შემოწმება'), function (l) { return l.verify_level ? esc(KG.VLABEL(l.verify_level)) : '—'; }, function (l) { return l.verify_level || null; }],
+        [t('Availability confirmed', 'აქტუალურობა'), function (l) { return l.confirmed ? new Date(l.confirmed * 1000).toLocaleDateString(KG.lang === 'ka' ? 'ka-GE' : 'en-GB', {day: 'numeric', month: 'short'}) : '—'; }, function (l) { return l.confirmed || null; }],
+        [t('Listed by', 'განმთავსებელი'), function (l) { return l.agent ? '<a href="/agent/?id=' + l.agent.id + '">' + esc(l.agent.name) + '</a>' + (l.agent.trusted ? ' <span class="trust">' + KG.icon('shield') + 'Trusted</span>' : '') : t('Owner', 'მესაკუთრე'); }],
+        [t('Video tour', 'ვიდეო ტური'), function (l) { return l.video_url ? KG.icon('play') + ' ' + t('Yes', 'კი') : '—'; }],
+        [t('Photos', 'ფოტოები'), function (l) { return (l.photos || []).length; }, function (l) { return (l.photos || []).length || null; }]
+      ];
+      var sameCur = L.every(function (l) { return l.currency === L[0].currency && l.deal === L[0].deal; });
+      var html = '<div class="cw"><table class="cmp"><thead><tr><th></th>' + L.map(function (l) {
+        var ph = (l.photos || [])[0];
+        return '<td><a class="cph" href="/p/?id=' + l.id + '" style="' + (ph ? 'background-image:url(' + KG.photo(ph, true) + ')' : 'background:linear-gradient(135deg,#7FD3CF,#1F6F86)') + '"></a><a href="/p/?id=' + l.id + '"><b>' + esc(l.title || (KG.TYPE(l.type) + ' · ' + (l.district || l.city))) + '</b></a><br><button class="rm" data-rm="' + l.id + '">× ' + t('remove', 'წაშლა') + '</button></td>';
+      }).join('') + '</tr></thead><tbody>' + rows.map(function (r) {
+        var best = -1;
+        if (r[2] && L.length > 1 && (sameCur || r[0] === t('Area', 'ფართი') || r[0] === t('Rooms', 'ოთახები'))) {
+          var vals = L.map(r[2]), mx = null;
+          vals.forEach(function (v, i) { if (v != null && (mx == null || v > mx)) { mx = v; best = i; } });
+          if (vals.filter(function (v) { return v === mx; }).length > 1) best = -1;
+        }
+        return '<tr><th>' + r[0] + '</th>' + L.map(function (l, i) { return '<td' + (i === best ? ' class="best"' : '') + '>' + r[1](l) + '</td>'; }).join('') + '</tr>';
+      }).join('') + '</tbody></table></div>' +
+        (!sameCur ? '<p class="muted" style="font-size:13px">' + t('Prices are not highlighted because these listings have a different deal type or currency.', 'ფასები არ არის მონიშნული — განსხვავებული გარიგება ან ვალუტა.') + '</p>' : '') + (L.length < 3 ? '<p style="margin-top:16px"><a class="btn b-ghost" href="/search/">' + KG.icon('plus') + t('Add another property', 'კიდევ დამატება') + '</a></p>' : '');
+      $('#app').innerHTML = head + html;
+      KG.$$('[data-rm]').forEach(function (b) { b.onclick = function () { KG.toggleCmp(b.dataset.rm); draw(); }; });
+      KG.cmpBar();
+    });
+  }
+  draw();
+})();
+</script>
+</body>
+</html>

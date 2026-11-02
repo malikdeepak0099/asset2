@@ -11,7 +11,10 @@
     star: '<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
     rocket: '<path d="M5 15c-1.5 1.5-2 5-2 5s3.5-.5 5-2M14 4c3 0 6 3 6 6-2 4-6 7-10 8l-4-4c1-4 4-8 8-10zM15 9h.01"/>',
     flag: '<path d="M5 21V4h11l-2 4 2 4H5"/>', share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/>',
-    trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>', edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/>', image: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-8 8"/>'
+    trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>', edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/>', image: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-8 8"/>',
+    scale: '<path d="M12 4v16M5 20h14M4 8h16M7 8l-3 6a3 3 0 0 0 6 0zM17 8l-3 6a3 3 0 0 0 6 0z"/>', down: '<path d="M12 5v14M6 13l6 6 6-6"/>',
+    shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/>', play: '<circle cx="12" cy="12" r="9"/><path d="M10 8.5l6 3.5-6 3.5z"/>',
+    bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0"/>'
   };
   KG.icon = function (n, extra) { return '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"' + (extra || '') + '>' + (ICONS[n] || '') + '</svg>'; };
   KG.esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; }); };
@@ -60,6 +63,38 @@
     return i < 0;
   };
 
+  // ---------- compare (up to 3 owner listings, saved in this browser)
+  KG.cmp = function () { try { return JSON.parse(localStorage.getItem('kg_cmp') || '[]'); } catch (e) { return []; } };
+  KG.toggleCmp = function (id) {
+    id = +id; var c = KG.cmp(), i = c.indexOf(id);
+    if (i >= 0) c.splice(i, 1); else { if (c.length >= 3) c.shift(); c.push(id); }
+    try { localStorage.setItem('kg_cmp', JSON.stringify(c)); } catch (e) {}
+    KG.cmpBar(); return i < 0;
+  };
+  KG.cmpBar = function () {
+    var c = KG.cmp(), bar = KG.$('#cmpbar');
+    if (!c.length || location.pathname.indexOf('/compare') === 0) { if (bar) bar.remove(); return; }
+    if (!bar) { bar = document.createElement('a'); bar.id = 'cmpbar'; bar.href = '/compare/'; document.body.appendChild(bar); }
+    bar.innerHTML = KG.icon('scale') + KG.t('Compare', 'შედარება') + ' <b>' + c.length + '/3</b> →';
+    KG.$$('.cmpb').forEach(function (b) { b.setAttribute('aria-pressed', c.indexOf(+b.dataset.cmp) >= 0 ? 'true' : 'false'); });
+  };
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest && e.target.closest('.cmpb');
+    if (!b) return;
+    e.preventDefault(); KG.toggleCmp(b.dataset.cmp);
+  });
+  document.addEventListener('DOMContentLoaded', function () { KG.cmpBar(); });
+
+  // ---------- video tours (YouTube / Vimeo only, privacy-friendly embed)
+  KG.videoEmbed = function (url) {
+    var m = String(url || '').match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([\w-]{6,15})/);
+    if (m) return 'https://www.youtube-nocookie.com/embed/' + m[1];
+    m = String(url || '').match(/vimeo\.com\/(\d{5,12})/);
+    return m ? 'https://player.vimeo.com/video/' + m[1] + '?dnt=1' : '';
+  };
+  KG.ROLE = function (r) { return {agent: KG.t('Agent', 'აგენტი'), agency: KG.t('Agency', 'სააგენტო'), developer: KG.t('Developer', 'დეველოპერი')}[r] || ''; };
+  KG.FRAME = function (f) { return {black: KG.t('Black frame', 'შავი კარკასი'), white: KG.t('White frame', 'თეთრი კარკასი'), green: KG.t('Green frame', 'მწვანე კარკასი'), mixed: KG.t('Mixed finishing', 'შერეული')}[f] || ''; };
+
   // ---------- labels
   KG.VLABEL = function (lvl) { return {1: KG.t('Contact verified', 'კონტაქტი შემოწმებულია'), 2: KG.t('Verified listing', 'შემოწმებული განცხადება'), 3: KG.t('Inspected', 'ადგილზე შემოწმებული')}[lvl] || ''; };
   KG.track = function (name, props) { if (window.kgTrack) window.kgTrack(name, props); };
@@ -79,6 +114,8 @@
     badges += '<span class="pill" style="background:rgba(8,26,48,.75);color:#fff">' + KG.esc(KG.DEAL(l.deal)) + '</span>';
     if (l.vlevel >= 2) badges += '<span class="pill t-ver">' + KG.icon('check') + KG.VLABEL(l.vlevel) + '</span>';
     else if (l.verified) badges += '<span class="pill t-ver">' + KG.icon('check') + KG.t('Verified', 'შემოწმებული') + '</span>';
+    if (l.drop) badges += '<span class="pill t-drop">' + KG.icon('down') + l.drop + '%</span>';
+    if (l.video) badges += '<span class="pill" style="background:rgba(8,26,48,.75);color:#fff">' + KG.icon('play') + KG.t('Video', 'ვიდეო') + '</span>';
     var specs = [];
     if (l.rooms) specs.push(l.rooms + ' ' + KG.t('rooms', 'ოთახი'));
     if (l.area) specs.push(l.area + ' m²');
@@ -93,7 +130,8 @@
       '<div class="tt">' + KG.esc(l.title || (KG.TYPE(l.type) + (l.district ? ' · ' + l.district : ''))) + '</div>' +
       '<div class="muted" style="font-size:13px;display:flex;gap:4px;align-items:center">' + KG.icon('pin') + KG.esc([l.district, l.address].filter(Boolean).join(' · ')) + '</div>' +
       '<div class="sp">' + specs.map(function (s) { return '<span>' + s + '</span>'; }).join('') + '</div>' +
-      '<div class="src">' + (l.src === 'crm' ? 'KEY GROUP · MyHome.ge ↗' : KG.t('Owner listing', 'მესაკუთრის განცხადება') + (l.views ? ' · ' + l.views + ' ' + KG.t('views', 'ნახვა') : '')) + '</div></a></article>';
+      '<div class="src">' + (l.src === 'crm' ? 'KEY GROUP · MyHome.ge ↗' : (l.agent ? KG.esc(l.agent.name) + (l.agent.trusted ? ' <span class="trust">' + KG.icon('shield') + 'Trusted</span>' : '') : KG.t('Owner listing', 'მესაკუთრის განცხადება')) + (l.views ? ' · ' + l.views + ' ' + KG.t('views', 'ნახვა') : '')) + '</div></a>' +
+      (l.src === 'owner' ? '<button class="cmpb" type="button" data-cmp="' + l.id + '" aria-pressed="' + (KG.cmp().indexOf(+l.id) >= 0) + '" title="' + KG.t('Compare', 'შედარება') + '">' + KG.icon('scale') + KG.t('Compare', 'შედარება') + '</button>' : '') + '</article>';
   };
   KG.bindFavs = function (root, onChange) {
     (root || document).addEventListener('click', function (e) {
@@ -108,7 +146,7 @@
     return {key: 'o' + r.id, src: 'owner', id: r.id, deal: r.deal, type: r.type, district: r.district, address: r.address, rooms: r.rooms,
       area: r.area, floor: r.floor ? r.floor + (r.total_floors ? '/' + r.total_floors : '') : '', price: r.price, cur: r.currency,
       photo: KG.photo((r.photos || [])[0], true), tier: r.tier, verified: !!r.verified, vlevel: r.verify_level || 0, lat: r.lat || 0, lon: r.lon || 0, city: r.city, url: '/p/?id=' + r.id, title: r.title, views: r.views,
-      created: r.approved || r.created};
+      created: r.approved || r.created, drop: r.price_drop ? r.price_drop.pct : 0, video: !!r.video_url, agent: r.agent || null};
   };
   var KA_EN = {'ვაკე': 'Vake', 'საბურთალო': 'Saburtalo', 'დიდუბე': 'Didube', 'ვერა': 'Vera', 'მთაწმინდა': 'Mtatsminda', 'ისანი': 'Isani', 'სამგორი': 'Samgori',
     'გლდანი': 'Gldani', 'ნაძალადევი': 'Nadzaladevi', 'ჩუღურეთი': 'Chugureti', 'კრწანისი': 'Krtsanisi', 'დიღომი': 'Digomi', 'დიღმის მასივი': 'Digomi Massive',

@@ -1,11 +1,13 @@
 account/index.html
 admin/index.html
+agent/index.html
 assets/chat.js
 assets/keygroup-import-template.csv
 assets/portal.css
 assets/portal.js
 batumi/apartments-for-rent/index.html
 batumi/apartments-for-sale/index.html
+compare/index.html
 invest-in-georgia/index.html
 ka/batumi/apartments-for-rent/index.html
 ka/batumi/apartments-for-sale/index.html
