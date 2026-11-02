@@ -177,6 +177,52 @@
       log.pop(); note(files.length > 0, 'Photos: ' + files.length);
     } else note(false, 'Photos: none on keygroup.ge — add at least one');
     var cn = T('add-statement-contact-name'); if (cn) { var ci = cn.querySelector('input'); if (ci && !ci.value) val(ci, d.contact_name); }
+    if (d.promo) await promoMyHome(d.promo);
+  }
+
+  var TIER = {vip: 'VIP', vipplus: 'VIP+', supervip: 'Super VIP'};
+  // MyHome paid option: pick the package card + days. Never pays — the person presses Publish (balance is charged there).
+  async function promoMyHome(p) {
+    var T = function (id) { return document.querySelector('[data-test-id="' + id + '"]'); };
+    var site = T('add-statement-services-website-2');                    // 2 = Myhome (1 = Livo)
+    var card = site && Array.prototype.find.call(site.querySelectorAll('[data-test-id^="add-statement-service-card-2-"]'), function (c) {
+      var h = (c.innerText || '').split('\n').map(function (x) { return x.trim(); });
+      return h.indexOf(TIER[p.tier]) >= 0;
+    });
+    if (!card) { note(false, 'Paid: ' + TIER[p.tier] + ' — not found, choose it yourself'); return; }
+    card.scrollIntoView({block: 'center'}); realClick(card); await sleep(900);
+    var ds = T('add-statement-vip-day-selection-2'), days = p.myhome_days || p.days, price = '';
+    if (ds) {
+      var trig = Array.prototype.filter.call(ds.querySelectorAll('div'), function (x) { return x.offsetParent && /^არჩევა/.test(txt(x)) && x.querySelector('img'); }).pop();
+      if (trig) { realClick(trig); await sleep(600); }
+      var li = Array.prototype.find.call(ds.querySelectorAll('li'), function (x) { return x.offsetParent && txt(x) === days + ' დღე'; });
+      if (li) { realClick(li); await sleep(700); }
+      price = (txt(ds).match(/([\d.,]+)\s*₾/) || [])[1] || '';
+      note(li ? null : false, 'Paid: ' + TIER[p.tier] + ' · ' + days + ' days' + (price ? ' = ' + price + '₾' : '') + ' — check your MyHome balance; it is charged when you press Publish');
+    } else note(null, 'Paid: ' + TIER[p.tier] + ' selected — choose the days yourself');
+  }
+
+  // SS paid option: the package step opens after “გაგრძელება” — watch for it, then pick the package + days
+  function promoSS(p) {
+    var done = false, tries = 0;
+    var tm = setInterval(async function () {
+      if (done || ++tries > 600) { clearInterval(tm); return; }
+      var h = leaves().find(function (e) { return txt(e) === 'აირჩიე სტატუსი'; });
+      if (!h) return;
+      done = true; clearInterval(tm);
+      var name = {vip: 'VIP', vipplus: 'VIP+', supervip: 'SUPER VIP'}[p.tier];
+      var card = Array.prototype.filter.call(document.querySelectorAll('label,div'), function (e) { return e.offsetParent && (e.innerText || '').trim().split('\n')[0].trim() === name; })
+        .sort(function (a, b) { return a.innerText.length - b.innerText.length; })[0];
+      if (!card) { note(false, 'SS paid: ' + name + ' — choose it yourself'); draw(); return; }
+      card.scrollIntoView({block: 'center'}); (card.querySelector('input[type=radio]') || card).click(); await sleep(900);
+      var box = card; for (var k = 0; k < 6 && box.parentElement && !/დღე -/.test(box.innerText || ''); k++) box = box.parentElement;
+      var chips = Array.prototype.filter.call(box.querySelectorAll('button,div,span,label'), function (e) { return /^\d+ დღე - [\d.]+ ₾$/.test(txt(e)); });
+      var best = null;
+      chips.forEach(function (c) { var n = parseInt(txt(c), 10); if (n <= p.days && (!best || n > parseInt(txt(best), 10))) best = c; });
+      if (best) { realClick(best); await sleep(500); }
+      note(best ? null : false, 'SS paid: ' + name + (best ? ' · ' + txt(best) : ' — choose the days yourself') + ' — check your SS balance; it is charged when you press “განაცხადის განთავსება”');
+      draw();
+    }, 500);
   }
 
   // ---------- SS.ge
@@ -217,6 +263,7 @@
     }
     var hn = document.querySelector('input[name=house-number]'); if (hn && d.number) { val(hn, d.number); note(true, 'Number: ' + d.number); }
     if (d.rooms) note(chipNear('ოთახები', d.rooms > 8 ? '8+' : String(d.rooms)), 'Rooms: ' + d.rooms);
+    if (d.bedrooms) note(chipNear('საძინებელი', d.bedrooms > 8 ? '8+' : String(d.bedrooms)), 'Bedrooms: ' + d.bedrooms);
     if (d.area) { val(document.querySelector('input[name=totalArea]'), d.area); note(true, 'Area: ' + d.area + ' m²'); }
     if (d.floor) val(document.querySelector('input[name=floor]'), d.floor);
     if (d.total_floors) val(document.querySelector('input[name=floors]'), d.total_floors);
@@ -237,6 +284,7 @@
       val(pinput, Math.round(d.price));
       note(null, 'Price: ' + Math.round(d.price) + ' ' + (d.currency === 'GEL' ? '₾' : '$') + ' — check the currency');
     }
+    if (d.promo) { promoSS(d.promo); note(null, 'Paid: ' + TIER[d.promo.tier] + ' — it will be selected on the next step (after “გაგრძელება”)'); }
   }
 
   // ---------- run
@@ -255,7 +303,7 @@
     head += ' · #' + d.id;
     note(true, 'Listing #' + d.id + ' loaded');
     try { if (SITE === 'myhome') await fillMyHome(d); else await fillSS(d); } catch (e) { note(false, 'Stopped: ' + e.message); }
-    draw('<div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.2)"><b>Check the form, fix ⚠️ items, then press Publish yourself.</b><br><span style="opacity:.75;font-size:12px">Paid options (VIP…) are not selected.</span></div>');
+    draw('<div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.2)"><b>Check the form, fix ⚠️ items, then press Publish yourself.</b><br><span style="opacity:.75;font-size:12px">' + (d.promo ? 'Paid package pre-selected — you press Publish / Pay yourself.' : 'Paid options (VIP…) are not selected.') + '</span></div>');
     window.__kgpubRunning = false;
   })();
 })();

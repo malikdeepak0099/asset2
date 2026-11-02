@@ -326,23 +326,53 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
   }
 
   // ---------------- publish to my own MyHome.ge / SS.ge account (the bookmark fills the form there)
+  // paid option prices (₾ per day) — shown so the agent sees the cost before choosing; the site itself charges
+  var PROMO = [
+    ['', t('Free', 'უფასო'), 0, 0],
+    ['vip', 'VIP', 3, 2],
+    ['vipplus', 'VIP+', 4.5, 0],
+    ['supervip', 'Super VIP', 9, 10]
+  ];
   function publishOut(l) {
-    api('/api/my/listings/' + l.id + '/publish-code', {method: 'POST'}).then(function (r) {
-      if (!r.ok) { alert(r.error); return; }
-      var box = document.createElement('div');
-      box.style.cssText = 'position:fixed;inset:0;background:rgba(5,12,24,.55);display:grid;place-items:center;z-index:60;padding:16px';
-      box.innerHTML = '<div class="card" style="padding:22px;max-width:520px;width:100%;display:flex;flex-direction:column;gap:12px">' +
-        '<h3>' + t('Publish to MyHome.ge / SS.ge', 'გამოქვეყნება MyHome.ge / SS.ge-ზე') + ' — #' + l.id + '</h3>' +
-        '<ol style="margin:0;padding-left:18px;line-height:1.6"><li>' + t('Open MyHome or SS below (you must be logged in to your own account there).', 'გახსენი MyHome ან SS (შენს ანგარიშზე უნდა იყო შესული).') + '</li>' +
-        '<li>' + t('Press the bookmark “KEY GROUP ⇢ fill” — the form fills itself.', 'დააჭირე სანიშნეს „KEY GROUP ⇢ fill“ — ფორმა თავად შეივსება.') + '</li>' +
-        '<li>' + t('Check it, fix the ⚠️ items and press Publish there yourself.', 'შეამოწმე, შეასწორე ⚠️ და თავად დააჭირე გამოქვეყნებას.') + '</li></ol>' +
-        '<div>' + t('Code (valid 2 hours): ', 'კოდი (2 საათი): ') + '<b style="font:800 20px var(--display);letter-spacing:.08em;user-select:all">' + esc(r.code) + '</b></div>' +
-        '<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn b-coral" target="_blank" rel="noopener" href="' + esc(r.myhome) + '">MyHome.ge ↗</a><a class="btn b-navy" target="_blank" rel="noopener" href="' + esc(r.ss) + '">SS.ge ↗</a>' +
-        '<a class="btn b-ghost" target="_blank" href="/publish/">' + t('Install the bookmark', 'სანიშნის დაყენება') + '</a></div>' +
-        '<button class="btn b-ghost" type="button" id="pubx">' + t('Close', 'დახურვა') + '</button></div>';
-      document.body.appendChild(box);
-      box.querySelector('#pubx').onclick = function () { box.remove(); };
-    });
+    var box = document.createElement('div');
+    box.style.cssText = 'position:fixed;inset:0;background:rgba(5,12,24,.55);display:grid;place-items:center;z-index:60;padding:16px;overflow:auto';
+    box.innerHTML = '<div class="card" style="padding:22px;max-width:540px;width:100%;display:flex;flex-direction:column;gap:12px" id="pubc">' +
+      '<h3>' + t('Publish to MyHome.ge / SS.ge', 'გამოქვეყნება MyHome.ge / SS.ge-ზე') + ' — #' + l.id + '</h3>' +
+      '<label style="font-weight:600">' + t('Package', 'პაკეტი') + '</label>' +
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px" id="pubtiers">' +
+      PROMO.map(function (p, i) { return '<label class="card" style="padding:10px;cursor:pointer;display:flex;flex-direction:column;gap:2px;border:2px solid ' + (i ? 'transparent' : 'var(--gold)') + '"><span><input type="radio" name="tier" value="' + p[0] + '"' + (i ? '' : ' checked') + '> <b>' + esc(p[1]) + '</b></span>' +
+        (p[2] ? '<small class="muted">MyHome ' + p[2] + '₾ / ' + t('day', 'დღე') + (p[3] ? ' · SS ~' + p[3] + '₾' : '') + '</small>' : '<small class="muted">0₾</small>') + '</label>'; }).join('') + '</div>' +
+      '<div id="pubdays" style="display:none;gap:8px;align-items:center"><label>' + t('Days', 'დღეები') + '</label><input type="number" name="days" min="1" max="30" value="7" style="width:90px"><span class="muted" id="pubcost"></span></div>' +
+      '<p class="muted" style="margin:0;font-size:13px" id="pubnote">' + t('Paid options are only pre-selected on MyHome / SS — you check the total and press Pay there yourself. Top up the balance on MyHome / SS first.',
+        'ფასიანი სერვისი მხოლოდ წინასწარ მოინიშნება MyHome / SS-ზე — ჯამს შენ ამოწმებ და გადახდას თავად აჭერ. ჯერ შეავსე ბალანსი MyHome / SS-ზე.') + '</p>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn b-gold" type="button" id="pubgo">' + t('Get code', 'კოდის მიღება') + '</button>' +
+      '<button class="btn b-ghost" type="button" id="pubx">' + t('Close', 'დახურვა') + '</button></div><div id="pubout"></div></div>';
+    document.body.appendChild(box);
+    var c = box.querySelector('#pubc');
+    box.querySelector('#pubx').onclick = function () { box.remove(); };
+    function cost() {
+      var tier = c.querySelector('input[name=tier]:checked').value, p = PROMO.filter(function (x) { return x[0] === tier; })[0];
+      var days = Math.max(1, Math.min(30, +c.querySelector('input[name=days]').value || 1)), mhDays = tier === 'vip' ? days : Math.min(days, 4);
+      c.querySelector('#pubdays').style.display = tier ? 'flex' : 'none';
+      Array.prototype.forEach.call(c.querySelectorAll('#pubtiers > label'), function (lb) { lb.style.borderColor = lb.querySelector('input').checked ? 'var(--gold)' : 'transparent'; });
+      c.querySelector('#pubcost').textContent = tier ? 'MyHome ≈ ' + (p[2] * mhDays).toFixed(2) + '₾' + (mhDays < days ? ' (' + mhDays + ' ' + t('days max', 'დღე მაქს.') + ')' : '') : '';
+      return tier ? {tier: tier, days: days} : null;
+    }
+    c.addEventListener('change', cost); c.addEventListener('input', cost);
+    box.querySelector('#pubgo').onclick = function () {
+      var promo = cost();
+      api('/api/my/listings/' + l.id + '/publish-code', {method: 'POST', json: {promo: promo}}).then(function (r) {
+        if (!r.ok) { alert(r.error); return; }
+        var pl = r.promo ? PROMO.filter(function (x) { return x[0] === r.promo.tier; })[0][1] + ' · ' + r.promo.days + ' ' + t('days', 'დღე') : t('Free', 'უფასო');
+        box.querySelector('#pubout').innerHTML =
+          '<ol style="margin:0 0 10px;padding-left:18px;line-height:1.6"><li>' + t('Open MyHome or SS below (you must be logged in to your own account there).', 'გახსენი MyHome ან SS (შენს ანგარიშზე უნდა იყო შესული).') + '</li>' +
+          '<li>' + t('Press the bookmark “KEY GROUP ⇢ fill” — the form fills itself.', 'დააჭირე სანიშნეს „KEY GROUP ⇢ fill“ — ფორმა თავად შეივსება.') + '</li>' +
+          '<li>' + t('Check it, fix the ⚠️ items and press Publish / Pay there yourself.', 'შეამოწმე, შეასწორე ⚠️ და თავად დააჭირე გამოქვეყნებას / გადახდას.') + '</li></ol>' +
+          '<div>' + t('Code (valid 2 hours): ', 'კოდი (2 საათი): ') + '<b style="font:800 20px var(--display);letter-spacing:.08em;user-select:all">' + esc(r.code) + '</b> · ' + esc(pl) + '</div>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><a class="btn b-coral" target="_blank" rel="noopener" href="' + esc(r.myhome) + '">MyHome.ge ↗</a><a class="btn b-navy" target="_blank" rel="noopener" href="' + esc(r.ss) + '">SS.ge ↗</a>' +
+          '<a class="btn b-ghost" target="_blank" href="/publish/">' + t('Install the bookmark', 'სანიშნის დაყენება') + '</a></div>';
+      });
+    };
   }
 
   // ---------------- add / edit

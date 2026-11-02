@@ -156,7 +156,7 @@ def init_db():
                                 ("projects", "inst_note", "TEXT DEFAULT ''"), ("listings", "source_url", "TEXT DEFAULT ''"),
                                 ("listings", "agent_name", "TEXT DEFAULT ''"), ("users", "slug", "TEXT DEFAULT ''"),
                                 ("users", "links", "TEXT DEFAULT '{}'"), ("users", "pw_set", "INTEGER DEFAULT 1"),
-                                ("login_tokens", "purpose", "TEXT DEFAULT 'login'"), ("users", "tg_id", "TEXT DEFAULT ''"), ("users", "email", "TEXT DEFAULT ''"), ("users", "bio", "TEXT DEFAULT ''"), ("users", "last_login", "REAL DEFAULT 0")):
+                                ("login_tokens", "purpose", "TEXT DEFAULT 'login'"), ("publish_codes", "promo", "TEXT DEFAULT ''"), ("users", "tg_id", "TEXT DEFAULT ''"), ("users", "email", "TEXT DEFAULT ''"), ("users", "bio", "TEXT DEFAULT ''"), ("users", "last_login", "REAL DEFAULT 0")):
             have = [r[1] for r in con.execute(f"PRAGMA table_info({table})")]
             if col not in have:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
@@ -1433,21 +1433,42 @@ def split_desc(text):
     return "\n\n".join(ka), "\n\n".join(en), "\n\n".join(ru)
 
 
+PROMO_TIERS = ("vip", "vipplus", "supervip")
+
+
+def clean_promo(p):
+    """Paid option chosen on keygroup.ge: {tier: vip|vipplus|supervip, days: 1-30}. The publisher only pre-selects it — the person presses Pay."""
+    if not isinstance(p, dict) or p.get("tier") not in PROMO_TIERS:
+        return None
+    try:
+        days = int(p.get("days") or 1)
+    except (TypeError, ValueError):
+        days = 1
+    cap = 30 if p["tier"] == "vip" else 4      # MyHome sells VIP+ / Super VIP for 1-4 days at a time
+    return {"tier": p["tier"], "days": max(1, min(days, 30)), "myhome_days": max(1, min(days, cap))}
+
+
 async def publish_code(request):
     """Owner / agent / admin asks to publish a listing to their own MyHome / SS account: a short code valid 2 hours."""
     u, e = need_user(request)
     if e:
         return e
     lid = int(request.path_params["lid"])
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    promo = clean_promo((body or {}).get("promo") if isinstance(body, dict) else None)
     with _LOCK, db() as con:
         row = own_listing(u, lid, con)
         if not row:
             return err("Not found", 404)
         code = "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(8))
         con.execute("DELETE FROM publish_codes WHERE expires<?", (time.time(),))
-        con.execute("INSERT INTO publish_codes (code, listing_id, user_id, expires) VALUES (?,?,?,?)", (code, lid, u["id"], time.time() + 7200))
-        audit(con, u, "publish_code", "listing", lid, "")
-    return ok(code=code, myhome=f"https://statements.myhome.ge/ka/statement/create?referrer=myhome#kgpub={code}",
+        con.execute("INSERT INTO publish_codes (code, listing_id, user_id, expires, promo) VALUES (?,?,?,?,?)",
+                    (code, lid, u["id"], time.time() + 7200, json.dumps(promo) if promo else ""))
+        audit(con, u, "publish_code", "listing", lid, json.dumps(promo) if promo else "")
+    return ok(code=code, promo=promo, myhome=f"https://statements.myhome.ge/ka/statement/create?referrer=myhome#kgpub={code}",
               ss=f"https://home.ss.ge/ka/udzravi-qoneba/create#kgpub={code}")
 
 
@@ -1487,7 +1508,10 @@ async def publish_data(request):
          "area": row["area"], "rooms": row["rooms"], "bedrooms": row["bedrooms"], "floor": row["floor"], "total_floors": row["total_floors"],
          "price": row["price"], "currency": row["currency"], "title": row["title"], "desc_ka": ka, "desc_en": en, "desc_ru": ru,
          "photos": photos, "video_url": row["video_url"] or "", "contact_name": (owner["name"] if owner else "") or "KEY GROUP",
-         "contact_phone": row["contact_phone"]}
+         "contact_phone": row["contact_phone"],
+         "promo": json.loads(c["promo"]) if c["promo"] else None}
+    if not d["bedrooms"] and d["rooms"] and d["type"] == "flat":
+        d["bedrooms"] = max(1, int(d["rooms"]) - 1)
     return JSONResponse(d, headers=hdr)
 
 
