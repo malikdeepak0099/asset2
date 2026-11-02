@@ -92,6 +92,13 @@
     m = String(url || '').match(/vimeo\.com\/(\d{5,12})/);
     return m ? 'https://player.vimeo.com/video/' + m[1] + '?dnt=1' : '';
   };
+  KG.listingId = function () {   // /p/?id=12  or  /nika/rent-3-room-apartment-vake-12
+    var q = new URLSearchParams(location.search).get('id');
+    if (q) return q;
+    var m = location.pathname.match(/-(\d+)\/?$/);
+    return m ? m[1] : '';
+  };
+  KG.agentUrl = function (a) { return a && a.slug ? '/' + a.slug + '/' : '/agent/?id=' + (a ? a.id : ''); };
   KG.ROLE = function (r) { return {agent: KG.t('Agent', 'აგენტი'), agency: KG.t('Agency', 'სააგენტო'), developer: KG.t('Developer', 'დეველოპერი')}[r] || ''; };
   KG.FRAME = function (f) { return {black: KG.t('Black frame', 'შავი კარკასი'), white: KG.t('White frame', 'თეთრი კარკასი'), green: KG.t('Green frame', 'მწვანე კარკასი'), mixed: KG.t('Mixed finishing', 'შერეული')}[f] || ''; };
 
@@ -145,7 +152,7 @@
   KG.fromOwner = function (r) {
     return {key: 'o' + r.id, src: 'owner', id: r.id, deal: r.deal, type: r.type, district: r.district, address: r.address, rooms: r.rooms,
       area: r.area, floor: r.floor ? r.floor + (r.total_floors ? '/' + r.total_floors : '') : '', price: r.price, cur: r.currency,
-      photo: KG.photo((r.photos || [])[0], true), tier: r.tier, verified: !!r.verified, vlevel: r.verify_level || 0, lat: r.lat || 0, lon: r.lon || 0, city: r.city, url: '/p/?id=' + r.id, title: r.title, views: r.views,
+      photo: KG.photo((r.photos || [])[0], true), tier: r.tier, verified: !!r.verified, vlevel: r.verify_level || 0, lat: r.lat || 0, lon: r.lon || 0, city: r.city, url: r.path || '/p/?id=' + r.id, title: r.title, views: r.views,
       created: r.approved || r.created, drop: r.price_drop ? r.price_drop.pct : 0, video: !!r.video_url, agent: r.agent || null};
   };
   var KA_EN = {'ვაკე': 'Vake', 'საბურთალო': 'Saburtalo', 'დიდუბე': 'Didube', 'ვერა': 'Vera', 'მთაწმინდა': 'Mtatsminda', 'ისანი': 'Isani', 'სამგორი': 'Samgori',

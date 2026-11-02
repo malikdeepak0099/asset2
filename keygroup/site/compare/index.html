@@ -54,14 +54,14 @@ table.cmp td.best{background:#EFFAF3;font-weight:700}
         [t('Floor', 'სართული'), function (l) { return l.floor ? esc(l.floor + (l.total_floors ? ' / ' + l.total_floors : '')) : '—'; }],
         [t('Verification', 'შემოწმება'), function (l) { return l.verify_level ? esc(KG.VLABEL(l.verify_level)) : '—'; }, function (l) { return l.verify_level || null; }],
         [t('Availability confirmed', 'აქტუალურობა'), function (l) { return l.confirmed ? new Date(l.confirmed * 1000).toLocaleDateString(KG.lang === 'ka' ? 'ka-GE' : 'en-GB', {day: 'numeric', month: 'short'}) : '—'; }, function (l) { return l.confirmed || null; }],
-        [t('Listed by', 'განმთავსებელი'), function (l) { return l.agent ? '<a href="/agent/?id=' + l.agent.id + '">' + esc(l.agent.name) + '</a>' + (l.agent.trusted ? ' <span class="trust">' + KG.icon('shield') + 'Trusted</span>' : '') : t('Owner', 'მესაკუთრე'); }],
+        [t('Listed by', 'განმთავსებელი'), function (l) { return l.agent ? '<a href="' + KG.agentUrl(l.agent) + '">' + esc(l.agent.name) + '</a>' + (l.agent.trusted ? ' <span class="trust">' + KG.icon('shield') + 'Trusted</span>' : '') : t('Owner', 'მესაკუთრე'); }],
         [t('Video tour', 'ვიდეო ტური'), function (l) { return l.video_url ? KG.icon('play') + ' ' + t('Yes', 'კი') : '—'; }],
         [t('Photos', 'ფოტოები'), function (l) { return (l.photos || []).length; }, function (l) { return (l.photos || []).length || null; }]
       ];
       var sameCur = L.every(function (l) { return l.currency === L[0].currency && l.deal === L[0].deal; });
       var html = '<div class="cw"><table class="cmp"><thead><tr><th></th>' + L.map(function (l) {
         var ph = (l.photos || [])[0];
-        return '<td><a class="cph" href="/p/?id=' + l.id + '" style="' + (ph ? 'background-image:url(' + KG.photo(ph, true) + ')' : 'background:linear-gradient(135deg,#7FD3CF,#1F6F86)') + '"></a><a href="/p/?id=' + l.id + '"><b>' + esc(l.title || (KG.TYPE(l.type) + ' · ' + (l.district || l.city))) + '</b></a><br><button class="rm" data-rm="' + l.id + '">× ' + t('remove', 'წაშლა') + '</button></td>';
+        return '<td><a class="cph" href="' + (l.path || '/p/?id=' + l.id) + '" style="' + (ph ? 'background-image:url(' + KG.photo(ph, true) + ')' : 'background:linear-gradient(135deg,#7FD3CF,#1F6F86)') + '"></a><a href="' + (l.path || '/p/?id=' + l.id) + '"><b>' + esc(l.title || (KG.TYPE(l.type) + ' · ' + (l.district || l.city))) + '</b></a><br><button class="rm" data-rm="' + l.id + '">× ' + t('remove', 'წაშლა') + '</button></td>';
       }).join('') + '</tr></thead><tbody>' + rows.map(function (r) {
         var best = -1;
         if (r[2] && L.length > 1 && (sameCur || r[0] === t('Area', 'ფართი') || r[0] === t('Rooms', 'ოთახები'))) {

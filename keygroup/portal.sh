@@ -61,6 +61,30 @@ PY
   docker compose restart caddy >/dev/null 2>&1; sleep 6
   if ! docker compose ps caddy | grep -q Up; then echo "PROBLEM - restoring Caddy"; cp "$BK" "$CF"; docker compose restart caddy; exit 1; fi
 fi
+# 3b) pretty agent URLs: keygroup.ge/nika/ (profile) and keygroup.ge/nika/rent-3-room-apartment-vake-123 (listing)
+if ! grep -q 'kg-agent-urls' "$CF"; then
+  BK2="$CF.bak-$(date +%s)"; cp "$CF" "$BK2"
+  python3 - "$CF" <<'PY'
+import sys, re
+p = sys.argv[1]; s = open(p).read()
+m = re.search(r'^[^\n#]*keygroup\.ge[^\n]*\{[ \t]*\n', s, re.M)
+if not m: sys.exit("keygroup.ge block not found")
+rules = ("\t# kg-agent-urls\n"
+         "\t@kgagentlisting {\n\t\tpath_regexp ^/[a-z0-9-]+/[a-z0-9-]*-[0-9]+/?$\n\t\tnot file\n\t}\n"
+         "\trewrite @kgagentlisting /p/index.html\n"
+         "\t@kgagentprofile {\n\t\tpath_regexp ^/[a-z][a-z0-9-]{1,30}/?$\n\t\tnot file {path} {path}/index.html {path}.html\n\t}\n"
+         "\trewrite @kgagentprofile /agent/index.html\n")
+s = s[:m.end()] + rules + s[m.end():]
+open(p, "w").write(s)
+PY
+  CADDY_C=$(docker compose ps -q caddy)
+  if docker exec "$CADDY_C" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 || ! docker exec "$CADDY_C" test -f /etc/caddy/Caddyfile; then
+    docker compose restart caddy >/dev/null 2>&1; sleep 6
+    if ! docker compose ps caddy | grep -q Up; then echo "PROBLEM - restoring Caddy"; cp "$BK2" "$CF"; docker compose restart caddy; fi
+  else
+    echo "Caddy rules not valid - restored the previous config"; cp "$BK2" "$CF"
+  fi
+fi
 sleep 2
 if curl -fsS https://keygroup.ge/api/health >/dev/null 2>&1 || curl -fsS -H 'Host: keygroup.ge' http://127.0.0.1/api/health >/dev/null 2>&1; then echo "portal reachable: OK"; fi
 bash /opt/keygroup/restore_test.sh 2>/dev/null | tail -2

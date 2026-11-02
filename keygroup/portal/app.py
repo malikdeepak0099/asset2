@@ -151,7 +151,8 @@ def init_db():
                                 ("projects", "frame", "TEXT DEFAULT ''"), ("projects", "handover", "TEXT DEFAULT ''"),
                                 ("projects", "down_pct", "REAL DEFAULT 0"), ("projects", "inst_months", "INTEGER DEFAULT 0"),
                                 ("projects", "inst_note", "TEXT DEFAULT ''"), ("listings", "source_url", "TEXT DEFAULT ''"),
-                                ("listings", "agent_name", "TEXT DEFAULT ''")):
+                                ("listings", "agent_name", "TEXT DEFAULT ''"), ("users", "slug", "TEXT DEFAULT ''"),
+                                ("users", "links", "TEXT DEFAULT '{}'")):
             have = [r[1] for r in con.execute(f"PRAGMA table_info({table})")]
             if col not in have:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
@@ -890,34 +891,107 @@ def attach_agents(con, rows, outs):
     uids = {r["user_id"] for r in rows if r["user_id"]}
     if not uids:
         return
-    users = {u["id"]: u for u in con.execute(f"SELECT id, name, company, role FROM users WHERE id IN ({','.join('?' * len(uids))})", tuple(uids))}
+    users = {u["id"]: u for u in con.execute(f"SELECT id, name, company, role, slug FROM users WHERE id IN ({','.join('?' * len(uids))})", tuple(uids))}
     tm = trusted_map(con)
     for r, o in zip(rows, outs):
         u = users.get(r["user_id"])
         if u and u["role"] in PARTNER_ROLES:
-            o["agent"] = {"id": u["id"], "name": u["company"] or u["name"], "role": u["role"], "trusted": bool(tm.get(u["id"]))}
+            kg = (u["company"] or "").upper() == "KEY GROUP" and u["role"] == "agent"
+            o["agent"] = {"id": u["id"], "name": (u["name"] + " · KEY GROUP") if kg else (u["company"] or u["name"]), "role": u["role"],
+                          "trusted": bool(tm.get(u["id"])), "slug": u["slug"] or ""}
+            if u["slug"]:
+                o["path"] = f"/{u['slug']}/{listing_slug(o)}-{o['id']}"
+            if kg:   # KEY GROUP agents: their own business number is the contact (never the owner's)
+                o["contact_phone"], o["contact_name"] = r["contact_phone"], u["name"]
 
 
 async def public_agent(request):
     """Public agent / agency / developer profile, or (no id) the Trusted Agent rules and the list of trusted partners."""
     aid = request.query_params.get("id", "")
+    slug = request.query_params.get("slug", "").strip().lower()[:40]
     with db() as con:
+        if slug and not aid.isdigit():
+            r = con.execute("SELECT id FROM users WHERE slug=?", (slug,)).fetchone()
+            if not r:
+                return err("Profile not found", 404)
+            aid = str(r["id"])
         if not aid.isdigit():
             tm = trusted_map(con)
             rows = con.execute(f"SELECT id, name, company, role FROM users WHERE id IN ({','.join('?' * len(tm)) or '0'})", tuple(tm)).fetchall()
             return ok(rules=TRUSTED_RULES, trusted=[{"id": r["id"], "name": r["company"] or r["name"], "role": r["role"]} for r in rows])
-        u = con.execute("SELECT id, name, company, role, created, blocked FROM users WHERE id=?", (int(aid),)).fetchone()
+        u = con.execute("SELECT id, name, company, role, created, blocked, slug, links, phone FROM users WHERE id=?", (int(aid),)).fetchone()
         if not u or u["blocked"] or u["role"] not in PARTNER_ROLES:
             return err("Profile not found", 404)
         st = agent_stats(con, u["id"])
         rows = con.execute("SELECT * FROM listings WHERE user_id=? AND status='active' ORDER BY MAX(boosted_at, approved) DESC LIMIT 60", (u["id"],)).fetchall()
         s = get_settings()
         st.pop("open_reports", None)
-        return ok(agent={"id": u["id"], "name": u["company"] or u["name"], "person": u["name"] if u["company"] else "", "role": u["role"],
-                         "since": u["created"], **st}, rules=TRUSTED_RULES, listings=[listing_out(r, settings=s) for r in rows])
+        kg = (u["company"] or "").upper() == "KEY GROUP" and u["role"] == "agent"
+        try:
+            links = json.loads(u["links"] or "{}")
+        except ValueError:
+            links = {}
+        outs = [listing_out(r, settings=s) for r in rows]
+        attach_agents(con, rows, outs)
+        return ok(agent={"id": u["id"], "name": u["name"] if kg else (u["company"] or u["name"]), "person": "" if kg else (u["name"] if u["company"] else ""),
+                         "company": "KEY GROUP" if kg else "", "role": u["role"], "since": u["created"], "slug": u["slug"] or "", "links": links,
+                         "phone": u["phone"] if kg else "", **st}, rules=TRUSTED_RULES, listings=outs)
 
 
 # ---------------------------------------------------------------- staff Telegram bot -> KEY GROUP listing on the website
+
+KA_LAT = dict(zip("აბგდევზთიკლმნოპჟრსტუფქღყშჩცძწჭხჯჰ",
+                  ["a", "b", "g", "d", "e", "v", "z", "t", "i", "k", "l", "m", "n", "o", "p", "zh", "r", "s", "t", "u", "p", "k", "gh", "q",
+                   "sh", "ch", "ts", "dz", "ts", "ch", "kh", "j", "h"]))
+RESERVED_SLUGS = {"account", "admin", "agent", "api", "assets", "batumi", "compare", "invest-in-georgia", "ka", "ru", "en", "p", "partners",
+                  "privacy", "project", "search", "tbilisi", "uploads", "img", "_staging", "kutaisi"}
+
+
+def slugify(text, n=60):
+    t = "".join(KA_LAT.get(ch, ch) for ch in str(text or "").lower())
+    t = re.sub(r"[^a-z0-9]+", "-", t).strip("-")
+    return t[:n].strip("-")
+
+
+def unique_slug(con, base, uid=0):
+    base = slugify(base, 30) or "agent"
+    slug, n = base, 1
+    while slug in RESERVED_SLUGS or con.execute("SELECT 1 FROM users WHERE slug=? AND id!=?", (slug, uid)).fetchone():
+        n += 1
+        slug = f"{base}-{n}"
+    return slug
+
+
+def listing_slug(d):
+    deal = {"sale": "sale", "rent": "rent", "daily": "daily-rent"}.get(d.get("deal"), "")
+    typ = {"flat": "apartment", "house": "house", "commercial": "commercial", "land": "land", "hotel": "hotel"}.get(d.get("type"), "")
+    rooms = f"{int(d['rooms'])}-room" if d.get("rooms") else ""
+    return slugify(" ".join(x for x in (deal, rooms, typ, d.get("district") or d.get("city")) if x), 70) or "listing"
+
+
+def agent_user(con, name, phone, links=None):
+    """KEY GROUP agent account for the Telegram bot: found by phone, created on first listing (role agent, no password login)."""
+    phone = norm_phone(phone)
+    if len(phone) < 12:
+        return None
+    u = con.execute("SELECT * FROM users WHERE phone=?", (phone,)).fetchone()
+    if u and u["role"] not in PARTNER_ROLES:   # never turn an admin / owner / staff account into an agent profile
+        return None
+    if not u:
+        cur = con.execute("INSERT INTO users (phone, name, pw, role, company, created, contact_verified) VALUES (?,?,?,?,?,?,1)",
+                          (phone, name or "Agent", hash_pw(secrets.token_urlsafe(16)), "agent", "KEY GROUP", time.time()))
+        u = con.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone()
+    if not u["slug"]:
+        con.execute("UPDATE users SET slug=? WHERE id=?", (unique_slug(con, name or u["name"], u["id"]), u["id"]))
+    if links:
+        try:
+            cur_links = json.loads(u["links"] or "{}")
+        except ValueError:
+            cur_links = {}
+        cur_links.update({k: v for k, v in links.items() if isinstance(v, str) and v.startswith("https://") and k in ("myhome", "ss")})
+        con.execute("UPDATE users SET links=? WHERE id=?", (json.dumps(cur_links), u["id"]))
+    return con.execute("SELECT * FROM users WHERE id=?", (u["id"],)).fetchone()
+
 
 PHOTO_HOSTS = ("static.my.ge", "myhome.ge", "ss.ge", "static.ss.ge")
 CITY_KA = {"თბილისი": "Tbilisi", "ბათუმი": "Batumi", "ქუთაისი": "Kutaisi"}
@@ -974,11 +1048,14 @@ async def bot_listing(request):
     if msg:
         return err(msg)
     src = str(d.get("url") or "").split("?")[0][:300]
-    with db() as con:
-        adm = con.execute("SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1").fetchone()
+    with _LOCK, db() as con:
+        owner = agent_user(con, agent, d.get("contact_phone"), d.get("profiles") or {}) if d.get("contact_phone") else None
+        if not owner:
+            owner = con.execute("SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1").fetchone()
         old = con.execute("SELECT id FROM listings WHERE source_url=? AND source_url!='' AND status!='deleted'", (src,)).fetchone() if src else None
-    if not adm:
+    if not owner:
         return err("no admin account", 500)
+    adm = owner
     photos = []
     loop = asyncio.get_running_loop()
     for raw in uploads:   # originals sent by the agent; the website keeps web-size copies
@@ -997,7 +1074,7 @@ async def bot_listing(request):
         if old:
             lid = old["id"]
             sets = ",".join(f"{k}=?" for k in f)
-            con.execute(f"UPDATE listings SET {sets}, status='active', updated=?, confirmed=?, agent_name=? WHERE id=?", (*f.values(), now, now, agent, lid))
+            con.execute(f"UPDATE listings SET {sets}, status='active', updated=?, confirmed=?, agent_name=?, user_id=? WHERE id=?", (*f.values(), now, now, agent, adm["id"], lid))
             if photos:
                 con.execute("UPDATE listings SET photos=? WHERE id=?", (json.dumps(photos), lid))
         else:
@@ -1011,7 +1088,11 @@ async def bot_listing(request):
         track(con, "listing_submitted", props={"deal": f["deal"], "type": f["type"], "source": "bot"})
     notify(f"🤖 {esc(agent or 'Agent')} listed #{lid} on the website via the bot\n{esc(f['deal'])} · {esc(f['district'] or f['address'])} · "
            f"{f['price']:,.0f} {esc(f['currency'])} · {len(photos)} photos\n{SITE}/p/?id={lid}")
-    return ok(id=lid, url=f"{SITE}/p/?id={lid}", photos=len(photos), updated=bool(old))
+    with db() as con:
+        u = con.execute("SELECT slug, role FROM users WHERE id=?", (adm["id"],)).fetchone()
+    path = f"/{u['slug']}/{listing_slug(f)}-{lid}" if u and u["slug"] and u["role"] in PARTNER_ROLES else f"/p/?id={lid}"
+    return ok(id=lid, url=SITE + path, profile=(f"{SITE}/{u['slug']}/" if u and u["slug"] and u["role"] in PARTNER_ROLES else ""),
+              photos=len(photos), updated=bool(old))
 
 
 async def public_listings(request):

@@ -808,12 +808,26 @@ def on_callback(cb):
     consent_at = datetime.now(TBILISI).strftime("%Y-%m-%d %H:%M")
     STATE["pending"].pop(key, None)
     dr = drafts.new_draft(item["uid"], item["agent"], d, consent_at)
+    send(chat, f"✅ თანხმობა ჩაწერილია: {consent_at}. ვაქვეყნებ keygroup.ge-ზე…")
+    j, agency = drafts.quick_publish(chat, dr, d)
+    ok_crm, info = save_to_crm(d, item["agent"], item["uid"], consent_at, False)
     txt, link = drafts.owner_photo_request(d)
-    send(chat, f"✅ თანხმობა ჩაწერილია: {consent_at}. შეიქმნა დრაფტი #{e(dr['id'])}.\n\n"
-               "📷 <b>ახლა სთხოვე მესაკუთრეს ორიგინალი ფოტოები</b> (ლოგოს გარეშე, როგორც მის ტელეფონშია) და გადმომიგზავნე აქ — "
-               "უმჯობესია „ფაილად“, რომ ხარისხი არ დაიკარგოს. MyHome / SS-ის ფოტოებს არ ვიყენებ.\n\n"
-               f"WhatsApp-ის ტექსტი მესაკუთრისთვის:\n<code>{e(txt)}</code>",
-         ([[{"text": "💬 WhatsApp მესაკუთრეს", "url": link}]] if link else []) + [[{"text": "👁 გადახედვა", "callback_data": "pv|" + dr["id"]}]])
+    if j.get("ok"):
+        msg = (f"🌐 <b>გამოქვეყნდა keygroup.ge-ზე</b> ({j.get('photos', 0)} ფოტო):\n{e(j.get('url'))}\n"
+               + (f"👤 შენი პროფილი: {e(j.get('profile'))}\n" if j.get("profile") else
+                  "⚠️ შენი ნომერი არ მაქვს — განცხადება KEY GROUP-ის ნომრითაა. დაამატე: <code>/phone 5XXXXXXXX</code>\n")
+               + ("⚠️ ეს განცხადება სააგენტოსია — მისი ფოტოები არ გამოვიყენე.\n" if agency else "")
+               + ("💾 ჩაწერილია Master CRM-ში.\n" if ok_crm else "⚠️ CRM-ში ჩაწერა ვერ მოხერხდა.\n")
+               + "\n✏️ შეცვლა ან მესაკუთრის ორიგინალი ფოტოების დამატება: გადმომიგზავნე ფოტოები და დააჭირე „👁 გადახედვა“ → „✅ დამტკიცება“ — "
+               "იგივე განცხადება განახლდება.\n\n"
+               f"WhatsApp ტექსტი მესაკუთრისთვის (ორიგინალი ფოტოები):\n<code>{e(txt)}</code>")
+    else:
+        msg = (f"⚠️ საიტზე გამოქვეყნება ვერ მოხერხდა ({e(j.get('error'))}). შეავსე ✏️ ღილაკებით (ფასი, უბანი) და დააჭირე „✅ დამტკიცება“.\n"
+               f"შეიქმნა დრაფტი #{e(dr['id'])}.")
+        send_admins(f"⚠️ Website publish error for {e(item['agent'])}: {e(j.get('error'))}")
+    send(chat, msg, ([[{"text": "💬 WhatsApp მესაკუთრეს", "url": link}]] if link else []) + [[{"text": "👁 გადახედვა / შეცვლა", "callback_data": "pv|" + dr["id"]}]])
+    if j.get("ok"):
+        send_admins(lambda a: tr(a, f"🌐 {e(item['agent'])}-მა დაამატა განცხადება keygroup.ge-ზე:\n{e(j.get('url'))}", f"🌐 {e(item['agent'])} listed on keygroup.ge:\n{e(j.get('url'))}"))
 
 
 # ---------------------------------------------------------------- main loop

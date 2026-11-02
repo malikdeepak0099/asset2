@@ -103,6 +103,51 @@ def name_key(name):
     return NAME_ALIAS.get(n, n)
 
 
+def agent_phone(dr):
+    """The agent's own number if we know it (never the company number for the agent profile)."""
+    return B.STATE["phones"].get(dr["uid"]) or B.STATE.setdefault("phones_by_name", {}).get(name_key(dr["agent"])) or ""
+
+
+def profile_links(uid):
+    p = B.STATE.get("profiles", {}).get(str(uid), {})
+    out = {}
+    if p.get("myhome"):
+        out["myhome"] = f"https://www.myhome.ge/udzravi-qoneba/?users={p['myhome']}"
+    if p.get("ss"):
+        out["ss"] = f"https://home.ss.ge/ka/udzravi-qoneba/userlist?userId={p['ss']}"
+    return out
+
+
+def site_payload(dr):
+    name, phone = contact(dr)
+    return {"url": (dr["source"] or {}).get("url") or f"draft:{dr['id']}", "deal": dr["deal"], "type": dr["type"], "city": dr["city"],
+            "district": dr["district"], "address": dr["address"], "rooms": dr["rooms"], "bedrooms": dr["bedrooms"], "area": dr["area"],
+            "floor": dr["floor"], "total_floors": dr["total_floors"], "price": dr["price"], "currency": dr["currency"],
+            "title": dr.get("title_en") or dr["title"],
+            "description": "\n\n".join(x for x in (dr["desc_en"], dr["desc_ka"]) if x)
+                           + ("\n\n" + "\n".join(f"• {k}: {v}" for k, v in dr.get("details") or []) if dr.get("details") else ""),
+            "agent": name, "contact_phone": agent_phone(dr), "video_url": dr.get("video_url"), "lat": dr.get("lat"), "lon": dr.get("lon"),
+            "profiles": profile_links(dr["uid"])}
+
+
+def quick_publish(chat, dr, d):
+    """Owner agreed -> the listing goes live on keygroup.ge at once with the listing's own photos (as they are, nothing removed)
+    and the agent's contact. The draft stays open: edits or original photos later update the same listing."""
+    compose(dr)
+    payload = site_payload(dr)
+    agency = bool(d.get("posted_by_agency"))
+    payload.update(with_photos=not agency, photos=(d.get("images") or [])[:15])
+    try:
+        r = requests.post(B.PORTAL_URL + "/api/bot/listing", json=payload, headers={"X-Bot-Secret": B.CRM_SECRET}, timeout=240)
+        j = r.json()
+    except Exception as ex:
+        j = {"ok": False, "error": str(ex)[:120]}
+    if j.get("ok"):
+        dr["site_url"] = j.get("url")
+        B.save_state()
+    return j, agency
+
+
 def contact(dr):
     phone = B.STATE["phones"].get(dr["uid"]) or B.STATE.setdefault("phones_by_name", {}).get(name_key(dr["agent"])) or B.COMPANY_PHONE
     return dr["agent"], phone
@@ -398,11 +443,7 @@ def publish(chat, uid, did):
     # 1) keygroup.ge (photos as sent; the website makes its own web-size copies, the originals stay untouched)
     site_ok, site_url = False, ""
     try:
-        payload = {"url": (dr["source"] or {}).get("url") or f"draft:{dr['id']}", "deal": dr["deal"], "type": dr["type"], "city": dr["city"],
-                   "district": dr["district"], "address": dr["address"], "rooms": dr["rooms"], "bedrooms": dr["bedrooms"], "area": dr["area"],
-                   "floor": dr["floor"], "total_floors": dr["total_floors"], "price": dr["price"], "currency": dr["currency"],
-                   "title": dr.get("title_en") or dr["title"], "description": "\n\n".join(x for x in (dr["desc_en"], dr["desc_ka"]) if x),
-                   "agent": name, "contact_phone": phone, "video_url": dr.get("video_url"), "lat": dr.get("lat"), "lon": dr.get("lon")}
+        payload = site_payload(dr)
         files = [("photos", (os.path.basename(p), open(p, "rb").read())) for p in photo_paths(dr)[:15]]
         r = requests.post(B.PORTAL_URL + "/api/bot/listing", data={"data": json.dumps(payload)}, files=files or None,
                           headers={"X-Bot-Secret": B.CRM_SECRET}, timeout=240)
