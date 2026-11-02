@@ -84,6 +84,25 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
       ({agents: agentsTab, crm: function () { crmTab(false); }, performance: performance, leads: leadsTab, partners: partnersTab, analytics: analytics, log: activity, dash: dash, chats: chats, listings: listings, orders: orders, reports: reports, users: users, settings: settings})[TAB]();
     });
   }
+  // password reset: temporary password + one-time login link, shown once, ready to send on WhatsApp
+  function pwReset(id, after) {
+    if (!confirm('Reset this password? The user is logged out and gets a temporary password / login link to send them.')) return;
+    api('/api/admin/users', {method: 'POST', json: {id: +id, action: 'reset_password'}}).then(function (r) {
+      if (!r.ok) { alert(r.error); return; }
+      var msg = 'KEY GROUP — ' + r.name + '\n' + 'Login: keygroup.ge/account\nPhone: ' + r.phone + '\nTemporary password: ' + r.password + '\n(or one-tap login, 24 h: ' + r.link + ')\nPlease set your own password after logging in.';
+      var box = document.createElement('div');
+      box.style.cssText = 'position:fixed;inset:0;background:rgba(5,12,24,.55);display:grid;place-items:center;z-index:60;padding:16px';
+      box.innerHTML = '<div class="card" style="padding:22px;max-width:520px;width:100%;display:flex;flex-direction:column;gap:10px"><h3>🔑 Password reset — ' + esc(r.name) + '</h3>' +
+        '<div>Phone: <b>' + esc(r.phone) + '</b></div><div>Temporary password: <b style="font:800 22px var(--display);letter-spacing:.06em">' + esc(r.password) + '</b></div>' +
+        '<div class="muted" style="font-size:13px;word-break:break-all">One-tap login link (24 h, one use): ' + esc(r.link) + '</div>' +
+        '<p class="muted" style="font-size:12px;margin:0">Shown only now. The user is asked to choose their own password after logging in.</p>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn b-wa" target="_blank" rel="noopener" href="https://wa.me/' + String(r.phone).replace(/\D/g, '') + '?text=' + encodeURIComponent(msg) + '">Send on WhatsApp</a>' +
+        '<button class="btn b-ghost" type="button" id="pwcopy">Copy message</button><button class="btn b-navy" type="button" id="pwclose">Close</button></div></div>';
+      document.body.appendChild(box);
+      box.querySelector('#pwcopy').onclick = function () { if (navigator.clipboard) navigator.clipboard.writeText(msg).then(function () { box.querySelector('#pwcopy').textContent = 'Copied ✓'; }); };
+      box.querySelector('#pwclose').onclick = function () { box.remove(); if (after) after(); };
+    });
+  }
   function agentsTab() {
     api('/api/admin/agents').then(function (j) {
       if (!j.ok) { $('#tab').innerHTML = '<div class="msg err">' + esc(j.error) + '</div>'; return; }
@@ -106,10 +125,11 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
             '<td' + (h > 24 ? ' style="color:var(--coral);font-weight:700"' : '') + '>' + (h == null ? '—' : h < 1 ? Math.round(h * 60) + ' min' : h.toFixed(1) + ' h') + '</td>' +
             '<td>' + (a.pw_set ? ago(a.last_login) : a.last_login ? ago(a.last_login) + '<br><span class="muted" style="font-size:12px">no password yet</span>' : '<span class="muted">never logged in</span>') + '</td>' +
             '<td>' + (a.links.myhome ? '<a href="' + esc(a.links.myhome) + '" target="_blank" style="color:var(--blue)">MyHome ↗</a> ' : '<span class="muted">MyHome —</span> ') + (a.links.ss ? '<a href="' + esc(a.links.ss) + '" target="_blank" style="color:var(--blue)">SS ↗</a>' : '<span class="muted">SS —</span>') + '</td>' +
-            '<td style="white-space:nowrap"><button class="btn sm b-ghost" data-ag="link" data-id="' + a.id + '">Login link</button> <button class="btn sm ' + (a.blocked ? 'b-ghost' : 'b-red') + '" data-ag="' + (a.blocked ? 'unblock' : 'block') + '" data-id="' + a.id + '">' + (a.blocked ? 'Unblock' : 'Block') + '</button></td></tr>';
+            '<td style="white-space:nowrap"><button class="btn sm b-ghost" data-ag="link" data-id="' + a.id + '">Login link</button> <button class="btn sm b-ghost" data-pw="' + a.id + '">🔑 Reset password</button> <button class="btn sm ' + (a.blocked ? 'b-ghost' : 'b-red') + '" data-ag="' + (a.blocked ? 'unblock' : 'block') + '" data-id="' + a.id + '">' + (a.blocked ? 'Unblock' : 'Block') + '</button></td></tr>';
         }).join('') : '<tr><td colspan="9" class="muted">No KEY GROUP agents yet — add them above.</td></tr>') + '</tbody></table></div>' +
         '<p class="muted" style="font-size:12px;margin-top:10px">CRM numbers come from each agent\'s Google Sheet (their MyHome / SS listings) and refresh every 10 minutes. Agents see the same list in their own dashboard.</p>';
       $('#agadd').onclick = function () { api('/api/admin/agents', {method: 'POST', json: {action: 'create', text: $('#agtxt').value}}).then(function (r) { $('#agm').className = 'msg ' + (r.ok ? 'ok' : 'err'); $('#agm').textContent = r.ok ? r.created.length + ' agent(s) saved' + (r.created.some(function (c) { return c.error; }) ? ' — some lines were skipped' : '') : r.error; if (r.ok) setTimeout(agentsTab, 900); }); };
+      $$('[data-pw]').forEach(function (b) { b.onclick = function () { pwReset(b.dataset.pw, agentsTab); }; });
       $$('[data-ag]').forEach(function (b) { b.onclick = function () {
         var act = b.dataset.ag;
         if (act === 'block' && !confirm('Block this agent? They will be logged out and cannot log in.')) return;
@@ -211,8 +231,8 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
             '<td>' + esc(a.city || '') + ' · ' + esc(a.listings_est || '') + '</td><td class="muted">' + esc(a.message || '') + '</td>' +
             '<td>' + (a.status === 'new' ? '<button class="btn sm b-teal" data-pa="approve" data-id="' + a.id + '">Approve</button> <button class="btn sm b-ghost" data-pa="reject" data-id="' + a.id + '">Reject</button>' : '<span class="pill ' + (a.status === 'approved' ? 'st-active' : 'st-rejected') + '">' + esc(a.status) + '</span>') + '</td></tr>';
         }).join('') : '<tr><td colspan="7" class="muted">No applications yet.</td></tr>') + '</tbody></table></div>' +
-        '<h3 style="margin:22px 0 10px">Partners</h3><div class="card tablewrap"><table><thead><tr><th>Partner</th><th>Type</th><th>Phone</th><th>Live listings</th><th>Free until</th></tr></thead><tbody>' +
-        (P.length ? P.map(function (p) { return '<tr><td><b>' + esc(p.company || p.name) + '</b><br><span class="muted">' + esc(p.name) + '</span></td><td>' + esc(p.role) + '</td><td>' + esc(p.phone) + '</td><td>' + p.live + (p.listing_limit ? ' / ' + p.listing_limit : '') + '</td><td>' + (p.partner_until ? fmtDate(p.partner_until) : '—') + '</td></tr>'; }).join('') : '<tr><td colspan="5" class="muted">No partners yet.</td></tr>') + '</tbody></table></div>' +
+        '<h3 style="margin:22px 0 10px">Partners</h3><div class="card tablewrap"><table><thead><tr><th>Partner</th><th>Type</th><th>Phone</th><th>Live listings</th><th>Free until</th><th></th></tr></thead><tbody>' +
+        (P.length ? P.map(function (p) { return '<tr><td><b>' + esc(p.company || p.name) + '</b><br><span class="muted">' + esc(p.name) + '</span></td><td>' + esc(p.role) + '</td><td>' + esc(p.phone) + '</td><td>' + p.live + (p.listing_limit ? ' / ' + p.listing_limit : '') + '</td><td>' + (p.partner_until ? fmtDate(p.partner_until) : '—') + '</td><td><button class="btn sm b-ghost" data-pw="' + p.id + '">🔑 Reset password</button></td></tr>'; }).join('') : '<tr><td colspan="6" class="muted">No partners yet.</td></tr>') + '</tbody></table></div>' +
         '<h3 style="margin:22px 0 10px">Bulk uploads</h3><div class="card tablewrap"><table><thead><tr><th>Upload</th><th>Partner</th><th>Rows</th><th>Waiting review</th><th>Status</th><th></th></tr></thead><tbody>' +
         (I.length ? I.map(function (x) {
           return '<tr><td>#' + x.id + ' ' + esc(x.filename) + '<br><span class="muted">' + fmtDate(x.created) + '</span></td><td>' + esc(x.company || x.user_name || '') + '<br><span class="muted">' + esc(x.phone || '') + '</span></td>' +
@@ -220,6 +240,7 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
             '<td>' + (x.status !== 'rolled_back' ? (x.pending ? '<button class="btn sm b-teal" data-im="approve_all" data-id="' + x.id + '">Approve all (non-duplicates)</button> ' : '') + '<button class="btn sm b-red" data-im="rollback" data-id="' + x.id + '">Roll back</button>' : '') + '</td></tr>';
         }).join('') : '<tr><td colspan="6" class="muted">No uploads yet.</td></tr>') + '</tbody></table></div>' +
         '<p class="muted" style="font-size:13px">Tip: review a few random listings of a new partner (Listings → Pending) before approving a whole upload. Possible duplicates are never auto-approved.</p>';
+      $$('[data-pw]').forEach(function (b) { b.onclick = function () { pwReset(b.dataset.pw, partnersTab); }; });
       $$('[data-pa]').forEach(function (b) { b.onclick = function () {
         api('/api/admin/partners/' + b.dataset.id, {method: 'POST', json: {action: b.dataset.pa}}).then(function (r) {
           if (!r.ok) { alert(r.error); return; }
@@ -485,15 +506,19 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
   function users() {
     api('/api/admin/users').then(function (j) {
       var U = j.users || [];
-      $('#tab').innerHTML = '<div class="card tablewrap"><table><thead><tr><th>Name</th><th>Phone</th><th>Role</th><th>Listings</th><th>Joined</th><th></th></tr></thead><tbody>' +
+      $('#tab').innerHTML = '<div class="card" style="padding:12px;margin-bottom:10px"><input id="uq" placeholder="Search name, phone or company…" style="width:100%;border:1.5px solid var(--line);border-radius:10px;padding:10px;font:inherit"></div>' +
+        '<div class="card tablewrap"><table id="utab"><thead><tr><th>Name</th><th>Phone</th><th>Role</th><th>Listings</th><th>Joined</th><th></th></tr></thead><tbody>' +
         U.map(function (u) {
           return '<tr><td>' + esc(u.name) + (u.blocked ? ' <span class="pill st-rejected">blocked</span>' : '') + (u.contact_verified ? ' <span class="pill t-ver">contact verified</span>' : '') + (u.consent_at ? '<br><span class="muted" style="font-size:11px">consent ' + fmtDate(u.consent_at) + '</span>' : '') + '</td><td>' + esc(u.phone) + '</td><td>' + (u.role === 'admin' ? 'admin' : '<select data-role="' + u.id + '">' + ['owner', 'agent', 'agency', 'developer', 'moderator', 'finance'].map(function (r) { return '<option' + (u.role === r ? ' selected' : '') + '>' + r + '</option>'; }).join('') + '</select>') + (u.company ? '<br><span class="muted" style="font-size:12px">' + esc(u.company) + '</span>' : '') + '</td><td>' + u.listings + (u.role !== 'admin' ? '<br><span class="muted" style="font-size:12px">limit <input data-limit="' + u.id + '" type="number" min="0" value="' + (u.listing_limit || '') + '" placeholder="default" style="width:70px;border:1px solid var(--line);border-radius:6px;padding:2px 4px"></span>' : '') + '</td><td>' + fmtDate(u.created) + '</td>' +
             '<td>' + (u.role !== 'admin' ? '<button class="btn sm b-ghost" data-u="' + (u.blocked ? 'unblock' : 'block') + '" data-id="' + u.id + '">' + (u.blocked ? 'Unblock' : 'Block') + '</button> <button class="btn sm b-ghost" data-u="reset_password" data-id="' + u.id + '">Reset password</button> <button class="btn sm b-ghost" data-u="' + (u.contact_verified ? 'unverify_contact' : 'verify_contact') + '" data-id="' + u.id + '">' + (u.contact_verified ? 'Unverify contact' : 'Verify contact (L1)') + '</button>' : '') + '</td></tr>';
         }).join('') + '</tbody></table></div>';
       $$('[data-role]').forEach(function (sl) { sl.onchange = function () { api('/api/admin/users', {method: 'POST', json: {id: +sl.dataset.role, action: 'set_role', role: sl.value}}); }; });
       $$('[data-limit]').forEach(function (inp) { inp.onchange = function () { api('/api/admin/users', {method: 'POST', json: {id: +inp.dataset.limit, action: 'set_limit', limit: +inp.value || 0}}); }; });
+      $('#uq').oninput = function () { var q = this.value.toLowerCase(); $$('#utab tbody tr').forEach(function (tr) { tr.style.display = tr.textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none'; }); };
       $$('[data-u]').forEach(function (b) {
+        if (b.dataset.u === 'reset_password') b.textContent = '🔑 Reset password';
         b.onclick = function () {
+          if (b.dataset.u === 'reset_password') { pwReset(b.dataset.id, shell); return; }
           if (b.dataset.u === 'block' && !confirm('Block this user? Their listings stay but they cannot log in.')) return;
           api('/api/admin/users', {method: 'POST', json: {id: +b.dataset.id, action: b.dataset.u}}).then(function (r) {
             if (r.password) alert('New password: ' + r.password + '\nSend it to the owner on WhatsApp.');

@@ -2007,10 +2007,19 @@ async def admin_users(request):
                 if action == "block":
                     con.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
             elif action == "reset_password":
-                pw = secrets.token_urlsafe(6)
-                con.execute("UPDATE users SET pw=? WHERE id=? AND role!='admin'", (hash_pw(pw), uid))
-                audit(con, u, "reset_password", "user", uid)
-                return ok(password=pw)
+                # temporary password + one-time login link (24 h); the user must choose a new password after logging in
+                t = con.execute("SELECT role, phone, name FROM users WHERE id=?", (uid,)).fetchone()
+                if not t:
+                    return err("User not found", 404)
+                if t["role"] == "admin":
+                    return err("Admin passwords are changed with reset.sh on the server")
+                pw = "".join(secrets.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(8))
+                con.execute("UPDATE users SET pw=?, pw_set=0 WHERE id=?", (hash_pw(pw), uid))
+                con.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
+                tok = secrets.token_urlsafe(24)
+                con.execute("INSERT INTO login_tokens (token, user_id, expires) VALUES (?,?,?)", (tok, uid, time.time() + 86400))
+                audit(con, u, "reset_password", "user", uid, t["name"])
+                return ok(password=pw, phone=t["phone"], name=t["name"], link=f"{SITE}/api/login/link?t={tok}")
             elif action == "set_role":
                 role = d.get("role")
                 if role not in ("owner",) + PARTNER_ROLES + ("moderator", "finance"):
@@ -2028,7 +2037,7 @@ async def admin_users(request):
             audit(con, u, action, "user", uid)
         return ok()
     with db() as con:
-        rows = con.execute("""SELECT u.id, u.phone, u.name, u.role, u.blocked, u.created, u.contact_verified, u.consent_at, u.company, u.listing_limit, u.partner_until,
+        rows = con.execute("""SELECT u.id, u.phone, u.name, u.role, u.blocked, u.created, u.contact_verified, u.consent_at, u.company, u.listing_limit, u.partner_until, u.last_login, u.pw_set,
                                      (SELECT COUNT(*) FROM listings l WHERE l.user_id=u.id AND l.status!='deleted') AS listings
                               FROM users u ORDER BY u.id DESC LIMIT 1000""").fetchall()
     return ok(users=[dict(r) for r in rows])
