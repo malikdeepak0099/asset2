@@ -771,6 +771,7 @@ def on_message(msg):
         if arg in ("on", "off"):
             STATE["site_import"] = arg == "on"; save_state()
         if arg == "now":
+            STATE["site_synced"] = {}; save_state()     # send everything again (existing listings are updated; photos fetched where missing)
             send(chat, tr(uid, "⏳ ყველა აგენტის განცხადებები იგზავნება keygroup.ge-ზე…", "⏳ Sending every agent's MyHome listings to keygroup.ge…"))
             threading.Thread(target=sync_all, kwargs={"notify_agents": False}, daemon=True).start()
         send(chat, site_status_text(uid) + "\n\n<code>/website on</code> · <code>/website off</code> · <code>/website now</code>")

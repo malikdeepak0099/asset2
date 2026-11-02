@@ -1013,7 +1013,7 @@ def agent_user(con, name, phone, links=None):
     return con.execute("SELECT * FROM users WHERE id=?", (u["id"],)).fetchone()
 
 
-PHOTO_HOSTS = ("static.my.ge", "myhome.ge", "ss.ge", "static.ss.ge")
+PHOTO_HOSTS = ("static.my.ge", "myhome.ge", "ss.ge", "static.ss.ge", "tnet.ge")
 CITY_KA = {"თბილისი": "Tbilisi", "ბათუმი": "Batumi", "ქუთაისი": "Kutaisi"}
 
 
