@@ -303,6 +303,19 @@
     head += ' · #' + d.id;
     note(true, 'Listing #' + d.id + ' loaded');
     try { if (SITE === 'myhome') await fillMyHome(d); else await fillSS(d); } catch (e) { note(false, 'Stopped: ' + e.message); }
+    // Plan B: every agent publishes from their own MyHome / SS account — warn if the wrong account is signed in
+    var acc = '';
+    for (var w = 0; w < 20 && !acc; w++) {
+      var pi = SITE === 'myhome' ? document.querySelector('[data-test-id="add-statement-contact-phone"] input')
+                                 : document.querySelector('input[placeholder="მობილურის ნომერი"]');
+      acc = pi ? (pi.value || '').replace(/\D/g, '').slice(-9) : '';
+      if (!acc) await sleep(300);
+    }
+    var want = String(d.contact_phone || '').replace(/\D/g, '').slice(-9);
+    if (acc && want && acc !== want) {
+      log.unshift([false, '<b style="color:#ffb4a8">Wrong account?</b> You are signed in as <b>' + acc + '</b>, but this listing belongs to <b>' +
+        String(d.contact_name || '').replace(/</g, '') + ' (' + want + ')</b>. To keep it under the agent’s own name, sign in to that agent’s ' + (SITE === 'myhome' ? 'MyHome' : 'SS') + ' account and press the bookmark again.']);
+    } else if (acc && want) note(true, 'Account: ' + acc + ' — matches the listing’s agent');
     draw('<div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.2)"><b>Check the form, fix ⚠️ items, then press Publish yourself.</b><br><span style="opacity:.75;font-size:12px">' + (d.promo ? 'Paid package pre-selected — you press Publish / Pay yourself.' : 'Paid options (VIP…) are not selected.') + '</span></div>');
     window.__kgpubRunning = false;
   })();
