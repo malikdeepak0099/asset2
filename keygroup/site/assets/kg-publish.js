@@ -43,7 +43,23 @@
       await sleep(35);
     }
   }
-  function leaves(root) { return Array.prototype.filter.call((root || document).querySelectorAll('*'), function (e) { return e.childElementCount === 0 && (e.innerText || e.textContent || '').trim(); }); }
+  function leaves(root) { return Array.prototype.filter.call((root || document.body).querySelectorAll('*'), function (e) { return e.childElementCount === 0 && !/^(SCRIPT|STYLE|NOSCRIPT)$/.test(e.tagName) && (e.innerText || '').trim(); }); }
+  // an option whose visible text is exactly `text` — also cards like "icon\nბინა" (icon name + label)
+  function optionEl(root, text) {
+    var c = Array.prototype.filter.call((root || document.body).querySelectorAll('button,label,a,div,span,p,li'), function (e) {
+      if (/^(SCRIPT|STYLE)$/.test(e.tagName)) return false;
+      var t = (e.innerText || '').trim();
+      if (!t || t.length > 40) return false;
+      var lines = t.split('\n').map(function (x) { return x.trim(); }).filter(Boolean);
+      return t === text || lines[lines.length - 1] === text;
+    });
+    c.sort(function (a, b) { return (a.innerText || '').length - (b.innerText || '').length || b.querySelectorAll('*').length - a.querySelectorAll('*').length; });
+    var el = c[0];
+    if (!el) return null;
+    // climb to the clickable card (the element whose text is still just this option)
+    while (el.parentElement && (el.parentElement.innerText || '').trim().split('\n').filter(Boolean).length <= 2 && (el.parentElement.innerText || '').trim().length <= 40) el = el.parentElement;
+    return el;
+  }
   function txt(e) { return (e.innerText || e.textContent || '').trim(); }
   function press(el) { ['mousedown', 'mouseup', 'click'].forEach(function (t) { el.dispatchEvent(new MouseEvent(t, {bubbles: true, cancelable: true})); }); }
   async function photosToFiles(urls) {
@@ -146,9 +162,9 @@
       var h = leaves().find(function (e) { return txt(e).replace(/\*$/, '').trim() === heading; });
       if (!h) return false;
       var box = h.parentElement;
-      for (var i = 0; i < 5 && box && !leaves(box).some(function (e) { return txt(e) === text; }); i++) box = box.parentElement;
-      var el = box && leaves(box).find(function (e) { return txt(e) === text; });
-      if (el) (el.closest('button,label,[role=button]') || el.parentElement || el).click();
+      for (var i = 0; i < 6 && box && !optionEl(box, text); i++) box = box.parentElement;
+      var el = box && optionEl(box, text);
+      if (el) { press(el); }
       return !!el;
     };
     var ssType = {flat: 'ბინა', house: 'კერძო სახლი', land: 'მიწის ნაკვეთი', commercial: 'კომერციული', hotel: 'სასტუმრო'}[d.type] || 'ბინა';
