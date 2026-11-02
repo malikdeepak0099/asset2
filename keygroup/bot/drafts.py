@@ -127,7 +127,7 @@ def site_payload(dr):
             "description": "\n\n".join(x for x in (dr["desc_en"], dr["desc_ka"]) if x)
                            + ("\n\n" + "\n".join(f"• {k}: {v}" for k, v in dr.get("details") or []) if dr.get("details") else ""),
             "agent": name, "contact_phone": agent_phone(dr), "video_url": dr.get("video_url"), "lat": dr.get("lat"), "lon": dr.get("lon"),
-            "profiles": profile_links(dr["uid"])}
+            "profiles": profile_links(dr["uid"]), "tg": dr["uid"]}
 
 
 def quick_publish(chat, dr, d):

@@ -129,7 +129,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS projects (
             id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, city TEXT, district TEXT, address TEXT, description TEXT,
             completion TEXT, status TEXT DEFAULT 'active', lat REAL DEFAULT 0, lon REAL DEFAULT 0, cover TEXT DEFAULT '', created REAL, updated REAL);
-        CREATE TABLE IF NOT EXISTS login_tokens (token TEXT PRIMARY KEY, user_id INTEGER, expires REAL, used REAL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS login_tokens (token TEXT PRIMARY KEY, user_id INTEGER, expires REAL, used REAL DEFAULT 0, purpose TEXT DEFAULT 'login');
+        CREATE TABLE IF NOT EXISTS bot_outbox (id INTEGER PRIMARY KEY, tg_id TEXT, text TEXT, button_url TEXT DEFAULT '', button_text TEXT DEFAULT '', created REAL, sent REAL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS imports (
             id INTEGER PRIMARY KEY, user_id INTEGER, filename TEXT, total INTEGER, imported INTEGER, errors TEXT DEFAULT '[]',
             status TEXT DEFAULT 'imported', created REAL);
@@ -154,7 +155,7 @@ def init_db():
                                 ("projects", "inst_note", "TEXT DEFAULT ''"), ("listings", "source_url", "TEXT DEFAULT ''"),
                                 ("listings", "agent_name", "TEXT DEFAULT ''"), ("users", "slug", "TEXT DEFAULT ''"),
                                 ("users", "links", "TEXT DEFAULT '{}'"), ("users", "pw_set", "INTEGER DEFAULT 1"),
-                                ("users", "email", "TEXT DEFAULT ''"), ("users", "bio", "TEXT DEFAULT ''"), ("users", "last_login", "REAL DEFAULT 0")):
+                                ("login_tokens", "purpose", "TEXT DEFAULT 'login'"), ("users", "tg_id", "TEXT DEFAULT ''"), ("users", "email", "TEXT DEFAULT ''"), ("users", "bio", "TEXT DEFAULT ''"), ("users", "last_login", "REAL DEFAULT 0")):
             have = [r[1] for r in con.execute(f"PRAGMA table_info({table})")]
             if col not in have:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
@@ -1055,6 +1056,8 @@ async def bot_listing(request):
     src = str(d.get("url") or "").split("?")[0][:300]
     with _LOCK, db() as con:
         owner = agent_user(con, agent, d.get("contact_phone"), d.get("profiles") or {}) if d.get("contact_phone") else None
+        if owner and str(d.get("tg") or "").isdigit():
+            con.execute("UPDATE users SET tg_id=? WHERE id=?", (str(d["tg"]), owner["id"]))
         if not owner:
             owner = con.execute("SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1").fetchone()
         old = con.execute("SELECT id FROM listings WHERE source_url=? AND source_url!='' AND status!='deleted'", (src,)).fetchone() if src else None
@@ -1113,6 +1116,8 @@ async def bot_agent_access(request):
         u = agent_user(con, name, d.get("phone"), d.get("profiles") or {})
         if not u:
             return err("No agent account for this phone (it may belong to an admin or owner account)")
+        if str(d.get("tg") or "").isdigit():
+            con.execute("UPDATE users SET tg_id=? WHERE id=?", (str(d["tg"]), u["id"]))
         names = [x for x in {name, u["name"]} if x]
         moved = con.execute(f"""UPDATE listings SET user_id=? WHERE agent_name IN ({','.join('?' * len(names))})
                                 AND user_id IN (SELECT id FROM users WHERE role='admin') AND status!='deleted'""", (u["id"], *names)).rowcount
@@ -1133,6 +1138,46 @@ h1{font-size:22px;margin:0 0 8px}p{color:#5E6E82;margin:0 0 18px;line-height:1.5
 .err{background:#FFEDEA;color:#B5475E;border-radius:10px;padding:12px;margin-bottom:14px}a{color:#2F6FED}</style></head><body><div class="c">{{BODY}}</div></body></html>"""
 
 
+async def bot_reset_link(request):
+    """Self-service password reset: the Telegram bot sends the phone number Telegram verified for this user.
+    If a keygroup.ge account has that phone, a one-time link (30 min) is returned to the bot, which sends it only to that user."""
+    sec = request.headers.get("x-bot-secret", "")
+    if not CRM_SECRET or not hmac.compare_digest(sec, CRM_SECRET):
+        return err("unauthorized", 401)
+    d = await body_json(request)
+    phone = norm_phone(d.get("phone"))
+    with _LOCK, db() as con:
+        u = con.execute("SELECT id, name, role, blocked FROM users WHERE phone=?", (phone,)).fetchone()
+        if not u:
+            return ok(found=False)
+        if str(d.get("tg") or "").isdigit():   # Telegram verified this phone for this Telegram user
+            con.execute("UPDATE users SET tg_id=? WHERE id=?", (str(d["tg"]), u["id"]))
+        if u["role"] == "admin":
+            return ok(found=True, admin=True)
+        if u["blocked"]:
+            return ok(found=True, blocked=True)
+        recent = con.execute("SELECT COUNT(*) FROM login_tokens WHERE user_id=? AND purpose='reset' AND expires>?", (u["id"], time.time() + 1800 - 3600)).fetchone()[0]
+        if recent >= 5:
+            return err("Too many reset requests — try again in an hour", 429)
+        tok = secrets.token_urlsafe(24)
+        con.execute("INSERT INTO login_tokens (token, user_id, expires, purpose) VALUES (?,?,?,'reset')", (tok, u["id"], time.time() + 1800))
+        audit(con, {"id": 0, "name": "Telegram bot (self-service)"}, "password_reset_link", "user", u["id"], str(d.get("tg") or "")[:30])
+    return ok(found=True, name=u["name"], url=f"{SITE}/api/login/link?t={tok}")
+
+
+async def bot_outbox(request):
+    """The staff bot collects messages the website wants delivered (e.g. password resets) and sends them."""
+    sec = request.headers.get("x-bot-secret", "")
+    if not CRM_SECRET or not hmac.compare_digest(sec, CRM_SECRET):
+        return err("unauthorized", 401)
+    with _LOCK, db() as con:
+        rows = [dict(r) for r in con.execute("SELECT id, tg_id, text, button_url, button_text FROM bot_outbox WHERE sent=0 ORDER BY id LIMIT 30")]
+        if rows:
+            con.execute(f"UPDATE bot_outbox SET sent=? WHERE id IN ({','.join('?' * len(rows))})", (time.time(), *[r["id"] for r in rows]))
+        con.execute("DELETE FROM bot_outbox WHERE sent>0 AND sent<?", (time.time() - 30 * 86400,))
+    return ok(messages=rows)
+
+
 async def login_link(request):
     """GET shows a confirm page (link previews in WhatsApp / Telegram must not use up the one-time link); POST logs in."""
     tok = (request.query_params.get("t", "") if request.method == "GET" else (await request.form()).get("t", ""))[:64]
@@ -1141,6 +1186,8 @@ async def login_link(request):
         valid = bool(r and not r["used"] and r["expires"] > time.time() and not r["blocked"])
         if valid and request.method == "POST":
             con.execute("UPDATE login_tokens SET used=? WHERE token=?", (time.time(), tok))
+            if r["purpose"] == "reset":
+                con.execute("UPDATE users SET pw_set=0 WHERE id=?", (r["user_id"],))
             con.execute("UPDATE users SET last_login=? WHERE id=?", (time.time(), r["user_id"]))
     if not valid:
         body = ('<div class="err">ბმულს ვადა გაუვიდა ან უკვე გამოყენებულია.<br>This login link has expired or was already used.</div>'
@@ -2024,7 +2071,7 @@ async def admin_users(request):
                     con.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
             elif action == "reset_password":
                 # temporary password + one-time login link (24 h); the user must choose a new password after logging in
-                t = con.execute("SELECT role, phone, name FROM users WHERE id=?", (uid,)).fetchone()
+                t = con.execute("SELECT role, phone, name, tg_id FROM users WHERE id=?", (uid,)).fetchone()
                 if not t:
                     return err("User not found", 404)
                 if t["role"] == "admin":
@@ -2034,8 +2081,16 @@ async def admin_users(request):
                 con.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
                 tok = secrets.token_urlsafe(24)
                 con.execute("INSERT INTO login_tokens (token, user_id, expires) VALUES (?,?,?)", (tok, uid, time.time() + 86400))
-                audit(con, u, "reset_password", "user", uid, t["name"])
-                return ok(password=pw, phone=t["phone"], name=t["name"], link=f"{SITE}/api/login/link?t={tok}")
+                con.execute("UPDATE login_tokens SET purpose='reset' WHERE token=?", (tok,))
+                sent_tg = False
+                if t["tg_id"]:
+                    con.execute("INSERT INTO bot_outbox (tg_id, text, button_url, button_text, created) VALUES (?,?,?,?,?)",
+                                (t["tg_id"], f"🔑 <b>KEY GROUP</b> — შენი keygroup.ge პაროლი განულდა.\n\nდროებითი პაროლი: <code>{pw}</code>\n"
+                                 f"ან დააჭირე ღილაკს (მუშაობს 24 საათი, ერთხელ) და დააყენე ახალი პაროლი.\n\nYour keygroup.ge password was reset. Tap the button and set a new one.",
+                                 f"{SITE}/api/login/link?t={tok}", "🔐 შესვლა · Log in", time.time()))
+                    sent_tg = True
+                audit(con, u, "reset_password", "user", uid, t["name"] + (" (sent to Telegram)" if sent_tg else ""))
+                return ok(password=pw, phone=t["phone"], name=t["name"], link=f"{SITE}/api/login/link?t={tok}", telegram=sent_tg)
             elif action == "set_role":
                 role = d.get("role")
                 if role not in ("owner",) + PARTNER_ROLES + ("moderator", "finance"):
@@ -2497,6 +2552,8 @@ routes = [
     Route("/api/agents", public_agent),
     Route("/api/bot/listing", bot_listing, methods=["POST"]),
     Route("/api/bot/agent-access", bot_agent_access, methods=["POST"]),
+    Route("/api/bot/reset-link", bot_reset_link, methods=["POST"]),
+    Route("/api/bot/outbox", bot_outbox, methods=["POST"]),
     Route("/api/my/profile", my_profile, methods=["GET", "POST"]),
     Route("/api/admin/agents", admin_agents, methods=["GET", "POST"]),
     Route("/api/login/link", login_link, methods=["GET", "POST"]),

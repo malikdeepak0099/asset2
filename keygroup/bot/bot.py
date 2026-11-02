@@ -135,6 +135,35 @@ def e(s):
     return html.escape(str(s or ""))
 
 
+def send_kb(chat, text, reply_markup):
+    return tg("sendMessage", chat_id=chat, text=text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=reply_markup)
+
+
+_RESETS = {}
+
+
+def too_many_resets(uid, limit=5, window=3600):
+    now = time.time()
+    hits = [t for t in _RESETS.get(str(uid), []) if now - t < window]
+    hits.append(now)
+    _RESETS[str(uid)] = hits
+    return len(hits) > limit
+
+
+def outbox_loop():
+    """Deliver messages the website queued (e.g. a password reset done by the admin) — every 30 seconds."""
+    while True:
+        try:
+            if CRM_SECRET:
+                r = requests.post(PORTAL_URL + "/api/bot/outbox", headers={"X-Bot-Secret": CRM_SECRET}, timeout=30).json()
+                for m in r.get("messages") or []:
+                    btn = [[{"text": m.get("button_text") or "Open", "url": m["button_url"]}]] if m.get("button_url") else None
+                    send(m["tg_id"], m["text"], btn)
+        except Exception as ex:
+            print("outbox", ex)
+        time.sleep(30)
+
+
 # ---------------------------------------------------------------- views
 
 HELP_EN = (
@@ -523,6 +552,36 @@ def on_message(msg):
         save_state()
         send(chat, tr(uid, "✅ ენა: ქართული. English-ისთვის: /lang", "✅ Language: English. ქართულისთვის: /lang"))
         return
+    # ---- self-service password reset (anyone with a keygroup.ge account; phone verified by Telegram)
+    if text.startswith("/reset") or text.startswith("/start reset") or text.startswith("/password"):
+        send_kb(chat, "🔑 <b>keygroup.ge — პაროლის აღდგენა</b>\n\nდააჭირე ქვემოთ ღილაკს <b>„📱 ნომრის გაზიარება“</b>. თუ ამ ნომრით ანგარიში გაქვს, "
+                      "მაშინვე გამოგიგზავნი შესვლის ბმულს და დააყენებ ახალ პაროლს.\n\n<i>Password reset: tap “Share my number” below.</i>",
+                {"keyboard": [[{"text": "📱 ნომრის გაზიარება · Share my number", "request_contact": True}]], "resize_keyboard": True, "one_time_keyboard": True})
+        return
+    if msg.get("contact"):
+        c = msg["contact"]
+        if str(c.get("user_id") or "") != str(uid):
+            send_kb(chat, "⚠️ გამოიყენე ღილაკი „📱 ნომრის გაზიარება“ — საკუთარი ნომრისთვის.", {"remove_keyboard": True})
+            return
+        if too_many_resets(uid):
+            send_kb(chat, "⏳ ძალიან ბევრი მცდელობა — სცადე ერთ საათში.", {"remove_keyboard": True})
+            return
+        try:
+            r = requests.post(PORTAL_URL + "/api/bot/reset-link", json={"phone": c.get("phone_number"), "tg": str(uid)},
+                              headers={"X-Bot-Secret": CRM_SECRET}, timeout=60).json()
+        except Exception as ex:
+            r = {"ok": False, "error": str(ex)[:100]}
+        if not r.get("ok"):
+            send_kb(chat, f"⚠️ {e(r.get('error') or 'შეცდომა')}", {"remove_keyboard": True})
+        elif not r.get("found"):
+            send_kb(chat, "ამ ნომრით keygroup.ge-ზე ანგარიში ვერ ვიპოვე. დარეგისტრირდი: https://keygroup.ge/account/", {"remove_keyboard": True})
+        elif r.get("admin") or r.get("blocked"):
+            send_kb(chat, "ამ ანგარიშის პაროლი აქედან ვერ აღდგება. მოგვწერე: +995 577 114 118", {"remove_keyboard": True})
+        else:
+            send_kb(chat, "✅", {"remove_keyboard": True})
+            send(chat, f"🔐 <b>{e(r.get('name'))}</b>, დააჭირე ღილაკს — შეხვალ შენს ანგარიშზე და დააყენებ ახალ პაროლს.\n"
+                       "ბმული მუშაობს 30 წუთი, ერთხელ. არავის გაუზიარო.", [[{"text": "🔐 ახალი პაროლის დაყენება", "url": r["url"]}]])
+        return
     if text.startswith("/invite") and is_admin(uid):
         a, b = invite_text(uid)
         send(chat, a)
@@ -622,7 +681,7 @@ def on_message(msg):
             send(chat, "ჯერ დაამატე შენი ნომერი: <code>/phone 5XXXXXXXX</code> — შემდეგ ისევ /login")
             return
         try:
-            r = requests.post(PORTAL_URL + "/api/bot/agent-access", json={"agent": name, "phone": ph, "profiles": drafts.profile_links(uid)},
+            r = requests.post(PORTAL_URL + "/api/bot/agent-access", json={"agent": name, "phone": ph, "profiles": drafts.profile_links(uid), "tg": str(uid)},
                               headers={"X-Bot-Secret": CRM_SECRET}, timeout=60).json()
         except Exception as ex:
             r = {"ok": False, "error": str(ex)[:120]}
@@ -869,6 +928,7 @@ def main():
                                   {"command": "draft", "description": "ჩემი დრაფტის გადახედვა"},
                                   {"command": "phone", "description": "ჩემი საკონტაქტო ნომერი"},
                                   {"command": "login", "description": "შესვლა ჩემს keygroup.ge ანგარიშზე"},
+                                  {"command": "reset", "description": "პაროლის აღდგენა (keygroup.ge)"},
                                   {"command": "myid", "description": "ჩემი Telegram ID"}])
     for adm in admins():
         tg("setMyCommands", scope={"type": "chat", "chat_id": int(adm)}, commands=[
@@ -881,6 +941,7 @@ def main():
             {"command": "contacts", "description": "Agents' phones and emails"},
             {"command": "lang", "description": "English / ქართული"}])
     threading.Thread(target=scheduler, daemon=True).start()
+    threading.Thread(target=outbox_loop, daemon=True).start()
     while True:
         try:
             r = requests.get(API + "getUpdates", params={"offset": STATE.get("offset", 0), "timeout": 50}, timeout=70)

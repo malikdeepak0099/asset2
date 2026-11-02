@@ -104,6 +104,7 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
         if (!r.ok) { box.querySelector('#pwerr').className = 'msg err'; box.querySelector('#pwerr').textContent = r.error || 'Error'; box.querySelector('#pwgo').remove(); return; }
         var msg = 'KEY GROUP — ' + r.name + '\nLogin: keygroup.ge/account\nPhone: ' + r.phone + '\nTemporary password: ' + r.password + '\n(or one-tap login, 24 h: ' + r.link + ')\nPlease set your own password after logging in.';
         box.firstChild.innerHTML = '<h3>🔑 Password reset — ' + esc(r.name) + '</h3>' +
+          (r.telegram ? '<div class="msg ok">✅ Sent automatically to their Telegram by the KEY GROUP bot — nothing else to do.</div>' : '<div class="msg err" style="background:var(--lemon);color:#7a5b00">Their Telegram is not linked yet, so send this yourself (WhatsApp button below). Tip: they can reset on their own any time — login page → “Forgot password? Reset it in Telegram”.</div>') +
           '<div>Phone: <b>' + esc(r.phone) + '</b></div><div>Temporary password: <b style="font:800 22px var(--display);letter-spacing:.06em;user-select:all">' + esc(r.password) + '</b></div>' +
           '<div class="muted" style="font-size:13px;word-break:break-all">One-tap login link (24 h, one use): <span style="user-select:all">' + esc(r.link) + '</span></div>' +
           '<p class="muted" style="font-size:12px;margin:0">Shown only now. The user is asked to choose their own password after logging in.</p>' +
