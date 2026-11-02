@@ -133,14 +133,16 @@
       var geo0 = window.__kgGeo;
       if (sli) { sli.scrollIntoView({block: 'center'}); realClick(sli); }
       await sleep(1500);
-      var geoOk = window.__kgGeo > geo0;
-      note(sli && geoOk ? true : false, 'Street: ' + (sli ? txt(sli).split('\n')[0] + (geoOk ? '' : ' — address not saved: pick the street again by hand from the list') : d.street + ' — choose it yourself'));
     }
     var num = T('add-statement-street-number');
     if (num && d.number) {
       var ni = num.querySelector('input'); await typeInto(ni, String(d.number));
       ni.dispatchEvent(new Event('change', {bubbles: true})); ni.blur(); ni.dispatchEvent(new FocusEvent('focusout', {bubbles: true}));
-      await sleep(1200); note(true, 'Number: ' + d.number);
+      await sleep(1500); note(true, 'Number: ' + d.number);
+    }
+    if (st && d.street && li) {
+      var geoOk = window.__kgGeo > geo0;
+      note(sli && geoOk ? true : false, 'Street: ' + (sli ? txt(sli).split('\n')[0] + (geoOk ? '' : ' — address not saved: pick the street again by hand from the list') : d.street + ' — choose it yourself'));
     }
     // price
     var ct = T('add-statement-currency-toggle');
