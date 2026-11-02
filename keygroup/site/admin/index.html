@@ -249,7 +249,7 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
     var now = Date.now(), wk = 7 * 864e5;
     var newWeek = L.filter(function (x) { var d = dayOf(x['First Seen']); return d && now - d < wk; }).length;
     var withIssue = active.filter(function (x) { return String(x['Issues'] || '').trim(); }).length;
-    var subs = [['overview', 'Overview'], ['listings', 'Listings (' + L.length + ')'], ['agents', 'Agents (' + agents.length + ')'], ['leads', 'Website leads (' + crmT('Website Leads').total + ')'], ['issues', 'Issues (' + crmT('Issues').total + ')'], ['changes', 'Change log'], ['bot', 'Bot listings'], ['runs', 'Sync log']];
+    var subs = [['overview', 'Overview'], ['listings', 'Listings (' + L.length + ')'], ['agents', 'Agents (' + agents.filter(function (x) { return !/^n/i.test(x['Active (Yes/No)'] || ''); }).length + ')'], ['leads', 'Website leads (' + crmT('Website Leads').total + ')'], ['issues', 'Issues (' + crmT('Issues').total + ')'], ['changes', 'Change log'], ['bot', 'Bot listings'], ['runs', 'Sync log']];
     var head = '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px"><div class="muted" style="font-size:13px">KEY GROUP Master CRM · updated ' + esc(new Date(CRM.fetched * 1000 || Date.parse(CRM.updated)).toLocaleString()) + ' · refreshes every 10 min</div>' +
       '<div style="display:flex;gap:8px"><button class="btn sm b-ghost" id="crm-ref">↻ Refresh now</button><a class="btn sm b-navy" href="' + SHEET_URL + '" target="_blank" rel="noopener">Open Google Sheet ↗</a></div></div>' +
       (CRM.warning ? '<div class="msg info" style="margin-bottom:12px">' + esc(CRM.warning) + '</div>' : '') +
@@ -309,11 +309,18 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
     var map = {agents: 'Agents', leads: 'Website Leads', issues: 'Issues', changes: 'Change Log', bot: 'Bot Listings', runs: 'Sync Log'};
     var t = crmT(map[CSUB]);
     var hidden = /^(Sheet Link|Original Row Data)$/;
+    if (CSUB === 'agents') {   // agents switched off (Active = No) stay in the sheet but are hidden here unless asked
+      var ai = t.headers.indexOf('Active (Yes/No)'), off = ai < 0 ? [] : t.rows.filter(function (r) { return /^n/i.test(String(r[ai] || '')); });
+      if (!CQ.showOff && off.length) t = {headers: t.headers, rows: t.rows.filter(function (r) { return off.indexOf(r) < 0; }), total: t.total - off.length, off: off.length};
+      else t = {headers: t.headers, rows: t.rows, total: t.total, off: CQ.showOff ? -off.length : 0};
+    }
     body.innerHTML = '<div class="card" style="padding:12px;margin-bottom:10px"><input id="cq2" placeholder="Search this tab…" style="width:100%;border:1.5px solid var(--line);border-radius:10px;padding:10px;font:inherit"></div>' +
-      '<div class="muted" style="margin-bottom:8px">' + t.total + ' rows in the sheet' + (t.rows.length < t.total ? ' · newest ' + t.rows.length + ' shown' : '') + '</div>' +
+      '<div class="muted" style="margin-bottom:8px">' + t.total + ' rows' + (t.rows.length < t.total ? ' · newest ' + t.rows.length + ' shown' : '') +
+      (t.off ? ' · <a href="#" id="coff" style="color:var(--blue)">' + (t.off > 0 ? t.off + ' inactive agents hidden — show' : 'hide inactive agents') + '</a>' : '') + '</div>' +
       '<div class="card tablewrap"><table id="ctab"><thead><tr>' + t.headers.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') + '</tr></thead><tbody>' +
       t.rows.map(function (r) { return '<tr>' + r.map(function (c, i) { var h = t.headers[i] || ''; c = String(c || ''); if (h === 'Sheet Link' && /^https?:/.test(c)) return '<td><a href="' + esc(c) + '" target="_blank" rel="noopener" style="color:var(--blue)">open sheet ↗</a></td>'; if (/^https?:\/\//.test(c)) return '<td><a href="' + esc(c) + '" target="_blank" rel="noopener" style="color:var(--blue)">link</a></td>'; if (/phone/i.test(h) && c) return '<td><a href="tel:' + esc(c) + '" style="color:var(--blue)">' + esc(c) + '</a></td>'; return '<td>' + esc(c.length > 160 ? c.slice(0, 160) + '…' : c) + '</td>'; }).join('') + '</tr>'; }).join('') +
       (t.rows.length ? '' : '<tr><td class="muted" colspan="' + Math.max(1, t.headers.length) + '">Nothing here yet.</td></tr>') + '</tbody></table></div>';
+    if ($('#coff')) $('#coff').onclick = function (ev) { ev.preventDefault(); CQ.showOff = !CQ.showOff; crmRender(); };
     $('#cq2').oninput = function () { var q = this.value.toLowerCase(); $$('#ctab tbody tr').forEach(function (tr) { tr.style.display = tr.textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none'; }); };
   }
   function performance() {
