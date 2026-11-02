@@ -26,7 +26,7 @@ from PIL import Image, ImageOps
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse, Response
+from starlette.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
 import chatbot
@@ -129,6 +129,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS projects (
             id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, city TEXT, district TEXT, address TEXT, description TEXT,
             completion TEXT, status TEXT DEFAULT 'active', lat REAL DEFAULT 0, lon REAL DEFAULT 0, cover TEXT DEFAULT '', created REAL, updated REAL);
+        CREATE TABLE IF NOT EXISTS login_tokens (token TEXT PRIMARY KEY, user_id INTEGER, expires REAL, used REAL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS imports (
             id INTEGER PRIMARY KEY, user_id INTEGER, filename TEXT, total INTEGER, imported INTEGER, errors TEXT DEFAULT '[]',
             status TEXT DEFAULT 'imported', created REAL);
@@ -152,7 +153,7 @@ def init_db():
                                 ("projects", "down_pct", "REAL DEFAULT 0"), ("projects", "inst_months", "INTEGER DEFAULT 0"),
                                 ("projects", "inst_note", "TEXT DEFAULT ''"), ("listings", "source_url", "TEXT DEFAULT ''"),
                                 ("listings", "agent_name", "TEXT DEFAULT ''"), ("users", "slug", "TEXT DEFAULT ''"),
-                                ("users", "links", "TEXT DEFAULT '{}'")):
+                                ("users", "links", "TEXT DEFAULT '{}'"), ("users", "pw_set", "INTEGER DEFAULT 1")):
             have = [r[1] for r in con.execute(f"PRAGMA table_info({table})")]
             if col not in have:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
@@ -552,7 +553,7 @@ async def me(request):
     u = current_user(request)
     if not u:
         return ok(user=None, settings=public_settings())
-    out = {k: u[k] for k in ("id", "name", "phone", "role", "company", "partner_until", "totp_on", "org_id")}
+    out = {k: u[k] for k in ("id", "name", "phone", "role", "company", "partner_until", "totp_on", "org_id", "slug", "pw_set")}
     out["limit"] = listing_limit(u)
     with db() as con:
         out["live"] = live_count(con, u["id"])
@@ -566,12 +567,12 @@ async def change_password(request):
     if e:
         return e
     d = await body_json(request)
-    if not check_pw(str(d.get("old") or ""), u["pw"]):
+    if u.get("pw_set", 1) and not check_pw(str(d.get("old") or ""), u["pw"]):   # an agent opening the bot link sets the first one freely
         return err("Current password is wrong")
     if len(str(d.get("new") or "")) < 6:
         return err("New password must be at least 6 characters")
     with _LOCK, db() as con:
-        con.execute("UPDATE users SET pw=? WHERE id=?", (hash_pw(str(d["new"])), u["id"]))
+        con.execute("UPDATE users SET pw=?, pw_set=1 WHERE id=?", (hash_pw(str(d["new"])), u["id"]))
     return ok()
 
 
@@ -676,7 +677,8 @@ async def my_listing(request):
         check_project(con, u, f)
         sets = ",".join(f"{k}=?" for k in f)
         # an edit goes back to the approval queue (admins' own edits stay live)
-        status = row["status"] if u["role"] == "admin" else ("pending" if row["status"] in ("active", "rejected", "changes") else row["status"])
+        kg_agent = u["role"] == "agent" and (u.get("company") or "").upper() == "KEY GROUP"
+        status = row["status"] if (u["role"] == "admin" or (kg_agent and row["status"] == "active")) else ("pending" if row["status"] in ("active", "rejected", "changes") else row["status"])
         con.execute(f"UPDATE listings SET {sets}, status=?, updated=?, confirmed=? WHERE id=?", (*f.values(), status, time.time(), time.time(), lid))
         record_price(con, row, f["price"], f["currency"])
         find_duplicates(con, lid)
@@ -978,7 +980,7 @@ def agent_user(con, name, phone, links=None):
     if u and u["role"] not in PARTNER_ROLES:   # never turn an admin / owner / staff account into an agent profile
         return None
     if not u:
-        cur = con.execute("INSERT INTO users (phone, name, pw, role, company, created, contact_verified) VALUES (?,?,?,?,?,?,1)",
+        cur = con.execute("INSERT INTO users (phone, name, pw, role, company, created, contact_verified, pw_set) VALUES (?,?,?,?,?,?,1,0)",
                           (phone, name or "Agent", hash_pw(secrets.token_urlsafe(16)), "agent", "KEY GROUP", time.time()))
         u = con.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone()
     if not u["slug"]:
@@ -1093,6 +1095,45 @@ async def bot_listing(request):
     path = f"/{u['slug']}/{listing_slug(f)}-{lid}" if u and u["slug"] and u["role"] in PARTNER_ROLES else f"/p/?id={lid}"
     return ok(id=lid, url=SITE + path, profile=(f"{SITE}/{u['slug']}/" if u and u["slug"] and u["role"] in PARTNER_ROLES else ""),
               photos=len(photos), updated=bool(old))
+
+
+
+async def bot_agent_access(request):
+    """Staff bot /login: makes sure the agent has a keygroup.ge account, moves their bot listings into it,
+    and returns a one-time login link (15 minutes) that the bot sends to the agent privately."""
+    sec = request.headers.get("x-bot-secret", "")
+    if not CRM_SECRET or not hmac.compare_digest(sec, CRM_SECRET):
+        return err("unauthorized", 401)
+    d = await body_json(request)
+    name = str(d.get("agent") or "").strip()[:40]
+    with _LOCK, db() as con:
+        u = agent_user(con, name, d.get("phone"), d.get("profiles") or {})
+        if not u:
+            return err("No agent account for this phone (it may belong to an admin or owner account)")
+        names = [x for x in {name, u["name"]} if x]
+        moved = con.execute(f"""UPDATE listings SET user_id=? WHERE agent_name IN ({','.join('?' * len(names))})
+                                AND user_id IN (SELECT id FROM users WHERE role='admin') AND status!='deleted'""", (u["id"], *names)).rowcount
+        tok = secrets.token_urlsafe(24)
+        con.execute("DELETE FROM login_tokens WHERE expires<?", (time.time(),))
+        con.execute("INSERT INTO login_tokens (token, user_id, expires) VALUES (?,?,?)", (tok, u["id"], time.time() + 900))
+        n = con.execute("SELECT COUNT(*) FROM listings WHERE user_id=? AND status!='deleted'", (u["id"],)).fetchone()[0]
+        audit(con, {"id": 0, "name": "Telegram bot"}, "agent_login_link", "user", u["id"], name)
+    return ok(url=f"{SITE}/api/login/link?t={tok}", profile=f"{SITE}/{u['slug']}/" if u["slug"] else "", listings=n, moved=moved,
+              phone=u["phone"], pw_set=bool(u["pw_set"]))
+
+
+async def login_link(request):
+    tok = request.query_params.get("t", "")[:64]
+    with _LOCK, db() as con:
+        r = con.execute("SELECT * FROM login_tokens WHERE token=?", (tok,)).fetchone()
+        ok_ = r and not r["used"] and r["expires"] > time.time()
+        if ok_:
+            con.execute("UPDATE login_tokens SET used=? WHERE token=?", (time.time(), tok))
+            u = con.execute("SELECT blocked FROM users WHERE id=?", (r["user_id"],)).fetchone()
+            ok_ = u and not u["blocked"]
+    if not ok_:
+        return RedirectResponse("/account/?link=expired", status_code=303)
+    return with_session(RedirectResponse("/account/?welcome=1", status_code=303), new_session(r["user_id"]))
 
 
 async def public_listings(request):
@@ -2254,6 +2295,8 @@ routes = [
     Route("/api/projects", public_projects),
     Route("/api/agents", public_agent),
     Route("/api/bot/listing", bot_listing, methods=["POST"]),
+    Route("/api/bot/agent-access", bot_agent_access, methods=["POST"]),
+    Route("/api/login/link", login_link),
     Route("/api/partners/apply", partner_apply, methods=["POST"]),
     Route("/api/admin/leads", admin_leads),
     Route("/api/admin/partners", admin_partners),

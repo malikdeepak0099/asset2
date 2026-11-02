@@ -59,10 +59,25 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       (ME.role !== 'owner' ? ' · <span class="pill t-vip">' + esc(ROLE(ME.role)) + '</span>' : '') + (ME.limit ? ' · ' + t('active listings ', 'აქტიური ') + (ME.live || 0) + ' / ' + ME.limit : '') +
       (ME.partner_until && ME.partner_until * 1000 > Date.now() ? ' · ' + t('Founding Partner until ', 'დამფუძნებელი პარტნიორი: ') + new Date(ME.partner_until * 1000).toLocaleDateString() : '') + '</span></div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap">' + (ME.role === 'admin' ? '<a class="btn b-navy" href="/admin/">Admin panel</a>' : '') +
-      '<button class="btn b-coral" id="add">' + KG.icon('plus') + t('Add listing', 'განცხადების დამატება') + '</button><button class="btn b-ghost" id="out">' + t('Log out', 'გასვლა') + '</button></div></div>' + tabs();
+      (ME.slug && ME.role !== 'owner' ? '<a class="btn b-ghost" target="_blank" href="/' + esc(ME.slug) + '/">' + KG.icon('eye') + t('My public profile', 'ჩემი საჯარო პროფილი') + '</a>' : '') +
+      '<button class="btn b-ghost" id="pwb">🔑 ' + t('Password', 'პაროლი') + '</button>' +
+      '<button class="btn b-coral" id="add">' + KG.icon('plus') + t('Add listing', 'განცხადების დამატება') + '</button><button class="btn b-ghost" id="out">' + t('Log out', 'გასვლა') + '</button></div></div>' +
+      (ME.pw_set === 0 ? '<form class="card" id="pw1" style="padding:16px;margin-bottom:16px;border:2px solid var(--gold);display:flex;gap:10px;flex-wrap:wrap;align-items:end">' +
+        '<div style="flex:1 1 260px"><b>👋 ' + t('Welcome to your KEY GROUP account!', 'კეთილი იყოს შენი მობრძანება KEY GROUP-ის ანგარიშში!') + '</b><div class="muted" style="font-size:13px">' +
+        t('Set a password so you can log in any time with your phone number ', 'დააყენე პაროლი, რომ ნებისმიერ დროს შეხვიდე შენი ნომრით ') + esc(ME.phone) + '.</div></div>' +
+        '<label class="f" style="flex:0 1 220px">' + t('New password (6+)', 'ახალი პაროლი (6+)') + '<input name="new" type="password" minlength="6" required autocomplete="new-password"></label>' +
+        '<button class="btn b-gold" type="submit">' + t('Save password', 'შენახვა') + '</button><div id="pw1m" style="flex-basis:100%"></div></form>' : '') + tabs();
   }
   function bindHead() {
     $('#add').onclick = function () { form(null); };
+    if ($('#pw1')) $('#pw1').onsubmit = function (e) { e.preventDefault(); api('/api/password', {method: 'POST', json: {new: e.target.new.value}}).then(function (r) { $('#pw1m').className = 'msg ' + (r.ok ? 'ok' : 'err'); $('#pw1m').textContent = r.ok ? t('Saved. Log in next time with your phone and this password.', 'შენახულია. შემდეგში შედი ნომრით და ამ პაროლით.') : r.error; if (r.ok) { ME.pw_set = 1; setTimeout(render, 1500); } }); };
+    $('#pwb').onclick = function () {
+      var old = ME.pw_set === 0 ? '' : prompt(t('Current password', 'ახლანდელი პაროლი'));
+      if (old === null) return;
+      var nw = prompt(t('New password (at least 6 characters)', 'ახალი პაროლი (მინ. 6 სიმბოლო)'));
+      if (!nw) return;
+      api('/api/password', {method: 'POST', json: {old: old, new: nw}}).then(function (r) { alert(r.ok ? t('Password changed.', 'პაროლი შეიცვალა.') : r.error); if (r.ok) ME.pw_set = 1; });
+    };
     $('#out').onclick = function () { api('/api/logout', {method: 'POST'}).then(function () { ME = null; auth('login'); }); };
     bindTabs();
   }
@@ -194,6 +209,7 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
   function auth(mode) {
     $('#app').innerHTML = '<form class="card auth" id="af"><h1>' + (mode === 'login' ? t('Log in', 'შესვლა') : t('Create account', 'რეგისტრაცია')) + '</h1>' +
       '<p class="muted" style="margin:0">' + t('Add your apartment, house or commercial space for sale or rent. Free listing — VIP if you want more views.', 'დაამატე შენი ბინა, სახლი ან კომერციული ფართი გასაყიდად ან ქირით. უფასოდ — ან VIP მეტი ნახვისთვის.') + '</p>' +
+      (new URLSearchParams(location.search).get('link') === 'expired' ? '<div class="msg err">' + t('This login link has expired or was already used. Send /login to the KEY GROUP bot for a new one.', 'ბმულს ვადა გაუვიდა ან უკვე გამოყენებულია. ახალი ბმულისთვის გაუგზავნე ბოტს /login') + '</div>' : '') +
       '<div class="seg"><button type="button" data-m="login" aria-pressed="' + (mode === 'login') + '">' + t('Log in', 'შესვლა') + '</button><button type="button" data-m="register" aria-pressed="' + (mode === 'register') + '">' + t('Register', 'რეგისტრაცია') + '</button></div>' +
       (mode === 'register' ? '<label class="f">' + t('Your name', 'სახელი') + '<input name="name" required autocomplete="name"></label>' : '') +
       '<label class="f">' + t('Phone number', 'ტელეფონის ნომერი') + '<input name="phone" type="tel" required autocomplete="tel" placeholder="5__ __ __ __"></label>' +

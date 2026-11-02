@@ -151,6 +151,7 @@ HELP_EN = (
     "5️⃣ Tap <b>“👁 Preview”</b>: you see exactly what will be published (title, texts, price, specs, photos, your contact, MyHome and SS format). Fix anything with ✏️.\n"
     "6️⃣ Tap <b>“✅ Approve and publish”</b> once: keygroup.ge + CRM + a ready MyHome / SS package. Nothing is published without your approval.\n\n"
     "/new — new listing without a link · /draft — my open draft · /phone — my contact number (shown instead of the owner's)\n"
+    "/login — open my keygroup.ge account (all my listings, leads, editing)\n"
     "/myid — your Telegram ID · /lang — ქართული / English"
 )
 
@@ -168,6 +169,7 @@ HELP = (
     "5️⃣ დააჭირე <b>„👁 გადახედვა“</b>: ნახავ ზუსტად რა გამოქვეყნდება (სათაური, ტექსტი, ფასი, მონაცემები, ფოტოები, შენი კონტაქტი, MyHome და SS ფორმატი). ✏️ ღილაკებით შეასწორე.\n"
     "6️⃣ დააჭირე <b>„✅ დამტკიცება და გამოქვეყნება“</b> ერთხელ: keygroup.ge + CRM + მზა პაკეტი MyHome / SS-ისთვის. შენი თანხმობის გარეშე არაფერი ქვეყნდება.\n\n"
     "/new — ახალი განცხადება ბმულის გარეშე · /draft — ჩემი დრაფტი · /phone — ჩემი ნომერი (ჩანს მესაკუთრის ნაცვლად)\n"
+    "/login — შესვლა ჩემს keygroup.ge ანგარიშზე (ჩემი ყველა განცხადება, მოთხოვნები, რედაქტირება)\n"
     "/myid — შენი Telegram ID · /lang — ქართული / English"
 )
 
@@ -614,6 +616,28 @@ def on_message(msg):
         else:
             send(chat, f"შენი ნომერი: <b>{e(STATE['phones'].get(str(uid)) or '—')}</b>\nშესაცვლელად: <code>/phone 599123456</code>")
         return
+    if text.startswith("/login") or text.startswith("/account"):
+        ph = STATE["phones"].get(str(uid)) or STATE.get("phones_by_name", {}).get(drafts.name_key(name))
+        if not ph:
+            send(chat, "ჯერ დაამატე შენი ნომერი: <code>/phone 5XXXXXXXX</code> — შემდეგ ისევ /login")
+            return
+        try:
+            r = requests.post(PORTAL_URL + "/api/bot/agent-access", json={"agent": name, "phone": ph, "profiles": drafts.profile_links(uid)},
+                              headers={"X-Bot-Secret": CRM_SECRET}, timeout=60).json()
+        except Exception as ex:
+            r = {"ok": False, "error": str(ex)[:120]}
+        if not r.get("ok"):
+            send(chat, f"⚠️ ანგარიში ვერ მოვამზადე: {e(r.get('error'))}")
+            return
+        send(chat, "🔐 <b>შენი keygroup.ge ანგარიში</b>\n\n"
+                   f"📱 ნომერი: <b>{e(r.get('phone'))}</b>\n🏠 განცხადებები: <b>{r.get('listings', 0)}</b>\n"
+                   + (f"👤 საჯარო პროფილი: {e(r.get('profile'))}\n" if r.get("profile") else "")
+                   + "\nდააჭირე ღილაკს — შეხვალ პირდაპირ (ბმული მუშაობს 15 წუთი, ერთხელ). "
+                   + ("პირველ შესვლაზე დააყენე პაროლი — შემდეგ შეხვალ ნომრით და პაროლით keygroup.ge/account-ზე." if not r.get("pw_set")
+                      else "პაროლი უკვე გაქვს — შეგიძლია შეხვიდე ნომრით და პაროლით keygroup.ge/account-ზეც.")
+                   + "\n\n⚠️ ეს ბმული არავის გაუზიარო.",
+             [[{"text": "🔐 შესვლა keygroup.ge-ზე", "url": r["url"]}]])
+        return
     if text.startswith("/new"):
         dr = drafts.new_draft(uid, name)
         send(chat, f"🆕 ახალი განცხადება #{e(dr['id'])}\n\n1️⃣ გამომიგზავნე ორიგინალი ფოტოები (უმჯობესია „ფაილად“ — სრული ხარისხი).\n"
@@ -844,6 +868,7 @@ def main():
                                   {"command": "new", "description": "ახალი განცხადება ფოტოებით"},
                                   {"command": "draft", "description": "ჩემი დრაფტის გადახედვა"},
                                   {"command": "phone", "description": "ჩემი საკონტაქტო ნომერი"},
+                                  {"command": "login", "description": "შესვლა ჩემს keygroup.ge ანგარიშზე"},
                                   {"command": "myid", "description": "ჩემი Telegram ID"}])
     for adm in admins():
         tg("setMyCommands", scope={"type": "chat", "chat_id": int(adm)}, commands=[
