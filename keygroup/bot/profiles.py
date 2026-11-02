@@ -115,6 +115,11 @@ def myhome_profile(user_id, fetch=extract.fetch, pause=1.0):
     out, seen = [], set()
     for page in range(1, MAX_PAGES + 1):
         items = _statements(fetch(MH_PROFILE.format(uid=user_id, page=page)))
+        for _ in range(2):                     # an empty first page is usually a hiccup on MyHome's side: try again
+            if items or page > 1:
+                break
+            time.sleep(pause * 4 + 2)
+            items = _statements(fetch(MH_PROFILE.format(uid=user_id, page=page)))
         for it in items:
             if str(it.get("user_id")) != str(user_id):
                 continue
