@@ -92,9 +92,48 @@ def prune():
             B.STATE["drafts"].pop(did, None)
 
 
+NAME_ALIAS = {"dato": "davit", "daviti": "davit", "demetre": "deme", "demeti": "deme", "demetri": "deme", "giorgi": "giorgi",
+              "gio": "giorgi", "nini": "nini", "nika": "nika", "ana": "ana", "anna": "ana"}
+
+
+def name_key(name):
+    """'დავითი' / 'Dato' / 'Davit' -> 'davit' so the admin's list matches the agents' Telegram names."""
+    n = B.texts.translit(str(name or "").strip().split(" ")[0], "en").lower()
+    n = re.sub(r"[^a-z]", "", n)
+    return NAME_ALIAS.get(n, n)
+
+
 def contact(dr):
-    phone = B.STATE["phones"].get(dr["uid"]) or B.COMPANY_PHONE
+    phone = B.STATE["phones"].get(dr["uid"]) or B.STATE.setdefault("phones_by_name", {}).get(name_key(dr["agent"])) or B.COMPANY_PHONE
     return dr["agent"], phone
+
+
+CONTACT_LINE = re.compile(r"((?:\+?995[\s-]?)?5\d{2}(?:[\s-]?\d){6})\s+([^\s\d@]+)(?:\s+([\w.+-]+@[\w-]+\.[\w.]+))?")
+
+
+def import_contacts(text):
+    """Admin pastes lines like '577 15 11 41 ნინი n.x@gmail.com'. Returns a report, or None if the text is not such a list."""
+    rows = CONTACT_LINE.findall(text or "")
+    if not rows:
+        return None
+    by_key = {}
+    for tid, nm in B.STATE["agents"].items():
+        by_key.setdefault(name_key(nm), []).append(tid)
+    pbn, emails = B.STATE.setdefault("phones_by_name", {}), B.STATE.setdefault("emails", {})
+    out = []
+    for ph, nm, mail in rows:
+        digits = re.sub(r"\D", "", ph)[-9:]
+        phone, key = "+995" + digits, name_key(nm)
+        pbn[key] = phone
+        if mail:
+            emails[key] = mail
+        ids = by_key.get(key, [])
+        for tid in ids:
+            B.STATE["phones"][tid] = phone
+        out.append(f"{'✅' if ids else '🕓'} {e(nm)} — {e(phone)}" + (f" · {e(mail)}" if mail else "")
+                   + ("" if ids else " (Telegram-ში ჯერ არ არის — დაემატება, როცა შემოვა)"))
+    B.save_state()
+    return "📇 <b>აგენტების კონტაქტები შენახულია</b>\n" + "\n".join(out) + "\n\nეს ნომრები გამოჩნდება მათ განცხადებებში მესაკუთრის ნომრის ნაცვლად."
 
 
 def compose(dr):

@@ -581,6 +581,16 @@ def on_message(msg):
         send(chat, "\n".join(lines))
         return
 
+    if is_admin(uid) and not text.startswith("/"):
+        rep = drafts.import_contacts(text)
+        if rep and len(drafts.CONTACT_LINE.findall(text)) >= 1 and "myhome.ge" not in text and "ss.ge" not in text:
+            send(chat, rep)
+            return
+    if text.startswith("/contacts") and is_admin(uid):
+        pbn, em = STATE.get("phones_by_name", {}), STATE.get("emails", {})
+        rows = [f"• {e(i)} ({e(n)}): {e(STATE['phones'].get(i) or pbn.get(drafts.name_key(n)) or '—')} · {e(em.get(drafts.name_key(n)) or '—')}" for i, n in STATE["agents"].items()]
+        send(chat, "📇 <b>Agent contacts</b>\n" + ("\n".join(rows) or "—") + "\n\nTo update: paste lines like <code>577 15 11 41 ნინი n.x@gmail.com</code>")
+        return
     name = agent_name(uid)
     if not name:
         if admins() and not is_admin(uid):
@@ -816,6 +826,7 @@ def main():
             {"command": "agents", "description": "Agents and their profiles"},
             {"command": "syncall", "description": "Update all agents now"},
             {"command": "addadmin", "description": "Add another admin"},
+            {"command": "contacts", "description": "Agents' phones and emails"},
             {"command": "lang", "description": "English / ქართული"}])
     threading.Thread(target=scheduler, daemon=True).start()
     while True:
