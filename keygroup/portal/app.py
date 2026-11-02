@@ -37,6 +37,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 ALERT_CHATS = [c.strip() for c in os.environ.get("ALERT_CHATS", "").split(",") if c.strip()]
 SITE = os.environ.get("SITE_URL", "https://keygroup.ge")
 CRM_URL = os.environ.get("CRM_URL", "")
+CRM_SECRET = os.environ.get("CRM_SECRET", "")
 MAX_PHOTOS = 15
 MAX_PHOTO_BYTES = 12 * 1024 * 1024
 SESSION_DAYS = 30
@@ -64,7 +65,7 @@ PARTNER_ROLES = ("agent", "agency", "developer")
 STAFF_ROLES = ("admin", "moderator", "finance")
 ROLES = ("owner",) + PARTNER_ROLES + STAFF_ROLES
 # what each staff role may open in the admin panel ("*" = everything)
-STAFF_PERMS = {"admin": {"*"}, "moderator": {"stats", "listings", "reports", "chats", "leads", "partners", "analytics"},
+STAFF_PERMS = {"admin": {"*"}, "moderator": {"stats", "listings", "reports", "chats", "leads", "partners", "analytics", "crm"},
                "finance": {"stats", "orders", "analytics"}}
 VERIFY_LABELS = {0: "", 1: "Contact verified", 2: "Verified listing", 3: "Inspected"}
 
@@ -1758,6 +1759,56 @@ async def admin_performance(request):
               crm_supply=sorted(({"district": k, "total": v} for k, v in crm.items()), key=lambda x: -x["total"])[:25])
 
 
+_CRM_CACHE = {"at": 0, "data": None}
+
+
+def fetch_crm(force=False):
+    """CRM tabs from the Google Apps Script web app (private, secret-protected); cached 10 minutes in memory + on disk."""
+    path = os.path.join(DATA_DIR, "crm_cache.json")
+    if not force and _CRM_CACHE["data"] and time.time() - _CRM_CACHE["at"] < 600:
+        return _CRM_CACHE["data"], None
+    if not CRM_URL or not CRM_SECRET:
+        return None, "CRM connection is not configured on the server (CRM_URL / CRM_SECRET)."
+    try:
+        url = CRM_URL + ("&" if "?" in CRM_URL else "?") + urllib.parse.urlencode({"action": "crmExport", "secret": CRM_SECRET})
+        raw = urllib.request.urlopen(url, timeout=60).read()
+        data = json.loads(raw.decode("utf-8"))
+        if not data.get("ok"):
+            raise ValueError(data.get("error") or "CRM refused the request")
+        data["fetched"] = time.time()
+        _CRM_CACHE.update(at=time.time(), data=data)
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False)
+        except OSError:
+            pass
+        return data, None
+    except Exception as ex:
+        msg = str(ex)
+        if "unauthorized" in msg:
+            msg = "The CRM did not accept the secret key."
+        elif "Unexpected" in msg or "Expecting value" in msg:
+            msg = "The CRM web app does not have the export yet — publish a new version of the Apps Script deployment."
+        if os.path.exists(path):
+            try:
+                old = json.load(open(path, encoding="utf-8"))
+                return old, f"Showing the last saved copy — live refresh failed: {msg}"
+            except Exception:
+                pass
+        return None, msg
+
+
+async def admin_crm(request):
+    u, e = need_user(request, perm="crm")
+    if e:
+        return e
+    import asyncio
+    data, warn = await asyncio.get_running_loop().run_in_executor(None, fetch_crm, request.query_params.get("refresh") == "1")
+    if not data:
+        return err(warn or "CRM unavailable", 502)
+    return ok(crm=data, warning=warn)
+
+
 async def admin_audit(request):
     u, e = need_user(request, admin=True)
     if e:
@@ -1827,6 +1878,7 @@ routes = [
     Route("/api/admin/analytics", admin_analytics),
     Route("/api/admin/audit", admin_audit),
     Route("/api/admin/performance", admin_performance),
+    Route("/api/admin/crm", admin_crm),
     Route("/api/my/listings/{lid:int}/confirm", confirm_listing, methods=["POST"]),
     Route("/api/chat/send", chat_send, methods=["POST"]),
     Route("/api/chat/poll", chat_poll),

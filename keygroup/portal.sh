@@ -40,6 +40,8 @@ else
 fi
 grep -q '^CRM_URL=' .env || { CRMU=$(grep '^CRM_URL=' /opt/keygroup-listing/.env 2>/dev/null | cut -d= -f2-); echo "CRM_URL=$CRMU" >> .env; }
 grep -q '^SITE_DIR=' .env || echo "SITE_DIR=/site" >> .env
+grep -q '^CRM_SECRET=' .env || { CS=$(grep '^CRM_SECRET=' /opt/keygroup-listing/.env 2>/dev/null | cut -d= -f2-); echo "CRM_SECRET=$CS" >> .env; }
+grep -q '^CRM_URL=.\+' .env || { CRMU=$(grep '^CRM_URL=' /opt/keygroup-listing/.env 2>/dev/null | cut -d= -f2-); sed -i '/^CRM_URL=/d' .env; echo "CRM_URL=$CRMU" >> .env; }
 docker compose up -d --build --force-recreate 2>&1 | tail -2
 sleep 6
 docker compose ps | grep -q Up || { echo "PROBLEM - portal did not start:"; docker compose logs --tail 20; exit 1; }
