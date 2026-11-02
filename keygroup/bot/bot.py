@@ -44,6 +44,7 @@ SYNC_LOCK = threading.Lock()
 
 TYPE_KA = {"flat": "ბინა", "house": "კერძო სახლი", "land": "მიწა", "commercial": "კომერციული", "hotel": "სასტუმრო"}
 DEAL_KA = {"sale": "იყიდება", "rent": "ქირავდება", "": "—"}
+B_DEAL = {"sale": "იყიდება", "rent": "ქირავდება", "daily": "დღიური ქირა"}
 
 
 # ---------------------------------------------------------------- state
@@ -694,7 +695,19 @@ def on_message(msg):
         d = extract.extract(url)
     except Exception as ex:
         traceback.print_exc()
-        send(chat, f"❌ ვერ გავხსენი განცხადება ({e(type(ex).__name__)}). შეამოწმე ბმული და სცადე თავიდან.")
+        code = getattr(ex, "status", "") or type(ex).__name__
+        d = extract.from_slug(url)
+        site = "SS.ge" if d["source"] == "ss" else "MyHome.ge"
+        send(chat, f"⚠️ {site}-მა სერვერს გვერდი არ მისცა ({e(code)}) — სრულ ინფორმაციას ვერ ვკითხულობ.\n"
+                   f"ბმულიდან ამოვიღე: {e(B_DEAL.get(d['deal'], '—'))} · {e(d['rooms'] or '—')} ოთახი · {e(TYPE_KA.get(d['type'], '—'))} · {e(d['district'] or '—')}.\n\n"
+                   "შეგიძლია მაინც გააგრძელო: დაურეკე მესაკუთრეს, დააჭირე „✅ თანახმაა“, მერე ფასი, ფართი და მისამართი შეავსე ✏️ ღილაკებით.")
+        if not d["id"]:
+            return
+        key = f"{chat}-{int(time.time())}"
+        STATE["pending"][key] = {"data": d, "uid": uid, "agent": name, "created": time.time()}
+        save_state()
+        send(chat, f"🔗 {e(url)}", [[{"text": "✅ მესაკუთრე თანახმაა", "callback_data": "ok|" + key}],
+                                    [{"text": "❌ გაუქმება", "callback_data": "no|" + key}]])
         return
     prof = profile_of(uid)
     own = False

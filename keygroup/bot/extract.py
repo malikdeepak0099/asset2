@@ -45,11 +45,74 @@ def listing_id(url):
 
 # ---------------------------------------------------------------- fetching
 
+BROWSER_HEADERS = {
+    "User-Agent": UA,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "ka-GE,ka;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Cache-Control": "no-cache", "Pragma": "no-cache", "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "none", "Sec-Fetch-User": "?1",
+    "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"', "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+}
+
+
+class Blocked(Exception):
+    """The site refused the server (status code in .status)."""
+    def __init__(self, status):
+        super().__init__(f"HTTP {status}")
+        self.status = status
+
+
 def fetch(url, timeout=25):
-    headers = {"User-Agent": UA, "Accept-Language": "ka,en;q=0.8"}
-    r = requests.get(url, headers=headers, timeout=timeout)
-    r.raise_for_status()
-    return r.text
+    """Fetch like a normal browser; one retry with a session (cookies) if the site refuses the first time."""
+    last = None
+    for attempt in range(2):
+        try:
+            sess = requests.Session()
+            if attempt:
+                host = re.match(r"https?://[^/]+", url)
+                if host:   # visit the home page first to pick up cookies, as a person would
+                    sess.get(host.group(0) + "/", headers=BROWSER_HEADERS, timeout=timeout)
+            r = sess.get(url, headers=dict(BROWSER_HEADERS, Referer="https://www.google.com/"), timeout=timeout)
+            if r.status_code < 400:
+                return r.text
+            last = r.status_code
+        except requests.RequestException:
+            if attempt:
+                raise
+    raise Blocked(last)
+
+
+SLUG_DEAL = {"qiravdeba": "rent", "iyideba": "sale", "giravdeba": "rent", "qiravdeba-dgiurad": "daily"}
+SLUG_TYPE = {"bina": "flat", "saxli": "house", "kerdzo-saxli": "house", "agaraki": "house", "komerciuli": "commercial",
+             "farti": "commercial", "mitsa": "land", "miwa": "land", "sastumro": "hotel"}
+
+
+def from_slug(url):
+    """When the site blocks the server: what the link itself says
+    (…/qiravdeba-3-otaxiani-bina-chughuretshi-37165239 -> rent, 3 rooms, flat, Chughureti)."""
+    path = (url or "").split("?")[0].rstrip("/").rsplit("/", 1)[-1].lower()
+    words = path.split("-")
+    d = {"source": site_of(url), "url": url, "id": listing_id(url), "title": "", "description": "", "deal": "", "type": "",
+         "price": "", "price_usd": "", "currency": "", "area": "", "rooms": "", "bedrooms": "", "floor": "", "total_floors": "",
+         "city": "", "district": "", "address": "", "phone": "", "owner": "", "images": [], "features": [], "details": [],
+         "from_link_only": True}
+    for w in words:
+        if w in SLUG_DEAL and not d["deal"]:
+            d["deal"] = SLUG_DEAL[w]
+        if w in SLUG_TYPE and not d["type"]:
+            d["type"] = SLUG_TYPE[w]
+    m = re.search(r"(\d+)-otaxiani", path)
+    if m:
+        d["rooms"] = int(m.group(1))
+    for w in words:   # "chughuretshi" / "saburtaloze" / "vakeshi" -> district
+        if re.search(r"(shi|ze|tan)$", w) and not w.isdigit() and len(w) > 5:
+            base = re.sub(r"(shi|ze|tan)$", "", w)
+            d["district"] = base[:1].upper() + base[1:] + ("i" if not base.endswith(("i", "o", "a", "e")) else "")
+            break
+    if "batum" in path:
+        d["city"] = "Batumi"
+    return d
 
 
 def json_blobs(page):
@@ -342,16 +405,33 @@ def parse_ss(page, url):
         "user_uuid": str(a.get("userId") or "").lower(),
         "images": [i.get("fileName") for i in sorted(a.get("appImages") or [], key=lambda x: x.get("orderNo") or 0)
                    if isinstance(i, dict) and i.get("fileName")][:20],
-        "features": ss_features(a), "details": [],
-        "lat": num(addr.get("latitude") or addr.get("lat")), "lon": num(addr.get("longitude") or addr.get("lng")),
-        "posted_at": str(a.get("orderDate") or a.get("createDate") or ""),
-        "video_url": str(a.get("videoUrl") or a.get("youtubeLink") or ""),
+        "features": ss_features(a), "details": ss_details(a),
+        "lat": num(a.get("locationLatitude") or addr.get("latitude")), "lon": num(a.get("locationLongitude") or addr.get("longitude")),
+        "posted_at": str(a.get("orderDate") or ""),
+        "video_url": str(a.get("applicationVideoLink") or a.get("uploadVideoLink") or ""),
     }
 
 
+SS_AMENITIES = [("airConditioning", "კონდიციონერი"), ("balcony", "აივანი"), ("basement", "სარდაფი"), ("cableTelevision", "საკაბელო ტელევიზია"),
+                ("drinkingWater", "სასმელი წყალი"), ("electricity", "ელექტროენერგია"), ("elevator", "ლიფტი"), ("fridge", "მაცივარი"),
+                ("furniture", "ავეჯი"), ("garage", "გარაჟი"), ("glazedWindows", "მინაპაკეტი"), ("heating", "გათბობა"), ("hotWater", "ცხელი წყალი"),
+                ("internet", "ინტერნეტი"), ("ironDoor", "რკინის კარი"), ("naturalGas", "ბუნებრივი აირი"), ("securityAlarm", "სიგნალიზაცია"),
+                ("sewage", "კანალიზაცია"), ("storage", "სათავსო"), ("telephone", "ტელეფონი"), ("tv", "ტელევიზორი"),
+                ("washingMachine", "სარეცხი მანქანა"), ("water", "წყალი"), ("wiFi", "Wi-Fi"), ("withPool", "აუზი"), ("viewOnYard", "ხედი ეზოში"),
+                ("viewOnStreet", "ხედი ქუჩაზე"), ("withBuiltInKitchen", "ჩაშენებული სამზარეულო"), ("isPetFriendly", "შინაური ცხოველები დაშვებულია"),
+                ("lastFloor", "ბოლო სართული")]
+
+
+def ss_details(a):
+    rows = [("მდგომარეობა", a.get("state") if isinstance(a.get("state"), str) else ""), ("სტატუსი", a.get("realEstateStatus")),
+            ("სამზარეულო", a.get("kitchenArea") and f"{a.get('kitchenArea')} მ²"), ("ეზო", a.get("areaOfYard") and f"{a.get('areaOfYard')} მ²"),
+            ("სველი წერტილი", a.get("toilet")), ("საკადასტრო კოდი", a.get("cadastralCode")), ("პროექტი", a.get("projectName"))]
+    return [[k, str(v)] for k, v in rows if v not in (None, "", 0, False) and not isinstance(v, (dict, list))]
+
+
 def ss_features(a):
-    """SS.ge keeps amenities as lists of {title, value/isChecked} — collect every ticked one, best effort."""
-    out = []
+    """SS.ge amenities: top-level true/false fields, plus any ticked {title, isChecked} lists (best effort)."""
+    out = [label for key, label in SS_AMENITIES if a.get(key) is True]
     for d in walk(a):
         title = d.get("title") or d.get("name") or d.get("displayName")
         flag = d.get("isChecked", d.get("checked", d.get("value", d.get("isSelected"))))
