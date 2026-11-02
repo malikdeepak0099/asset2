@@ -60,6 +60,20 @@
     while (el.parentElement && (el.parentElement.innerText || '').trim().split('\n').filter(Boolean).length <= 2 && (el.parentElement.innerText || '').trim().length <= 40) el = el.parentElement;
     return el;
   }
+  function realClick(el) {
+    var r = el.getBoundingClientRect(), o = {bubbles: true, cancelable: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0};
+    try { el.dispatchEvent(new PointerEvent('pointerdown', o)); } catch (e) {}
+    el.dispatchEvent(new MouseEvent('mousedown', o));
+    try { el.dispatchEvent(new PointerEvent('pointerup', o)); } catch (e) {}
+    el.dispatchEvent(new MouseEvent('mouseup', o));
+    el.dispatchEvent(new MouseEvent('click', o));
+  }
+  // MyHome only saves the address after its geocode call — watch for it
+  (function () {
+    if (window.__kgGeoHook) return; window.__kgGeoHook = true; window.__kgGeo = 0;
+    var oo = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function (m, u) { if (/geocode/.test(String(u))) window.__kgGeo++; return oo.apply(this, arguments); };
+  })();
   function txt(e) { return (e.innerText || e.textContent || '').trim(); }
   function press(el) { ['mousedown', 'mouseup', 'click'].forEach(function (t) { el.dispatchEvent(new MouseEvent(t, {bubbles: true, cancelable: true})); }); }
   async function photosToFiles(urls) {
@@ -105,7 +119,7 @@
       await typeInto(loc.querySelector('input'), d.district_ka);
       await sleep(1500);
       li = Array.prototype.find.call(loc.querySelectorAll('li'), function (x) { return txt(x).indexOf(d.city_ka || 'თბილისი') >= 0; }) || loc.querySelector('li');
-      if (li) li.click();
+      if (li) { li.scrollIntoView({block: 'center'}); realClick(li); }
       note(!!li, 'Location: ' + (li ? txt(li).replace(/\n/g, ', ') : d.district_ka + ' — choose it yourself'));
       await sleep(800);
     }
@@ -116,11 +130,18 @@
       await sleep(1500);
       var key = d.street.split(' ').slice(0, 2).join(' ');
       var sli = Array.prototype.find.call(st.querySelectorAll('li'), function (x) { return txt(x).indexOf(key) === 0; }) || st.querySelector('li');
-      if (sli) sli.click();
-      note(!!sli, 'Street: ' + (sli ? txt(sli).split('\n')[0] : d.street + ' — choose it yourself'));
+      var geo0 = window.__kgGeo;
+      if (sli) { sli.scrollIntoView({block: 'center'}); realClick(sli); }
+      await sleep(1500);
+      var geoOk = window.__kgGeo > geo0;
+      note(sli && geoOk ? true : false, 'Street: ' + (sli ? txt(sli).split('\n')[0] + (geoOk ? '' : ' — address not saved: pick the street again by hand from the list') : d.street + ' — choose it yourself'));
     }
     var num = T('add-statement-street-number');
-    if (num && d.number) { val(num.querySelector('input'), d.number); note(true, 'Number: ' + d.number); }
+    if (num && d.number) {
+      var ni = num.querySelector('input'); await typeInto(ni, String(d.number));
+      ni.dispatchEvent(new Event('change', {bubbles: true})); ni.blur(); ni.dispatchEvent(new FocusEvent('focusout', {bubbles: true}));
+      await sleep(1200); note(true, 'Number: ' + d.number);
+    }
     // price
     var ct = T('add-statement-currency-toggle');
     if (ct) {
