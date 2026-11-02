@@ -31,6 +31,7 @@ EXTRA_ADMINS = {a.strip() for a in os.environ.get("ADMINS", "").split(",") if a.
 COMPANY_PHONE = os.environ.get("COMPANY_PHONE", "+995 577 114 118").strip()
 CRM_URL = os.environ.get("CRM_URL", "").strip()
 CRM_SECRET = os.environ.get("CRM_SECRET", "").strip()
+PORTAL_URL = os.environ.get("PORTAL_URL", "https://keygroup.ge").strip().rstrip("/")
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 STATE_FILE = os.path.join(DATA_DIR, "state.json")
 TBILISI = timezone(timedelta(hours=4))
@@ -143,7 +144,7 @@ HELP_EN = (
     "1️⃣ Send me an owner's listing <b>link</b> (myhome.ge or ss.ge).\n"
     "2️⃣ I extract all the details and the owner's phone.\n"
     "3️⃣ Call the owner. If they agree, tap <b>“✅ Owner agreed”</b>.\n"
-    "4️⃣ I give you the ready listing (GE/EN/RU), the form fields and photos. Everything is saved to the CRM.\n\n"
+    "4️⃣ I give you the ready listing (GE/EN/RU), the form fields and photos. It goes live on keygroup.ge under KEY GROUP at once and is saved to the CRM.\n\n"
     "/myid — your Telegram ID · /lang — ქართული / English"
 )
 
@@ -157,7 +158,7 @@ HELP = (
     "1️⃣ გამომიგზავნე მესაკუთრის განცხადების <b>ბმული</b> (myhome.ge ან ss.ge).\n"
     "2️⃣ ამოვიღებ ყველა ინფორმაციას და მესაკუთრის ნომერს.\n"
     "3️⃣ დაურეკე მესაკუთრეს. თუ თანახმაა, დააჭირე <b>„✅ მესაკუთრე თანახმაა“</b>.\n"
-    "4️⃣ მოგცემ მზა განცხადებას (ქართ/ინგ/რუს), ველებს და ფოტოებს. ყველაფერი ჩაიწერება CRM-ში.\n\n"
+    "4️⃣ მოგცემ მზა განცხადებას (ქართ/ინგ/რუს), ველებს და ფოტოებს. განცხადება მაშინვე გამოქვეყნდება keygroup.ge-ზე KEY GROUP-ის სახელით და ჩაიწერება CRM-ში.\n\n"
     "/myid — შენი Telegram ID · /lang — ქართული / English"
 )
 
@@ -488,6 +489,32 @@ def ask_admin_to_register(user):
 
 # ---------------------------------------------------------------- handlers
 
+PRIVATE_LINK_KA = ("⚠️ ეს შენი <b>პირადი კაბინეტის</b> ბმულია (ჩემი განცხადებები) — მას სხვა ვერ ხედავს და მისგან ვერაფერს ვკითხულობ.\n\n"
+                   "👉 გახსენი <b>კონკრეტული განცხადება</b> MyHome.ge-ზე ან SS.ge-ზე და გამომიგზავნე მისი ბმული, მაგ.:\n"
+                   "<code>https://www.myhome.ge/pr/23456789/</code>")
+PRIVATE_PROFILE_KA = ("⚠️ ეს შენი <b>პირადი კაბინეტის</b> ბმულია — მისგან პროფილს ვერ ვიგებ.\n\n"
+                      "👉 გახსენი <b>შენი ნებისმიერი განცხადება</b> MyHome.ge-ზე და გამომიგზავნე:\n<code>/profile https://www.myhome.ge/pr/23456789/</code>\n"
+                      "ან საჯარო პროფილის ბმული: <code>/profile https://www.myhome.ge/udzravi-qoneba/?users=1234567</code>")
+
+
+def publish_to_site(d, agent, with_photos):
+    """Post the listing to keygroup.ge under KEY GROUP (company phone). Returns (ok, url_or_error, photos)."""
+    if not CRM_SECRET:
+        return False, "secret not set", 0
+    payload = {k: d.get(k) for k in ("url", "deal", "type", "city", "district", "address", "rooms", "bedrooms", "area", "floor",
+                                     "total_floors", "price", "price_usd", "currency")}
+    tx = d.get("texts") or {}
+    payload.update(title=tx.get("title_en") or tx.get("title_ka") or d.get("title"),
+                   description="\n\n".join(x for x in (tx.get("en"), tx.get("ka"), tx.get("ru")) if x) or d.get("description"),
+                   agent=agent, with_photos=bool(with_photos), photos=(d.get("images") or [])[:12])
+    try:
+        r = requests.post(PORTAL_URL + "/api/bot/listing", json=payload, headers={"X-Bot-Secret": CRM_SECRET}, timeout=120)
+        j = r.json()
+        return (True, j.get("url"), j.get("photos", 0)) if j.get("ok") else (False, j.get("error") or r.status_code, 0)
+    except Exception as ex:
+        return False, str(ex)[:120], 0
+
+
 def on_message(msg):
     chat = msg["chat"]["id"]
     uid = msg["from"]["id"]
@@ -584,6 +611,9 @@ def on_message(msg):
             send(chat, f"MyHome.ge: {'ID ' + e(p['myhome']) if p.get('myhome') else '❌'}\nSS.ge: {'✅' if p.get('ss') else '❌'}\n\n"
                        "შესაცვლელად: <code>/profile ბმული</code> (პროფილის ან შენი განცხადების ბმული)")
             return
+        if arg in ("ბმული", "link") or extract.is_private_link(arg):
+            send(chat, PRIVATE_PROFILE_KA)
+            return
         send(chat, "⏳ ვამოწმებ…")
         try:
             msg_ = set_profile_from_text(uid, arg)
@@ -624,6 +654,9 @@ def on_message(msg):
         send(chat, "გამომიგზავნე myhome.ge ან ss.ge განცხადების ბმული. /help")
         return
 
+    if extract.is_private_link(url) or not extract.listing_id(url):
+        send(chat, PRIVATE_LINK_KA)
+        return
     send(chat, "⏳ ვამუშავებ განცხადებას…")
     try:
         d = extract.extract(url)
@@ -644,6 +677,9 @@ def on_message(msg):
         state_txt = "🆕 დაემატა" if new else ("✏️ განახლდა" if upd else "✔️ უკვე ბაზაშია, ცვლილება არ არის")
         send(chat, f"📌 ეს <b>შენი</b> განცხადებაა ({d['source']}). {state_txt} შენს ბაზაში და CRM-ში.")
         return
+    if not (d.get("price") or d.get("price_usd")) and not d.get("area"):
+        send(chat, "❌ ამ ბმულზე განცხადების მონაცემები ვერ ვიპოვე (ფასი, ფართი). შეამოწმე, რომ ეს <b>კონკრეტული განცხადების</b> ბმულია და ის ჯერ აქტიურია.\n" + e(url))
+        return
     if d.get("refuses_agencies"):
         send(chat, f"🚫 <b>{e(d.get('title') or 'განცხადება')}</b>\n\nმესაკუთრე განცხადებაში წერს, რომ <b>სააგენტოებთან არ თანამშრომლობს</b>. "
                    "ამიტომ ამ განცხადებას არ ვამუშავებ — გთხოვ, არ დაურეკო. აირჩიე სხვა განცხადება.")
@@ -655,7 +691,8 @@ def on_message(msg):
         for k in sorted(STATE["pending"], key=lambda k: STATE["pending"][k]["created"])[:-200]:
             STATE["pending"].pop(k, None)
     save_state()
-    send(chat, summary(d), [[{"text": "✅ მესაკუთრე თანახმაა", "callback_data": "ok|" + key}],
+    send(chat, summary(d), [[{"text": "✅ თანახმაა — საიტზე ფოტოებით", "callback_data": "ok|" + key}],
+                           [{"text": "✅ თანახმაა — ფოტოების გარეშე", "callback_data": "okn|" + key}],
                            [{"text": "❌ გაუქმება", "callback_data": "no|" + key}]])
 
 
@@ -691,6 +728,8 @@ def on_callback(cb):
     if str(cb["from"]["id"]) != str(item["uid"]) and not is_admin(cb["from"]["id"]):
         return
     tg("editMessageReplyMarkup", chat_id=chat, message_id=cb["message"]["message_id"], reply_markup={"inline_keyboard": []})
+    if action not in ("ok", "okn", "no"):
+        return
     if action == "no":
         STATE["pending"].pop(key, None)
         save_state()
@@ -718,12 +757,17 @@ def on_callback(cb):
         send(chat, "📷 ფოტოები ვერ გადმოვწერე. ნახე ორიგინალ განცხადებაში:\n" + e(d.get("url")))
 
     ok, info = save_to_crm(d, item["agent"], item["uid"], consent_at, ai_used)
+    site_ok, site_info, site_ph = publish_to_site(d, item["agent"], action == "ok")
     STATE["pending"].pop(key, None)
     save_state()
-    send(chat, ("💾 ჩაწერილია Master CRM-ში." if ok else "⚠️ CRM-ში ჩაწერა ვერ მოხერხდა — ადმინისტრატორს ვაცნობე.")
-         + "\n\n➡️ ახლა დადე შენს ქვე-აგენტის ანგარიშზე (Key Group). ტექსტზე ერთი დაჭერით დაკოპირდება.")
+    send(chat, ("🌐 <b>გამოქვეყნდა keygroup.ge-ზე</b> KEY GROUP-ის სახელით" + (f" ({site_ph} ფოტო)" if site_ph else "") + f":\n{e(site_info)}\n\n"
+                if site_ok else f"⚠️ საიტზე გამოქვეყნება ვერ მოხერხდა ({e(site_info)}) — ადმინისტრატორს ვაცნობე.\n\n")
+         + ("💾 ჩაწერილია Master CRM-ში." if ok else "⚠️ CRM-ში ჩაწერა ვერ მოხერხდა — ადმინისტრატორს ვაცნობე.")
+         + "\n\n➡️ MyHome.ge / SS.ge-ზე: დადე Key Group-ის ანგარიშზე — ტექსტზე ერთი დაჭერით დაკოპირდება.")
     if not ok:
         send_admins(f"⚠️ CRM error for {e(item['agent'])}: {e(info)}")
+    if not site_ok:
+        send_admins(f"⚠️ Website publish error for {e(item['agent'])}: {e(site_info)}")
 
 
 # ---------------------------------------------------------------- main loop

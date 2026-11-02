@@ -5,6 +5,7 @@ Plans: Free (30 days), VIP, Super VIP (top of the list for N days, badge) and Bo
 Payment is manual for now: the owner orders a plan, pays by bank transfer / cash, the admin marks the
 order paid and the plan starts. Data lives in SQLite + photo files under DATA_DIR.
 """
+import asyncio
 import base64
 import csv
 import struct
@@ -149,7 +150,8 @@ def init_db():
                                 ("listings", "prev_price", "REAL DEFAULT 0"), ("listings", "price_drop_at", "REAL DEFAULT 0"),
                                 ("projects", "frame", "TEXT DEFAULT ''"), ("projects", "handover", "TEXT DEFAULT ''"),
                                 ("projects", "down_pct", "REAL DEFAULT 0"), ("projects", "inst_months", "INTEGER DEFAULT 0"),
-                                ("projects", "inst_note", "TEXT DEFAULT ''")):
+                                ("projects", "inst_note", "TEXT DEFAULT ''"), ("listings", "source_url", "TEXT DEFAULT ''"),
+                                ("listings", "agent_name", "TEXT DEFAULT ''")):
             have = [r[1] for r in con.execute(f"PRAGMA table_info({table})")]
             if col not in have:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
@@ -394,6 +396,7 @@ def listing_out(row, owner_view=False, admin_view=False, settings=None):
         d["price_drop"] = {"from": pp, "pct": round((pp - d["price"]) / pp * 100), "at": pd}
     if not admin_view:
         d.pop("dup_of", None)
+        d.pop("source_url", None)
     if not (owner_view or admin_view) and d.get("lat"):
         d["lat"], d["lon"] = round(d["lat"], 3), round(d["lon"], 3)   # ~100 m: never publish an exact door location
     if not (owner_view or admin_view or settings.get("show_owner_phone")):
@@ -912,6 +915,86 @@ async def public_agent(request):
         st.pop("open_reports", None)
         return ok(agent={"id": u["id"], "name": u["company"] or u["name"], "person": u["name"] if u["company"] else "", "role": u["role"],
                          "since": u["created"], **st}, rules=TRUSTED_RULES, listings=[listing_out(r, settings=s) for r in rows])
+
+
+# ---------------------------------------------------------------- staff Telegram bot -> KEY GROUP listing on the website
+
+PHOTO_HOSTS = ("static.my.ge", "myhome.ge", "ss.ge", "static.ss.ge")
+CITY_KA = {"თბილისი": "Tbilisi", "ბათუმი": "Batumi", "ქუთაისი": "Kutaisi"}
+
+
+def bot_photo(url):
+    """Download one listing photo from the MyHome / SS.ge image servers only (no other hosts)."""
+    try:
+        host = (urllib.parse.urlparse(url).hostname or "").lower()
+        if not url.startswith("https://") or not any(host == h or host.endswith("." + h) for h in PHOTO_HOSTS):
+            return ""
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 KEYGROUP"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            raw = r.read(12 * 1024 * 1024)
+        return save_photo(raw)
+    except Exception:
+        return ""
+
+
+async def bot_listing(request):
+    """The staff Telegram bot posts a listing after the agent confirmed the owner's consent.
+    It goes live at once under KEY GROUP (company phone, never the owner's), verified level 2."""
+    sec = request.headers.get("x-bot-secret", "")
+    if not CRM_SECRET or not hmac.compare_digest(sec, CRM_SECRET):
+        return err("unauthorized", 401)
+    d = await body_json(request)
+    st = get_settings()
+    deal = {"pledge": "rent"}.get(d.get("deal"), d.get("deal"))
+    price, cur = d.get("price_usd") or d.get("price"), "USD" if d.get("price_usd") else (str(d.get("currency") or "USD").upper())
+    cur = {"$": "USD", "₾": "GEL", "€": "EUR", "LARI": "GEL"}.get(cur, cur)
+    dist = str(d.get("district") or "").strip()
+    city = str(d.get("city") or "").strip()
+    agent = str(d.get("agent") or "").strip()[:40]
+    form = {
+        "deal": deal, "type": d.get("type") if d.get("type") in TYPES else "flat", "city": CITY_KA.get(city, city) or "Tbilisi",
+        "district": chatbot.KA_TO_EN.get(dist, dist), "address": d.get("address"), "rooms": d.get("rooms"), "bedrooms": d.get("bedrooms"),
+        "area": d.get("area"), "floor": d.get("floor"), "total_floors": d.get("total_floors"), "price": price, "currency": cur,
+        "title": d.get("title"), "description": d.get("description"),
+        "contact_name": ("KEY GROUP" + (" · " + agent if agent else ""))[:80], "contact_phone": st.get("company_phone") or "+995577114118",
+    }
+    f, msg = clean_listing(form)
+    if msg:
+        return err(msg)
+    src = str(d.get("url") or "").split("?")[0][:300]
+    with db() as con:
+        adm = con.execute("SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1").fetchone()
+        old = con.execute("SELECT id FROM listings WHERE source_url=? AND source_url!='' AND status!='deleted'", (src,)).fetchone() if src else None
+    if not adm:
+        return err("no admin account", 500)
+    photos = []
+    if d.get("with_photos"):
+        loop = asyncio.get_running_loop()
+        for u in [str(x) for x in (d.get("photos") or [])][:12]:
+            name = await loop.run_in_executor(None, bot_photo, u)
+            if name:
+                photos.append(name)
+    now = time.time()
+    exp = now + st["plans"]["free"]["days"] * 86400
+    with _LOCK, db() as con:
+        if old:
+            lid = old["id"]
+            sets = ",".join(f"{k}=?" for k in f)
+            con.execute(f"UPDATE listings SET {sets}, status='active', updated=?, confirmed=?, agent_name=? WHERE id=?", (*f.values(), now, now, agent, lid))
+            if photos:
+                con.execute("UPDATE listings SET photos=? WHERE id=?", (json.dumps(photos), lid))
+        else:
+            cols = ",".join(f.keys())
+            cur_ = con.execute(f"""INSERT INTO listings (user_id,{cols},status,created,updated,approved,expires,confirmed,verify_level,photos,source_url,agent_name)
+                                   VALUES (?,{','.join('?' * len(f))},'active',?,?,?,?,?,2,?,?,?)""",
+                               (adm["id"], *f.values(), now, now, now, exp, now, json.dumps(photos), src, agent))
+            lid = cur_.lastrowid
+        find_duplicates(con, lid)
+        audit(con, {"id": 0, "name": "Telegram bot · " + agent}, "bot_listing", "listing", lid, src)
+        track(con, "listing_submitted", props={"deal": f["deal"], "type": f["type"], "source": "bot"})
+    notify(f"🤖 {esc(agent or 'Agent')} listed #{lid} on the website via the bot\n{esc(f['deal'])} · {esc(f['district'] or f['address'])} · "
+           f"{f['price']:,.0f} {esc(f['currency'])} · {len(photos)} photos\n{SITE}/p/?id={lid}")
+    return ok(id=lid, url=f"{SITE}/p/?id={lid}", photos=len(photos), updated=bool(old))
 
 
 async def public_listings(request):
@@ -2072,6 +2155,7 @@ routes = [
     Route("/api/my/projects", my_projects, methods=["GET", "POST", "DELETE"]),
     Route("/api/projects", public_projects),
     Route("/api/agents", public_agent),
+    Route("/api/bot/listing", bot_listing, methods=["POST"]),
     Route("/api/partners/apply", partner_apply, methods=["POST"]),
     Route("/api/admin/leads", admin_leads),
     Route("/api/admin/partners", admin_partners),

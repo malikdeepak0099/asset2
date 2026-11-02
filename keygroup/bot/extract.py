@@ -26,8 +26,20 @@ def site_of(url):
     return "myhome" if "myhome.ge" in url.lower() else "ss"
 
 
+def is_private_link(url):
+    """The agent's own MyHome / SS.ge cabinet (my statements, profile settings) — not a public listing."""
+    u = (url or "").lower()
+    return "statements.myhome.ge" in u or "my-statements" in u or "user-profile" in u or "/cabinet" in u or "/myaccount" in u
+
+
 def listing_id(url):
-    m = re.search(r"(\d{6,})", url)
+    u = (url or "").split("#")[0]
+    m = re.search(r"/pr/(\d{5,})", u)
+    if m:
+        return m.group(1)
+    if is_private_link(u):
+        return ""
+    m = re.search(r"(\d{6,})", u.split("?")[0])   # never read numbers from tracking parameters (?_ga=…)
     return m.group(1) if m else ""
 
 
