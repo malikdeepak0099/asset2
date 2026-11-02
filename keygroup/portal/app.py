@@ -1125,18 +1125,34 @@ async def bot_agent_access(request):
               phone=u["phone"], pw_set=bool(u["pw_set"]))
 
 
+LINK_PAGE = """<!doctype html><html lang="ka"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex"><title>KEY GROUP — login</title>
+<style>body{margin:0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#F7F9FC;color:#0F1E33;display:grid;place-items:center;min-height:100vh;padding:16px}
+.c{background:#fff;border:1px solid #E4E9F0;border-radius:18px;padding:28px;max-width:420px;width:100%;box-shadow:0 10px 30px rgba(8,26,48,.08)}
+h1{font-size:22px;margin:0 0 8px}p{color:#5E6E82;margin:0 0 18px;line-height:1.5}button{width:100%;border:0;border-radius:12px;padding:14px;font-size:16px;font-weight:700;background:#0D2847;color:#fff;cursor:pointer}
+.err{background:#FFEDEA;color:#B5475E;border-radius:10px;padding:12px;margin-bottom:14px}a{color:#2F6FED}</style></head><body><div class="c">{{BODY}}</div></body></html>"""
+
+
 async def login_link(request):
-    tok = request.query_params.get("t", "")[:64]
+    """GET shows a confirm page (link previews in WhatsApp / Telegram must not use up the one-time link); POST logs in."""
+    tok = (request.query_params.get("t", "") if request.method == "GET" else (await request.form()).get("t", ""))[:64]
     with _LOCK, db() as con:
-        r = con.execute("SELECT * FROM login_tokens WHERE token=?", (tok,)).fetchone()
-        ok_ = r and not r["used"] and r["expires"] > time.time()
-        if ok_:
+        r = con.execute("SELECT t.*, u.name, u.phone, u.blocked FROM login_tokens t JOIN users u ON u.id=t.user_id WHERE t.token=?", (tok,)).fetchone()
+        valid = bool(r and not r["used"] and r["expires"] > time.time() and not r["blocked"])
+        if valid and request.method == "POST":
             con.execute("UPDATE login_tokens SET used=? WHERE token=?", (time.time(), tok))
             con.execute("UPDATE users SET last_login=? WHERE id=?", (time.time(), r["user_id"]))
-            u = con.execute("SELECT blocked FROM users WHERE id=?", (r["user_id"],)).fetchone()
-            ok_ = u and not u["blocked"]
-    if not ok_:
-        return RedirectResponse("/account/?link=expired", status_code=303)
+    if not valid:
+        body = ('<div class="err">ბმულს ვადა გაუვიდა ან უკვე გამოყენებულია.<br>This login link has expired or was already used.</div>'
+                '<p>KEY GROUP-ის აგენტებო: გაუგზავნეთ ბოტს <b>/login</b>. სხვებმა მოგვწერეთ WhatsApp-ზე: <a href="https://wa.me/995577114118">+995 577 114 118</a></p>'
+                '<p><a href="/account/">keygroup.ge/account</a></p>')
+        return Response(LINK_PAGE.replace("{{BODY}}", body), media_type="text/html", status_code=410, headers={"Cache-Control": "no-store"})
+    if request.method == "GET":
+        masked = r["phone"][:4] + " ••• " + r["phone"][-4:]
+        body = (f'<h1>KEY GROUP</h1><p>შესვლა როგორც / Log in as<br><b style="color:#0F1E33;font-size:18px">{esc(r["name"])}</b><br>{esc(masked)}</p>'
+                f'<form method="post" action="/api/login/link"><input type="hidden" name="t" value="{esc(tok)}"><button type="submit">შესვლა · Continue</button></form>'
+                '<p style="font-size:12px;margin:14px 0 0">ბმული მუშაობს ერთხელ. This link works once.</p>')
+        return Response(LINK_PAGE.replace("{{BODY}}", body), media_type="text/html", headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
     return with_session(RedirectResponse("/account/?welcome=1", status_code=303), new_session(r["user_id"]))
 
 
@@ -2483,7 +2499,7 @@ routes = [
     Route("/api/bot/agent-access", bot_agent_access, methods=["POST"]),
     Route("/api/my/profile", my_profile, methods=["GET", "POST"]),
     Route("/api/admin/agents", admin_agents, methods=["GET", "POST"]),
-    Route("/api/login/link", login_link),
+    Route("/api/login/link", login_link, methods=["GET", "POST"]),
     Route("/api/partners/apply", partner_apply, methods=["POST"]),
     Route("/api/admin/leads", admin_leads),
     Route("/api/admin/partners", admin_partners),
