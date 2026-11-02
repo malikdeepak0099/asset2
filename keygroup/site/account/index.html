@@ -49,13 +49,13 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
   var STAGES = [['new', t('New', 'ახალი')], ['contacted', t('Contacted', 'დაკავშირებული')], ['viewing', t('Viewing', 'დათვალიერება')], ['offer', t('Offer', 'შეთავაზება')], ['closed', t('Deal closed', 'გარიგება')], ['lost', t('Lost', 'დაკარგული')]];
   function tabs() {
     var nl = (ME && ME.new_leads) || 0;
-    return '<div class="seg" style="max-width:760px;margin:0 0 16px">' + [['listings', t('My listings', 'განცხადებები')], ['leads', t('Leads', 'მოთხოვნები') + (nl ? ' (' + nl + ')' : '')]].concat(ME.role === 'developer' || ME.role === 'admin' ? [['projects', t('Projects', 'პროექტები')]] : []).concat(ME.role === 'agency' ? [['team', t('Team', 'გუნდი')]] : []).concat(PARTNER() ? [['bulk', t('Bulk upload', 'მასობრივი ატვირთვა')]] : []).map(function (x) {
+    return '<div class="seg" style="max-width:760px;margin:0 0 16px">' + [['listings', t('My listings', 'განცხადებები')], ['leads', t('Leads', 'მოთხოვნები') + (nl ? ' (' + nl + ')' : '')]].concat(ME.role === 'developer' || ME.role === 'admin' ? [['projects', t('Projects', 'პროექტები')]] : []).concat(ME.role === 'agency' ? [['team', t('Team', 'გუნდი')]] : []).concat(PARTNER() ? [['bulk', t('Bulk upload', 'მასობრივი ატვირთვა')], ['profile', t('My profile', 'ჩემი პროფილი')]] : []).map(function (x) {
       return '<button type="button" data-tab="' + x[0] + '" aria-pressed="' + (TAB === x[0]) + '">' + esc(x[1]) + '</button>'; }).join('') + '</div>';
   }
   function bindTabs() { $$('[data-tab]').forEach(function (b) { b.onclick = function () { TAB = b.dataset.tab; render(); }; }); }
-  function render() { api('/api/me').then(function (j) { if (j.user) { ME = j.user; SETTINGS = j.settings; } ({listings: dash, leads: leads, bulk: bulk, team: team, projects: projects})[TAB](); }); }
+  function render() { api('/api/me').then(function (j) { if (j.user) { ME = j.user; SETTINGS = j.settings; } ({listings: dash, leads: leads, bulk: bulk, team: team, projects: projects, profile: profile})[TAB](); }); }
   function head() {
-    return '<div class="dash-head"><div><h1>' + (TAB === 'team' ? t('Team', 'გუნდი') : TAB === 'projects' ? t('Projects', 'პროექტები') : TAB === 'leads' ? t('Leads', 'მოთხოვნები') : TAB === 'bulk' ? t('Bulk upload', 'მასობრივი ატვირთვა') : t('My listings', 'ჩემი განცხადებები')) + '</h1><span class="muted">' + esc(ME.name) + (ME.company ? ' · ' + esc(ME.company) : '') + ' · ' + esc(ME.phone) +
+    return '<div class="dash-head"><div><h1>' + (TAB === 'team' ? t('Team', 'გუნდი') : TAB === 'projects' ? t('Projects', 'პროექტები') : TAB === 'leads' ? t('Leads', 'მოთხოვნები') : TAB === 'bulk' ? t('Bulk upload', 'მასობრივი ატვირთვა') : TAB === 'profile' ? t('My profile', 'ჩემი პროფილი') : t('My listings', 'ჩემი განცხადებები')) + '</h1><span class="muted">' + esc(ME.name) + (ME.company ? ' · ' + esc(ME.company) : '') + ' · ' + esc(ME.phone) +
       (ME.role !== 'owner' ? ' · <span class="pill t-vip">' + esc(ROLE(ME.role)) + '</span>' : '') + (ME.limit ? ' · ' + t('active listings ', 'აქტიური ') + (ME.live || 0) + ' / ' + ME.limit : '') +
       (ME.partner_until && ME.partner_until * 1000 > Date.now() ? ' · ' + t('Founding Partner until ', 'დამფუძნებელი პარტნიორი: ') + new Date(ME.partner_until * 1000).toLocaleDateString() : '') + '</span></div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap">' + (ME.role === 'admin' ? '<a class="btn b-navy" href="/admin/">Admin panel</a>' : '') +
@@ -162,6 +162,42 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       var c = KG.center(d.district, d.city); if (c && !p.lat) { d.lat = c[0]; d.lon = c[1]; } else { d.lat = p.lat; d.lon = p.lon; }
       api('/api/my/projects', {method: 'POST', json: d}).then(function (r) { if (!r.ok) { $('#pjm').className = 'msg err'; $('#pjm').textContent = r.error; return; } TAB = 'projects'; projects(); });
     };
+  }
+  function profile() {
+    api('/api/my/profile').then(function (j) {
+      if (!j.ok) { auth('login'); return; }
+      var P = j.profile, L = P.links || {}, C = P.crm_listings || [];
+      var v = function (x) { return esc(x == null ? '' : x); };
+      $('#app').innerHTML = head() + '<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px" class="pgrid">' +
+        '<form class="card" id="pff" style="padding:20px;display:flex;flex-direction:column;gap:12px"><h3>' + t('Profile', 'პროფილი') + '</h3>' +
+        '<label class="f">' + t('Name shown to clients', 'სახელი (კლიენტები ხედავენ)') + '<input name="name" value="' + v(P.name) + '" required></label>' +
+        '<label class="f">' + t('Phone (login + contact)', 'ტელეფონი (შესვლა + კონტაქტი)') + '<input value="' + v(P.phone) + '" disabled></label>' +
+        '<label class="f">Email<input name="email" type="email" value="' + v(P.email) + '"></label>' +
+        '<label class="f">' + t('About me (areas, languages, experience)', 'ჩემ შესახებ (უბნები, ენები, გამოცდილება)') + '<textarea name="bio" maxlength="600" style="min-height:90px">' + v(P.bio) + '</textarea></label>' +
+        '<b style="margin-top:6px">' + t('My profiles on other sites', 'ჩემი პროფილები სხვა საიტებზე') + '</b>' +
+        '<label class="f">MyHome.ge<input name="myhome" type="url" value="' + v(L.myhome) + '" placeholder="https://www.myhome.ge/udzravi-qoneba/?users=…"></label>' +
+        '<label class="f">SS.ge<input name="ss" type="url" value="' + v(L.ss) + '" placeholder="https://home.ss.ge/…"></label>' +
+        '<p class="muted" style="font-size:12px;margin:0">' + t('These links appear on your public KEY GROUP profile. Tip: open your profile on MyHome / SS and copy the address.', 'ეს ბმულები გამოჩნდება შენს საჯარო KEY GROUP პროფილზე. გახსენი შენი პროფილი MyHome / SS-ზე და დააკოპირე მისამართი.') + '</p>' +
+        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn b-coral" type="submit">' + t('Save profile', 'შენახვა') + '</button>' +
+        (P.slug ? '<a class="btn b-ghost" target="_blank" href="/' + v(P.slug) + '/">' + KG.icon('eye') + 'keygroup.ge/' + v(P.slug) + '/</a>' : '') + '</div><div id="pfm"></div></form>' +
+        '<div class="card" style="padding:20px;display:flex;flex-direction:column;gap:10px"><h3>' + t('Where my listings are', 'სად არის ჩემი განცხადებები') + '</h3>' +
+        '<div class="kpis" style="grid-template-columns:repeat(3,1fr)"><div class="card"><b>' + ((DATA.listings || []).filter(function (l) { return l.status === 'active'; }).length) + '</b><span>keygroup.ge</span></div>' +
+        '<div class="card"><b>' + (P.kg_agent ? C.filter(function (r) { return r.Status === 'Active'; }).length : '—') + '</b><span>MyHome / SS (CRM)</span></div>' +
+        '<div class="card"><b>' + (L.myhome ? '✓' : '—') + ' / ' + (L.ss ? '✓' : '—') + '</b><span>' + t('profiles linked', 'დაკავშირებული პროფილები') + '</span></div></div>' +
+        (P.kg_agent ? '<p class="muted" style="font-size:12px;margin:0">' + t('MyHome / SS listings come from your agent sheet in the KEY GROUP CRM', 'MyHome / SS განცხადებები მოდის შენი CRM ცხრილიდან') + (P.crm_updated ? ' · ' + v(String(P.crm_updated).slice(0, 16).replace('T', ' ')) : '') + '. ' +
+          t('New listing from MyHome / SS: send its link to the KEY GROUP Telegram bot — it appears here and on keygroup.ge.', 'ახალი განცხადება MyHome / SS-დან: გაუგზავნე ბმული KEY GROUP-ის Telegram ბოტს — გამოჩნდება აქ და keygroup.ge-ზე.') + '</p>' : '') +
+        '</div></div>' +
+        (P.kg_agent ? '<div class="card tablewrap" style="margin-top:16px"><h3 style="padding:14px 16px 0">' + t('My MyHome / SS listings', 'ჩემი MyHome / SS განცხადებები') + ' (' + (P.crm_total || 0) + ')</h3><table><thead><tr><th>' + t('Deal', 'გარიგება') + '</th><th>' + t('District', 'უბანი') + '</th><th>' + t('Address', 'მისამართი') + '</th><th>' + t('Rooms', 'ოთახი') + '</th><th>m²</th><th>' + t('Price', 'ფასი') + '</th><th>' + t('Status', 'სტატუსი') + '</th><th></th></tr></thead><tbody>' +
+          (C.length ? C.slice(0, 200).map(function (r) { return '<tr><td>' + v(r.Deal) + '</td><td>' + v(r.District) + '</td><td>' + v(r.Address) + '</td><td>' + v(r.Rooms) + '</td><td>' + v(r['Area m2']) + '</td><td><b>' + v(r.Price) + ' ' + v(r.Currency) + '</b></td><td>' + v(r.Status) + '</td><td>' + (/^https?:/.test(r['Listing Link'] || '') ? '<a target="_blank" rel="noopener" style="color:var(--blue)" href="' + v(r['Listing Link']) + '">' + t('open', 'გახსნა') + ' ↗</a>' : '') + '</td></tr>'; }).join('')
+            : '<tr><td colspan="8" class="muted">' + t('Nothing from the CRM yet for your name.', 'CRM-ში შენი სახელით ჯერ არაფერია.') + '</td></tr>') + '</tbody></table></div>' : '');
+      bindHead();
+      $('#pff').onsubmit = function (e) {
+        e.preventDefault(); var f = e.target;
+        api('/api/my/profile', {method: 'POST', json: {name: f.name.value, email: f.email.value, bio: f.bio.value, links: {myhome: f.myhome.value, ss: f.ss.value}}}).then(function (r) {
+          $('#pfm').className = 'msg ' + (r.ok ? 'ok' : 'err'); $('#pfm').textContent = r.ok ? t('Saved.', 'შენახულია.') : r.error;
+        });
+      };
+    });
   }
   function bulk() {
     api('/api/my/import').then(function (j) {

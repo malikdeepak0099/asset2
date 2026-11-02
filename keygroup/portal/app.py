@@ -153,7 +153,8 @@ def init_db():
                                 ("projects", "down_pct", "REAL DEFAULT 0"), ("projects", "inst_months", "INTEGER DEFAULT 0"),
                                 ("projects", "inst_note", "TEXT DEFAULT ''"), ("listings", "source_url", "TEXT DEFAULT ''"),
                                 ("listings", "agent_name", "TEXT DEFAULT ''"), ("users", "slug", "TEXT DEFAULT ''"),
-                                ("users", "links", "TEXT DEFAULT '{}'"), ("users", "pw_set", "INTEGER DEFAULT 1")):
+                                ("users", "links", "TEXT DEFAULT '{}'"), ("users", "pw_set", "INTEGER DEFAULT 1"),
+                                ("users", "email", "TEXT DEFAULT ''"), ("users", "bio", "TEXT DEFAULT ''"), ("users", "last_login", "REAL DEFAULT 0")):
             have = [r[1] for r in con.execute(f"PRAGMA table_info({table})")]
             if col not in have:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
@@ -536,6 +537,8 @@ async def login(request):
             return JSONResponse({"ok": False, "need_code": True, "error": "Enter the 6-digit code from your authenticator app"}, status_code=401)
         if not totp_ok(u["totp_secret"], d.get("code")):
             return JSONResponse({"ok": False, "need_code": True, "error": "Wrong code — check the time on your phone and try again"}, status_code=401)
+    with _LOCK, db() as con:
+        con.execute("UPDATE users SET last_login=? WHERE id=?", (time.time(), u["id"]))
     return with_session(ok(user={"id": u["id"], "name": u["name"], "phone": u["phone"], "role": u["role"]}), new_session(u["id"]))
 
 
@@ -921,7 +924,7 @@ async def public_agent(request):
             tm = trusted_map(con)
             rows = con.execute(f"SELECT id, name, company, role FROM users WHERE id IN ({','.join('?' * len(tm)) or '0'})", tuple(tm)).fetchall()
             return ok(rules=TRUSTED_RULES, trusted=[{"id": r["id"], "name": r["company"] or r["name"], "role": r["role"]} for r in rows])
-        u = con.execute("SELECT id, name, company, role, created, blocked, slug, links, phone FROM users WHERE id=?", (int(aid),)).fetchone()
+        u = con.execute("SELECT id, name, company, role, created, blocked, slug, links, phone, bio FROM users WHERE id=?", (int(aid),)).fetchone()
         if not u or u["blocked"] or u["role"] not in PARTNER_ROLES:
             return err("Profile not found", 404)
         st = agent_stats(con, u["id"])
@@ -937,7 +940,7 @@ async def public_agent(request):
         attach_agents(con, rows, outs)
         return ok(agent={"id": u["id"], "name": u["name"] if kg else (u["company"] or u["name"]), "person": "" if kg else (u["name"] if u["company"] else ""),
                          "company": "KEY GROUP" if kg else "", "role": u["role"], "since": u["created"], "slug": u["slug"] or "", "links": links,
-                         "phone": u["phone"] if kg else "", **st}, rules=TRUSTED_RULES, listings=outs)
+                         "phone": u["phone"] if kg else "", "bio": u["bio"] or "", **st}, rules=TRUSTED_RULES, listings=outs)
 
 
 # ---------------------------------------------------------------- staff Telegram bot -> KEY GROUP listing on the website
@@ -1129,11 +1132,184 @@ async def login_link(request):
         ok_ = r and not r["used"] and r["expires"] > time.time()
         if ok_:
             con.execute("UPDATE login_tokens SET used=? WHERE token=?", (time.time(), tok))
+            con.execute("UPDATE users SET last_login=? WHERE id=?", (time.time(), r["user_id"]))
             u = con.execute("SELECT blocked FROM users WHERE id=?", (r["user_id"],)).fetchone()
             ok_ = u and not u["blocked"]
     if not ok_:
         return RedirectResponse("/account/?link=expired", status_code=303)
     return with_session(RedirectResponse("/account/?welcome=1", status_code=303), new_session(r["user_id"]))
+
+
+# ---------------------------------------------------------------- KEY GROUP agents: profile, MyHome/SS link, admin overview
+
+LINK_HOSTS = {"myhome": ("myhome.ge",), "ss": ("ss.ge",)}
+EMAIL_RE = re.compile(r"^[\w.+-]+@[\w-]+(\.[\w-]+)+$")
+NAME_ALIAS = {"dato": "davit", "daviti": "davit", "demetre": "deme", "demeti": "deme", "demetri": "deme", "gio": "giorgi", "anna": "ana"}
+
+
+def name_key(name):
+    n = slugify(str(name or "").strip().split(" ")[0], 30).replace("-", "")
+    return NAME_ALIAS.get(n, n)
+
+
+def clean_links(d, cur=None):
+    out = dict(cur or {})
+    for k, hosts in LINK_HOSTS.items():
+        if k in d:
+            v = str(d.get(k) or "").strip()[:300]
+            host = (urllib.parse.urlparse(v).hostname or "").lower()
+            if not v:
+                out.pop(k, None)
+            elif v.startswith("https://") and any(host == h or host.endswith("." + h) for h in hosts):
+                out[k] = v
+    return out
+
+
+def is_kg_agent(u):
+    return u and u["role"] == "agent" and (u["company"] or "").upper() == "KEY GROUP"
+
+
+def crm_rows_for(name):
+    """The agent's own rows from the Master CRM (their MyHome / SS listings collected from their Google Sheet)."""
+    if not CRM_URL:
+        return [], None
+    try:
+        data, warn = fetch_crm()
+    except Exception:
+        return [], None
+    t = ((data or {}).get("tabs") or {}).get("Master Listings") or {}
+    H, rows = t.get("headers") or [], t.get("rows") or []
+    if "Agent" not in H:
+        return [], None
+    ai, key = H.index("Agent"), name_key(name)
+    mine = [r for r in rows if name_key(r[ai]) == key]
+    keep = [h for h in ("KG Key", "Deal", "Category", "District", "Address", "Rooms", "Area m2", "Floor", "Price", "Currency", "Status", "Listing Link", "First Seen") if h in H]
+    return [{h: r[H.index(h)] for h in keep} for r in mine], (data or {}).get("updated")
+
+
+async def my_profile(request):
+    u, e = need_user(request)
+    if e:
+        return e
+    if request.method == "POST":
+        d = await body_json(request)
+        name = str(d.get("name") or u["name"]).strip()[:60] or u["name"]
+        email = str(d.get("email") or "").strip()[:120]
+        if email and not EMAIL_RE.match(email):
+            return err("Check the email address")
+        try:
+            cur = json.loads(u.get("links") or "{}")
+        except ValueError:
+            cur = {}
+        links = clean_links(d.get("links") or {}, cur)
+        with _LOCK, db() as con:
+            con.execute("UPDATE users SET name=?, email=?, bio=?, links=? WHERE id=?",
+                        (name, email, str(d.get("bio") or "").strip()[:600], json.dumps(links), u["id"]))
+            if u["role"] in PARTNER_ROLES and not u.get("slug"):
+                con.execute("UPDATE users SET slug=? WHERE id=?", (unique_slug(con, name, u["id"]), u["id"]))
+            audit(con, u, "profile_save", "user", u["id"], "")
+        return ok()
+    try:
+        links = json.loads(u.get("links") or "{}")
+    except ValueError:
+        links = {}
+    out = {"name": u["name"], "email": u.get("email") or "", "bio": u.get("bio") or "", "links": links, "slug": u.get("slug") or "",
+           "phone": u["phone"], "kg_agent": bool(is_kg_agent(u))}
+    if is_kg_agent(u):
+        loop = asyncio.get_running_loop()
+        rows, updated = await loop.run_in_executor(None, crm_rows_for, u["name"])
+        out.update(crm_listings=rows[:300], crm_total=len(rows), crm_updated=updated)
+    return ok(profile=out)
+
+
+async def admin_agents(request):
+    """Central view of every KEY GROUP agent; create accounts (one or a pasted list), login links, block."""
+    u, e = need_user(request, perm="*")
+    if e:
+        return e
+    if request.method == "POST":
+        d = await body_json(request)
+        act = d.get("action")
+        with _LOCK, db() as con:
+            if act == "create":
+                lines = str(d.get("text") or "").splitlines() or [""]
+                rows = []
+                if d.get("phone"):
+                    rows = [(d.get("phone"), d.get("name"), d.get("email"))]
+                for line in lines:
+                    m = re.search(r"((?:\+?995[\s-]?)?5\d{2}(?:[\s-]?\d){6})\s+([^\s\d@]+)(?:\s+([\w.+-]+@[\w-]+\.[\w.]+))?", line)
+                    if m:
+                        rows.append(m.groups())
+                made = []
+                for ph, nm, mail in rows:
+                    a = agent_user(con, str(nm or "").strip(), ph)
+                    if not a:
+                        made.append({"name": nm, "error": "phone belongs to another account type"})
+                        continue
+                    if mail and EMAIL_RE.match(mail.strip()):
+                        con.execute("UPDATE users SET email=? WHERE id=?", (mail.strip(), a["id"]))
+                    if nm and a["name"] != nm.strip():
+                        con.execute("UPDATE users SET name=? WHERE id=? AND pw_set=0", (nm.strip(), a["id"]))
+                    made.append({"name": nm, "phone": a["phone"], "slug": a["slug"]})
+                audit(con, u, "agents_create", "user", 0, json.dumps(made, ensure_ascii=False)[:900])
+                return ok(created=made)
+            aid = int(d.get("id") or 0)
+            a = con.execute("SELECT * FROM users WHERE id=?", (aid,)).fetchone()
+            if not is_kg_agent(a):
+                return err("Not a KEY GROUP agent", 404)
+            if act == "link":
+                tok = secrets.token_urlsafe(24)
+                con.execute("INSERT INTO login_tokens (token, user_id, expires) VALUES (?,?,?)", (tok, aid, time.time() + 86400))
+                audit(con, u, "agent_login_link", "user", aid, a["name"])
+                return ok(url=f"{SITE}/api/login/link?t={tok}", hours=24)
+            if act in ("block", "unblock"):
+                con.execute("UPDATE users SET blocked=? WHERE id=?", (1 if act == "block" else 0, aid))
+                if act == "block":
+                    con.execute("DELETE FROM sessions WHERE user_id=?", (aid,))
+                audit(con, u, "agent_" + act, "user", aid, a["name"])
+                return ok()
+            if act == "links":
+                try:
+                    cur = json.loads(a["links"] or "{}")
+                except ValueError:
+                    cur = {}
+                con.execute("UPDATE users SET links=? WHERE id=?", (json.dumps(clean_links(d.get("links") or {}, cur)), aid))
+                return ok()
+        return err("Unknown action")
+    since30 = time.time() - 30 * 86400
+    with db() as con:
+        rows = con.execute("SELECT * FROM users WHERE role='agent' AND UPPER(company)='KEY GROUP' ORDER BY name").fetchall()
+        out = []
+        for a in rows:
+            st = agent_stats(con, a["id"])
+            l = con.execute("""SELECT SUM(status='active') AS active, SUM(status='pending') AS pending, COUNT(*) AS total, MAX(created) AS last_listing,
+                                      SUM(status='active' AND (photos='[]' OR photos='')) AS no_photos FROM listings WHERE user_id=? AND status!='deleted'""", (a["id"],)).fetchone()
+            ld = con.execute("SELECT COUNT(*) AS n, SUM(stage='new') AS new FROM leads WHERE COALESCE(NULLIF(assigned_to,0), owner_id)=? AND created>?", (a["id"], since30)).fetchone()
+            try:
+                links = json.loads(a["links"] or "{}")
+            except ValueError:
+                links = {}
+            out.append({"id": a["id"], "name": a["name"], "phone": a["phone"], "email": a["email"] or "", "slug": a["slug"] or "", "links": links,
+                        "blocked": a["blocked"], "pw_set": a["pw_set"], "last_login": a["last_login"] or 0, "created": a["created"],
+                        "active": l["active"] or 0, "pending": l["pending"] or 0, "total": l["total"] or 0, "last_listing": l["last_listing"] or 0,
+                        "no_photos": l["no_photos"] or 0, "leads30": ld["n"] or 0, "leads_new": ld["new"] or 0, "avg_hours": st["avg_hours"], "trusted": st["trusted"]})
+    crm = {}
+    loop = asyncio.get_running_loop()
+    if CRM_URL:
+        try:
+            data, _ = await loop.run_in_executor(None, fetch_crm)
+            t = ((data or {}).get("tabs") or {}).get("Master Listings") or {}
+            H = t.get("headers") or []
+            if "Agent" in H:
+                ai, si = H.index("Agent"), (H.index("Status") if "Status" in H else -1)
+                for r in t.get("rows") or []:
+                    if si < 0 or r[si] == "Active":
+                        k = name_key(r[ai]); crm[k] = crm.get(k, 0) + 1
+        except Exception:
+            pass
+    for a in out:
+        a["crm_active"] = crm.get(name_key(a["name"]), 0)
+    return ok(agents=out)
 
 
 async def public_listings(request):
@@ -2296,6 +2472,8 @@ routes = [
     Route("/api/agents", public_agent),
     Route("/api/bot/listing", bot_listing, methods=["POST"]),
     Route("/api/bot/agent-access", bot_agent_access, methods=["POST"]),
+    Route("/api/my/profile", my_profile, methods=["GET", "POST"]),
+    Route("/api/admin/agents", admin_agents, methods=["GET", "POST"]),
     Route("/api/login/link", login_link),
     Route("/api/partners/apply", partner_apply, methods=["POST"]),
     Route("/api/admin/leads", admin_leads),

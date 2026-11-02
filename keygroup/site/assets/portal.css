@@ -90,3 +90,7 @@ label.f input,label.f select,label.f textarea{width:100%;min-width:0}
 .vid{position:relative;padding-top:56.25%;border-radius:16px;overflow:hidden;background:#000}.vid iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
 .hist{font-size:14px}.hist div{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed var(--line)}
 @media (max-width:640px){.kpis{grid-template-columns:1fr 1fr}#cmpbar{bottom:84px}}
+@media (max-width:860px){.pgrid{grid-template-columns:1fr !important}}
+.tablewrap{overflow-x:auto}.tablewrap table{width:100%;border-collapse:collapse;font-size:14px}
+.tablewrap th,.tablewrap td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+.tablewrap th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;letter-spacing:.05em;background:var(--page)}
