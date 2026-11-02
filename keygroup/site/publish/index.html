@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ka">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KEY GROUP publisher — MyHome.ge & SS.ge</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Noto+Sans+Georgian:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/assets/portal.css">
+<style>
+.pg{padding:28px 0 64px;max-width:820px}
+.bm{display:inline-flex;align-items:center;gap:8px;background:var(--gold);color:var(--navy);font:800 16px var(--display);padding:14px 20px;border-radius:14px;text-decoration:none;cursor:grab;box-shadow:0 6px 20px rgba(212,168,83,.35)}
+ol li{margin:8px 0;line-height:1.55}
+</style>
+</head>
+<body>
+<main class="wrap pg" id="app">
+  <h1 id="h1">KEY GROUP ⇢ MyHome.ge / SS.ge</h1>
+  <p class="muted" id="intro"></p>
+  <div class="card" style="padding:22px;margin:18px 0;text-align:center">
+    <a class="bm" id="bm" href="#">⇢ KEY GROUP fill</a>
+    <p class="muted" style="margin:12px 0 0;font-size:13px" id="drag"></p>
+  </div>
+  <div class="card" style="padding:22px"><h3 id="howh"></h3><ol id="how"></ol></div>
+  <p class="muted" style="font-size:13px;margin-top:16px" id="safe"></p>
+</main>
+<script src="/assets/portal.js"></script>
+<script>
+(function () {
+  var t = KG.t, $ = KG.$;
+  KG.header('');
+  document.documentElement.lang = KG.lang === 'en' ? 'en' : 'ka';
+  // the bookmark loads the publisher script from keygroup.ge on the MyHome / SS page
+  $('#bm').href = "javascript:(function(){var s=document.createElement('script');s.src='https://keygroup.ge/assets/kg-publish.js?v='+Date.now();document.body.appendChild(s);})();";
+  $('#bm').onclick = function (e) { e.preventDefault(); alert(t('Drag this button to your bookmarks bar — don’t click it here.', 'გადაათრიე ეს ღილაკი სანიშნეების ზოლზე — აქ ნუ დააჭერ.')); };
+  $('#intro').textContent = t('Publish keygroup.ge listings to your own MyHome.ge and SS.ge accounts in about 30 seconds. The form fills itself; you check it and press Publish.',
+    'გამოაქვეყნე keygroup.ge-ს განცხადებები შენს MyHome.ge და SS.ge ანგარიშებზე ~30 წამში. ფორმა თავად ივსება — შენ ამოწმებ და აქვეყნებ.');
+  $('#drag').textContent = t('Drag the gold button to your browser’s bookmarks bar (Ctrl+Shift+B shows the bar). One time only.',
+    'გადაათრიე ოქროსფერი ღილაკი ბრაუზერის სანიშნეების ზოლზე (Ctrl+Shift+B აჩენს ზოლს). მხოლოდ ერთხელ.');
+  $('#howh').textContent = t('How to publish a listing', 'როგორ გამოვაქვეყნო');
+  $('#how').innerHTML = [
+    t('Log in to MyHome.ge and SS.ge with your own account (once — the browser remembers it).', 'შედი MyHome.ge-სა და SS.ge-ზე შენი ანგარიშით (ერთხელ — ბრაუზერი დაიმახსოვრებს).'),
+    t('keygroup.ge/account → your listing → “MyHome / SS ⇢”.', 'keygroup.ge/account → განცხადება → „MyHome / SS ⇢“.'),
+    t('Open MyHome.ge (or SS.ge) from that window and press the “KEY GROUP fill” bookmark.', 'გახსენი MyHome.ge (ან SS.ge) იმ ფანჯრიდან და დააჭირე სანიშნეს „KEY GROUP fill“.'),
+    t('Type, deal, location, street, price, area, rooms, floor, description and photos fill in. Choose the items marked ⚠️ (e.g. condition).', 'შეივსება ტიპი, გარიგება, მდებარეობა, ქუჩა, ფასი, ფართი, ოთახები, სართული, აღწერა და ფოტოები. ⚠️-ით მონიშნული აირჩიე თავად (მაგ. მდგომარეობა).'),
+    t('Check everything and press Publish on MyHome / SS yourself. Paid options are never selected automatically.', 'შეამოწმე და თავად დააჭირე გამოქვეყნებას. ფასიანი სერვისები ავტომატურად არ ირჩევა.')
+  ].map(function (x) { return '<li>' + KG.esc(x) + '</li>'; }).join('');
+  $('#safe').textContent = t('Safe: your MyHome / SS password never leaves your computer. It only works in your own browser, on the account you are logged in to.',
+    'უსაფრთხოა: შენი MyHome / SS პაროლი შენს კომპიუტერს არ ტოვებს. მუშაობს მხოლოდ შენს ბრაუზერში, იმ ანგარიშზე, რომელზეც შესული ხარ.');
+})();
+</script>
+</body>
+</html>

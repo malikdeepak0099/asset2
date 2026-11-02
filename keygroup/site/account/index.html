@@ -309,6 +309,7 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       '<div class="acts">' + (l.status === 'active' ? '<a class="btn sm b-ghost" href="/p/?id=' + l.id + '" target="_blank">' + t('View', 'ნახვა') + '</a>' : '') +
       '<button class="btn sm b-ghost" data-act="edit" data-id="' + l.id + '">' + KG.icon('edit') + t('Edit', 'რედაქტირება') + '</button>' +
       '<button class="btn sm b-gold" data-act="promo" data-id="' + l.id + '">' + KG.icon('rocket') + t('Promote', 'VIP / Boost') + '</button>' +
+      (l.status === 'active' ? '<button class="btn sm b-navy" data-act="pub" data-id="' + l.id + '">MyHome / SS ⇢</button>' : '') +
       '<button class="btn sm b-red" data-act="del" data-id="' + l.id + '" aria-label="' + t('Delete', 'წაშლა') + '">' + KG.icon('trash') + '</button></div></div>';
   }
   function needConfirm(l) {
@@ -320,7 +321,28 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
     if (a === 'confirm') api('/api/my/listings/' + id + '/confirm', {method: 'POST'}).then(dash);
     if (a === 'edit') form(l);
     if (a === 'promo') promo(l);
+    if (a === 'pub') publishOut(l);
     if (a === 'del' && confirm(t('Delete this listing?', 'წავშალო განცხადება?'))) api('/api/my/listings/' + id, {method: 'DELETE'}).then(dash);
+  }
+
+  // ---------------- publish to my own MyHome.ge / SS.ge account (the bookmark fills the form there)
+  function publishOut(l) {
+    api('/api/my/listings/' + l.id + '/publish-code', {method: 'POST'}).then(function (r) {
+      if (!r.ok) { alert(r.error); return; }
+      var box = document.createElement('div');
+      box.style.cssText = 'position:fixed;inset:0;background:rgba(5,12,24,.55);display:grid;place-items:center;z-index:60;padding:16px';
+      box.innerHTML = '<div class="card" style="padding:22px;max-width:520px;width:100%;display:flex;flex-direction:column;gap:12px">' +
+        '<h3>' + t('Publish to MyHome.ge / SS.ge', 'გამოქვეყნება MyHome.ge / SS.ge-ზე') + ' — #' + l.id + '</h3>' +
+        '<ol style="margin:0;padding-left:18px;line-height:1.6"><li>' + t('Open MyHome or SS below (you must be logged in to your own account there).', 'გახსენი MyHome ან SS (შენს ანგარიშზე უნდა იყო შესული).') + '</li>' +
+        '<li>' + t('Press the bookmark “KEY GROUP ⇢ fill” — the form fills itself.', 'დააჭირე სანიშნეს „KEY GROUP ⇢ fill“ — ფორმა თავად შეივსება.') + '</li>' +
+        '<li>' + t('Check it, fix the ⚠️ items and press Publish there yourself.', 'შეამოწმე, შეასწორე ⚠️ და თავად დააჭირე გამოქვეყნებას.') + '</li></ol>' +
+        '<div>' + t('Code (valid 2 hours): ', 'კოდი (2 საათი): ') + '<b style="font:800 20px var(--display);letter-spacing:.08em;user-select:all">' + esc(r.code) + '</b></div>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn b-coral" target="_blank" rel="noopener" href="' + esc(r.myhome) + '">MyHome.ge ↗</a><a class="btn b-navy" target="_blank" rel="noopener" href="' + esc(r.ss) + '">SS.ge ↗</a>' +
+        '<a class="btn b-ghost" target="_blank" href="/publish/">' + t('Install the bookmark', 'სანიშნის დაყენება') + '</a></div>' +
+        '<button class="btn b-ghost" type="button" id="pubx">' + t('Close', 'დახურვა') + '</button></div>';
+      document.body.appendChild(box);
+      box.querySelector('#pubx').onclick = function () { box.remove(); };
+    });
   }
 
   // ---------------- add / edit

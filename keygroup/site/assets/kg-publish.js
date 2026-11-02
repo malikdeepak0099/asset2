@@ -1,4 +1,3 @@
-var c=document.createElement('canvas');c.width=800;c.height=600;var g=c.getContext('2d');g.fillStyle='#0D2847';g.fillRect(0,0,800,600);g.fillStyle='#fff';g.font='48px sans-serif';g.fillText('KEY GROUP TEST',200,300);window.__kgTestImg=c.toDataURL('image/jpeg',0.9);
 /* KEY GROUP publisher — fills the MyHome.ge / SS.ge "add listing" form in the user's own logged-in browser.
    It never presses Publish: the user checks the form and publishes. Loaded by the "KEY GROUP ⇢ fill" bookmark. */
 (function () {
@@ -206,12 +205,12 @@ var c=document.createElement('canvas');c.width=800;c.height=600;var g=c.getConte
     if (!SITE) { note(false, 'Open MyHome.ge or SS.ge “add listing” first'); return; }
     var code = (location.hash.match(/kgpub=([A-Z0-9]{6,12})/i) || [])[1];
     try { code = code || sessionStorage.getItem('kgpub'); } catch (e) { /* storage blocked */ }
-    code = code || 'TEST1234'; if (!code) code = (prompt('KEY GROUP publish code (from the MyHome / SS button on keygroup.ge):') || '').trim();
+    if (!code) code = (prompt('KEY GROUP publish code (from the MyHome / SS button on keygroup.ge):') || '').trim();
     if (!code) { note(false, 'No code'); return; }
     try { sessionStorage.setItem('kgpub', code.toUpperCase()); } catch (e) { /* ignore */ }
     note(null, 'Loading listing ' + code.toUpperCase() + '…');
     var d;
-    d = {ok:true,id:5,deal:'rent',type:'flat',city:'Tbilisi',city_ka:'თბილისი',district:'Samgori',district_ka:'სამგორი',street:'მოსკოვის გამზირი',number:'13',area:47,rooms:2,floor:'6',total_floors:'8',price:600,currency:'USD',desc_ka:'ქირავდება 2 ოთახიანი ბინა სამგორში (ტესტი — არ გამოქვეყნდეს)',desc_en:'TEST — do not publish',desc_ru:'',photos:[window.__kgTestImg],video_url:'',contact_name:'KEY GROUP'};
+    try { d = await (await fetch(API + '/api/publish/' + encodeURIComponent(code.toUpperCase()))).json(); } catch (e) { d = {ok: false, error: 'Could not reach keygroup.ge'}; }
     log.pop();
     if (!d.ok) { note(false, d.error || 'Code not valid'); return; }
     head += ' · #' + d.id;

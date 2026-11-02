@@ -3,6 +3,7 @@ admin/index.html
 agent/index.html
 assets/chat.js
 assets/keygroup-import-template.csv
+assets/kg-publish.js
 assets/portal.css
 assets/portal.js
 batumi/apartments-for-rent/index.html
@@ -25,6 +26,7 @@ p/index.html
 partners/index.html
 privacy/index.html
 project/index.html
+publish/index.html
 ru/batumi/apartments-for-rent/index.html
 ru/batumi/apartments-for-sale/index.html
 ru/invest-in-georgia/index.html

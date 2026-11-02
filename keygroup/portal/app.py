@@ -131,6 +131,7 @@ def init_db():
             completion TEXT, status TEXT DEFAULT 'active', lat REAL DEFAULT 0, lon REAL DEFAULT 0, cover TEXT DEFAULT '', created REAL, updated REAL);
         CREATE TABLE IF NOT EXISTS login_tokens (token TEXT PRIMARY KEY, user_id INTEGER, expires REAL, used REAL DEFAULT 0, purpose TEXT DEFAULT 'login');
         CREATE TABLE IF NOT EXISTS bot_outbox (id INTEGER PRIMARY KEY, tg_id TEXT, text TEXT, button_url TEXT DEFAULT '', button_text TEXT DEFAULT '', created REAL, sent REAL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS publish_codes (code TEXT PRIMARY KEY, listing_id INTEGER, user_id INTEGER, expires REAL, used INTEGER DEFAULT 0);
         CREATE TABLE IF NOT EXISTS imports (
             id INTEGER PRIMARY KEY, user_id INTEGER, filename TEXT, total INTEGER, imported INTEGER, errors TEXT DEFAULT '[]',
             status TEXT DEFAULT 'imported', created REAL);
@@ -1393,6 +1394,90 @@ async def admin_agents(request):
     return ok(agents=out)
 
 
+# ---------------------------------------------------------------- publish to MyHome.ge / SS.ge from the user's own logged-in browser
+
+KA_RE = re.compile(r"[\u10A0-\u10FF]")
+PUBLISH_ORIGINS = ("https://statements.myhome.ge", "https://home.ss.ge", "https://www.myhome.ge", "https://ss.ge")
+
+
+def district_ka(d):
+    d = str(d or "").strip()
+    if not d or KA_RE.search(d):
+        return d
+    low = d.lower()
+    for en, ka, words in chatbot.DISTRICTS:
+        if low == en.lower() or any(w.strip() and w.strip() == low for w in words):
+            return ka
+    return d
+
+
+def split_address(addr):
+    a = str(addr or "").strip()
+    m = re.match(r"^(.*?)[\s,]*(?:N|№|#)?\s*(\d+[\w/-]*)$", a)
+    return (m.group(1).strip(" ,"), m.group(2)) if m and m.group(1).strip() else (a, "")
+
+
+def split_desc(text):
+    """Bot listings keep EN and KA paragraphs together; MyHome / SS have one box per language."""
+    ka, en, ru = [], [], []
+    for para in re.split(r"\n\s*\n", str(text or "")):
+        p = para.strip()
+        if not p:
+            continue
+        if KA_RE.search(p):
+            ka.append(p)
+        elif re.search(r"[\u0400-\u04FF]", p):
+            ru.append(p)
+        else:
+            en.append(p)
+    return "\n\n".join(ka), "\n\n".join(en), "\n\n".join(ru)
+
+
+async def publish_code(request):
+    """Owner / agent / admin asks to publish a listing to their own MyHome / SS account: a short code valid 2 hours."""
+    u, e = need_user(request)
+    if e:
+        return e
+    lid = int(request.path_params["lid"])
+    with _LOCK, db() as con:
+        row = own_listing(u, lid, con)
+        if not row:
+            return err("Not found", 404)
+        code = "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(8))
+        con.execute("DELETE FROM publish_codes WHERE expires<?", (time.time(),))
+        con.execute("INSERT INTO publish_codes (code, listing_id, user_id, expires) VALUES (?,?,?,?)", (code, lid, u["id"], time.time() + 7200))
+        audit(con, u, "publish_code", "listing", lid, "")
+    return ok(code=code, myhome=f"https://statements.myhome.ge/ka/statement/create?referrer=myhome#kgpub={code}",
+              ss=f"https://home.ss.ge/ka/udzravi-qoneba/create#kgpub={code}")
+
+
+async def publish_data(request):
+    """Read by the KEY GROUP publisher script on the MyHome / SS add-listing page (CORS, code-protected, 2 hours)."""
+    code = str(request.path_params["code"]).upper()[:12]
+    origin = request.headers.get("origin", "")
+    hdr = {"Access-Control-Allow-Origin": origin if origin in PUBLISH_ORIGINS else "https://statements.myhome.ge", "Vary": "Origin",
+           "Cache-Control": "no-store"}
+    with db() as con:
+        c = con.execute("SELECT * FROM publish_codes WHERE code=? AND expires>?", (code, time.time())).fetchone()
+        row = con.execute("SELECT * FROM listings WHERE id=? AND status!='deleted'", (c["listing_id"],)).fetchone() if c else None
+        owner = con.execute("SELECT name, phone, company FROM users WHERE id=?", (row["user_id"],)).fetchone() if row else None
+    if not row:
+        return JSONResponse({"ok": False, "error": "Code expired — press the MyHome / SS button on keygroup.ge again"}, status_code=404, headers=hdr)
+    street, number = split_address(row["address"])
+    ka, en, ru = split_desc(row["description"])
+    if not ka and row["title"] and KA_RE.search(row["title"]):
+        ka = row["title"]
+    photos = [f"{SITE}/uploads/{p}" for p in json.loads(row["photos"] or "[]")][:16]
+    d = {"ok": True, "id": row["id"], "url": f"{SITE}/p/?id={row['id']}", "deal": row["deal"], "type": row["type"],
+         "city": row["city"] or "Tbilisi", "city_ka": {"Tbilisi": "თბილისი", "Batumi": "ბათუმი", "Kutaisi": "ქუთაისი"}.get(row["city"] or "Tbilisi", row["city"]),
+         "district": row["district"], "district_ka": district_ka(row["district"]), "address": row["address"], "street": street, "number": number,
+         "area": row["area"], "rooms": row["rooms"], "bedrooms": row["bedrooms"], "floor": row["floor"], "total_floors": row["total_floors"],
+         "price": row["price"], "currency": row["currency"], "title": row["title"], "desc_ka": ka, "desc_en": en, "desc_ru": ru,
+         "photos": photos, "video_url": row["video_url"] or "", "contact_name": (owner["name"] if owner else "") or "KEY GROUP",
+         "contact_phone": row["contact_phone"]}
+    return JSONResponse(d, headers=hdr)
+
+
 async def public_listings(request):
     q = request.query_params
     now = time.time()
@@ -1918,7 +2003,8 @@ async def uploads(request):
     path = os.path.join(UPLOADS, name)
     if not re.fullmatch(r"(t_)?[0-9a-f]{20}\.jpg", name) or not os.path.exists(path):
         return Response(status_code=404)
-    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=31536000, immutable"})
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=31536000, immutable",
+                                                                "Access-Control-Allow-Origin": "*"})   # the MyHome / SS publisher reads photos
 
 
 # ---------------------------------------------------------------- admin endpoints
@@ -2588,6 +2674,8 @@ routes = [
     Route("/api/bot/listing", bot_listing, methods=["POST"]),
     Route("/api/bot/agent-access", bot_agent_access, methods=["POST"]),
     Route("/api/bot/reset-link", bot_reset_link, methods=["POST"]),
+    Route("/api/my/listings/{lid:int}/publish-code", publish_code, methods=["POST"]),
+    Route("/api/publish/{code}", publish_data),
     Route("/api/bot/outbox", bot_outbox, methods=["POST"]),
     Route("/api/my/profile", my_profile, methods=["GET", "POST"]),
     Route("/api/admin/agents", admin_agents, methods=["GET", "POST"]),
