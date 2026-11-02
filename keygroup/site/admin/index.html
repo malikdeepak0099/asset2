@@ -84,6 +84,26 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
       ({agents: agentsTab, crm: function () { crmTab(false); }, performance: performance, leads: leadsTab, partners: partnersTab, analytics: analytics, log: activity, dash: dash, chats: chats, listings: listings, orders: orders, reports: reports, users: users, settings: settings})[TAB]();
     });
   }
+  function editProfile(id, after) {
+    api('/api/admin/users', {method: 'POST', json: {id: +id, action: 'get_profile'}}).then(function (r) {
+      if (!r.ok) { kgModal('<div class="msg err">' + esc(r.error || 'Error') + '</div>'); return; }
+      var P = r.profile, L = P.links || {}, f = function (n, label, val, extra) { return '<label class="f">' + label + '<input name="' + n + '" value="' + esc(val || '') + '"' + (extra || '') + '></label>'; };
+      var box = kgModal('<h3>Edit profile — ' + esc(P.phone) + '</h3><form id="epf" style="display:flex;flex-direction:column;gap:10px;max-height:70vh;overflow:auto">' +
+        f('name', 'Name', P.name) + f('company', 'Company / agency (profile title for partners)', P.company) +
+        f('slug', 'Public link: keygroup.ge/…/', P.slug) + f('email', 'Email', P.email) +
+        f('myhome', 'MyHome.ge profile link', L.myhome, ' placeholder="https://www.myhome.ge/…"') + f('ss', 'SS.ge profile link', L.ss, ' placeholder="https://home.ss.ge/…"') +
+        '<label class="f">About<textarea name="bio" style="min-height:70px">' + esc(P.bio || '') + '</textarea></label>' +
+        '<div style="display:flex;gap:8px"><button class="btn b-coral" type="submit">Save</button><button class="btn b-ghost" type="button" id="epx">Cancel</button></div><div id="epm"></div></form>');
+      box.querySelector('#epx').onclick = function () { box.remove(); };
+      box.querySelector('#epf').onsubmit = function (e) {
+        e.preventDefault(); var x = e.target;
+        api('/api/admin/users', {method: 'POST', json: {id: +id, action: 'edit_profile', profile: {name: x.name.value, company: x.company.value, slug: x.slug.value, email: x.email.value, bio: x.bio.value, links: {myhome: x.myhome.value, ss: x.ss.value}}}}).then(function (res) {
+          if (!res.ok) { box.querySelector('#epm').className = 'msg err'; box.querySelector('#epm').textContent = res.error; return; }
+          box.remove(); if (after) after();
+        });
+      };
+    });
+  }
   // password reset: temporary password + one-time login link, shown once, ready to send on WhatsApp
   // in-page dialog (browser confirm/alert pop-ups are blocked in some browsers and in-app panes)
   function kgModal(html) {
@@ -92,6 +112,26 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
     box.innerHTML = '<div class="card" style="padding:22px;max-width:520px;width:100%;display:flex;flex-direction:column;gap:10px">' + html + '</div>';
     document.body.appendChild(box);
     return box;
+  }
+  function editProfile(id, after) {
+    api('/api/admin/users', {method: 'POST', json: {id: +id, action: 'get_profile'}}).then(function (r) {
+      if (!r.ok) { kgModal('<div class="msg err">' + esc(r.error || 'Error') + '</div>'); return; }
+      var P = r.profile, L = P.links || {}, f = function (n, label, val, extra) { return '<label class="f">' + label + '<input name="' + n + '" value="' + esc(val || '') + '"' + (extra || '') + '></label>'; };
+      var box = kgModal('<h3>Edit profile — ' + esc(P.phone) + '</h3><form id="epf" style="display:flex;flex-direction:column;gap:10px;max-height:70vh;overflow:auto">' +
+        f('name', 'Name', P.name) + f('company', 'Company / agency (profile title for partners)', P.company) +
+        f('slug', 'Public link: keygroup.ge/…/', P.slug) + f('email', 'Email', P.email) +
+        f('myhome', 'MyHome.ge profile link', L.myhome, ' placeholder="https://www.myhome.ge/…"') + f('ss', 'SS.ge profile link', L.ss, ' placeholder="https://home.ss.ge/…"') +
+        '<label class="f">About<textarea name="bio" style="min-height:70px">' + esc(P.bio || '') + '</textarea></label>' +
+        '<div style="display:flex;gap:8px"><button class="btn b-coral" type="submit">Save</button><button class="btn b-ghost" type="button" id="epx">Cancel</button></div><div id="epm"></div></form>');
+      box.querySelector('#epx').onclick = function () { box.remove(); };
+      box.querySelector('#epf').onsubmit = function (e) {
+        e.preventDefault(); var x = e.target;
+        api('/api/admin/users', {method: 'POST', json: {id: +id, action: 'edit_profile', profile: {name: x.name.value, company: x.company.value, slug: x.slug.value, email: x.email.value, bio: x.bio.value, links: {myhome: x.myhome.value, ss: x.ss.value}}}}).then(function (res) {
+          if (!res.ok) { box.querySelector('#epm').className = 'msg err'; box.querySelector('#epm').textContent = res.error; return; }
+          box.remove(); if (after) after();
+        });
+      };
+    });
   }
   // password reset: temporary password + one-time login link, shown once, ready to send on WhatsApp
   function pwReset(id, after) {
@@ -137,11 +177,12 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
             '<td' + (h > 24 ? ' style="color:var(--coral);font-weight:700"' : '') + '>' + (h == null ? '—' : h < 1 ? Math.round(h * 60) + ' min' : h.toFixed(1) + ' h') + '</td>' +
             '<td>' + (a.pw_set ? ago(a.last_login) : a.last_login ? ago(a.last_login) + '<br><span class="muted" style="font-size:12px">no password yet</span>' : '<span class="muted">never logged in</span>') + '</td>' +
             '<td>' + (a.links.myhome ? '<a href="' + esc(a.links.myhome) + '" target="_blank" style="color:var(--blue)">MyHome ↗</a> ' : '<span class="muted">MyHome —</span> ') + (a.links.ss ? '<a href="' + esc(a.links.ss) + '" target="_blank" style="color:var(--blue)">SS ↗</a>' : '<span class="muted">SS —</span>') + '</td>' +
-            '<td style="white-space:nowrap"><button class="btn sm b-ghost" data-ag="link" data-id="' + a.id + '">Login link</button> <button class="btn sm b-ghost" data-pw="' + a.id + '">🔑 Reset password</button> <button class="btn sm ' + (a.blocked ? 'b-ghost' : 'b-red') + '" data-ag="' + (a.blocked ? 'unblock' : 'block') + '" data-id="' + a.id + '">' + (a.blocked ? 'Unblock' : 'Block') + '</button></td></tr>';
+            '<td style="white-space:nowrap"><button class="btn sm b-ghost" data-ag="link" data-id="' + a.id + '">Login link</button> <button class="btn sm b-ghost" data-ed="' + a.id + '">Edit</button> <button class="btn sm b-ghost" data-pw="' + a.id + '">🔑 Reset password</button> <button class="btn sm ' + (a.blocked ? 'b-ghost' : 'b-red') + '" data-ag="' + (a.blocked ? 'unblock' : 'block') + '" data-id="' + a.id + '">' + (a.blocked ? 'Unblock' : 'Block') + '</button></td></tr>';
         }).join('') : '<tr><td colspan="9" class="muted">No KEY GROUP agents yet — add them above.</td></tr>') + '</tbody></table></div>' +
         '<p class="muted" style="font-size:12px;margin-top:10px">CRM numbers come from each agent\'s Google Sheet (their MyHome / SS listings) and refresh every 10 minutes. Agents see the same list in their own dashboard.</p>';
       $('#agadd').onclick = function () { api('/api/admin/agents', {method: 'POST', json: {action: 'create', text: $('#agtxt').value}}).then(function (r) { $('#agm').className = 'msg ' + (r.ok ? 'ok' : 'err'); $('#agm').textContent = r.ok ? r.created.length + ' agent(s) saved' + (r.created.some(function (c) { return c.error; }) ? ' — some lines were skipped' : '') : r.error; if (r.ok) setTimeout(agentsTab, 900); }); };
       $$('[data-pw]').forEach(function (b) { b.onclick = function () { pwReset(b.dataset.pw, agentsTab); }; });
+      $$('[data-ed]').forEach(function (b) { b.onclick = function () { editProfile(b.dataset.ed, agentsTab); }; });
       $$('[data-ag]').forEach(function (b) { b.onclick = function () {
         var act = b.dataset.ag;
         api('/api/admin/agents', {method: 'POST', json: {action: act, id: +b.dataset.id}}).then(function (r) {
@@ -249,7 +290,7 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
             '<td>' + (a.status === 'new' ? '<button class="btn sm b-teal" data-pa="approve" data-id="' + a.id + '">Approve</button> <button class="btn sm b-ghost" data-pa="reject" data-id="' + a.id + '">Reject</button>' : '<span class="pill ' + (a.status === 'approved' ? 'st-active' : 'st-rejected') + '">' + esc(a.status) + '</span>') + '</td></tr>';
         }).join('') : '<tr><td colspan="7" class="muted">No applications yet.</td></tr>') + '</tbody></table></div>' +
         '<h3 style="margin:22px 0 10px">Partners</h3><div class="card tablewrap"><table><thead><tr><th>Partner</th><th>Type</th><th>Phone</th><th>Live listings</th><th>Free until</th><th></th></tr></thead><tbody>' +
-        (P.length ? P.map(function (p) { return '<tr><td><b>' + esc(p.company || p.name) + '</b><br><span class="muted">' + esc(p.name) + '</span></td><td>' + esc(p.role) + '</td><td>' + esc(p.phone) + '</td><td>' + p.live + (p.listing_limit ? ' / ' + p.listing_limit : '') + '</td><td>' + (p.partner_until ? fmtDate(p.partner_until) : '—') + '</td><td><button class="btn sm b-ghost" data-pw="' + p.id + '">🔑 Reset password</button></td></tr>'; }).join('') : '<tr><td colspan="6" class="muted">No partners yet.</td></tr>') + '</tbody></table></div>' +
+        (P.length ? P.map(function (p) { return '<tr><td><b>' + esc(p.company || p.name) + '</b><br><span class="muted">' + esc(p.name) + '</span></td><td>' + esc(p.role) + '</td><td>' + esc(p.phone) + '</td><td>' + p.live + (p.listing_limit ? ' / ' + p.listing_limit : '') + '</td><td>' + (p.partner_until ? fmtDate(p.partner_until) : '—') + '</td><td style="white-space:nowrap"><button class="btn sm b-ghost" data-ed="' + p.id + '">Edit</button> <button class="btn sm b-ghost" data-pw="' + p.id + '">🔑 Reset password</button></td></tr>'; }).join('') : '<tr><td colspan="6" class="muted">No partners yet.</td></tr>') + '</tbody></table></div>' +
         '<h3 style="margin:22px 0 10px">Bulk uploads</h3><div class="card tablewrap"><table><thead><tr><th>Upload</th><th>Partner</th><th>Rows</th><th>Waiting review</th><th>Status</th><th></th></tr></thead><tbody>' +
         (I.length ? I.map(function (x) {
           return '<tr><td>#' + x.id + ' ' + esc(x.filename) + '<br><span class="muted">' + fmtDate(x.created) + '</span></td><td>' + esc(x.company || x.user_name || '') + '<br><span class="muted">' + esc(x.phone || '') + '</span></td>' +
@@ -258,6 +299,7 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
         }).join('') : '<tr><td colspan="6" class="muted">No uploads yet.</td></tr>') + '</tbody></table></div>' +
         '<p class="muted" style="font-size:13px">Tip: review a few random listings of a new partner (Listings → Pending) before approving a whole upload. Possible duplicates are never auto-approved.</p>';
       $$('[data-pw]').forEach(function (b) { b.onclick = function () { pwReset(b.dataset.pw, partnersTab); }; });
+      $$('[data-ed]').forEach(function (b) { b.onclick = function () { editProfile(b.dataset.ed, partnersTab); }; });
       $$('[data-pa]').forEach(function (b) { b.onclick = function () {
         api('/api/admin/partners/' + b.dataset.id, {method: 'POST', json: {action: b.dataset.pa}}).then(function (r) {
           if (!r.ok) { alert(r.error); return; }
@@ -531,8 +573,10 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
         }).join('') + '</tbody></table></div>';
       $$('[data-role]').forEach(function (sl) { sl.onchange = function () { api('/api/admin/users', {method: 'POST', json: {id: +sl.dataset.role, action: 'set_role', role: sl.value}}); }; });
       $$('[data-limit]').forEach(function (inp) { inp.onchange = function () { api('/api/admin/users', {method: 'POST', json: {id: +inp.dataset.limit, action: 'set_limit', limit: +inp.value || 0}}); }; });
+      setTimeout(function () { $$('#utab [data-ed]').forEach(function (b) { b.onclick = function () { editProfile(b.dataset.ed, shell); }; }); }, 0);
       $('#uq').oninput = function () { var q = this.value.toLowerCase(); $$('#utab tbody tr').forEach(function (tr) { tr.style.display = tr.textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none'; }); };
       $$('[data-u]').forEach(function (b) {
+        if (b.dataset.u === 'reset_password') b.insertAdjacentHTML('afterend', ' <button class="btn sm b-ghost" data-ed="' + b.dataset.id + '">Edit</button>');
         if (b.dataset.u === 'reset_password') b.textContent = '🔑 Reset password';
         b.onclick = function () {
           if (b.dataset.u === 'reset_password') { pwReset(b.dataset.id, shell); return; }

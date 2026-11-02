@@ -80,6 +80,12 @@
       '<h2 style="margin:26px 0 12px">' + t('Listings', 'განცხადებები') + ' (' + L.length + ')</h2><div class="lgrid" id="g">' + (L.length ? L.map(KG.card).join('') : '<div class="empty">' + t('No active listings right now.', 'ახლა აქტიური განცხადება არ არის.') + '</div>') + '</div>';
     KG.bindFavs($('#g'));
     KG.cmpBar();
+    KG.api('/api/me').then(function (m) {
+      if (m.user && (m.user.id === a.id || m.user.role === 'admin')) {
+        var h = document.querySelector('.hero'); if (!h) return;
+        h.insertAdjacentHTML('beforeend', '<a class="btn sm b-gold" style="grid-column:1/-1;justify-self:start" href="' + (m.user.id === a.id ? '/account/#profile' : '/admin/') + '">' + t('Edit profile', 'პროფილის რედაქტირება') + '</a>');
+      }
+    });
   });
 })();
 </script>

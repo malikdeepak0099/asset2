@@ -1250,26 +1250,44 @@ def crm_rows_for(name):
     return [{h: r[H.index(h)] for h in keep} for r in mine], (data or {}).get("updated")
 
 
+def save_profile(con, u, d):
+    """Name, company, public link (slug), email, bio, MyHome/SS links. Returns an error text or None."""
+    name = str(d.get("name") or u["name"]).strip()[:60] or u["name"]
+    email = str(d.get("email") or "").strip()[:120]
+    if email and not EMAIL_RE.match(email):
+        return "Check the email address"
+    try:
+        cur = json.loads(u.get("links") or "{}")
+    except ValueError:
+        cur = {}
+    links = clean_links(d.get("links") or {}, cur)
+    company = u.get("company") or ""
+    if "company" in d and not is_kg_agent(u):   # KEY GROUP agents always show KEY GROUP
+        company = str(d.get("company") or "").strip()[:80]
+    slug = u.get("slug") or ""
+    if "slug" in d and u["role"] in PARTNER_ROLES:
+        want = slugify(str(d.get("slug") or ""), 30)
+        if want and want != slug:
+            if len(want) < 2 or want in RESERVED_SLUGS or con.execute("SELECT 1 FROM users WHERE slug=? AND id!=?", (want, u["id"])).fetchone():
+                return f"The link keygroup.ge/{want}/ is taken — choose another"
+            slug = want
+    if u["role"] in PARTNER_ROLES and not slug:
+        slug = unique_slug(con, company or name, u["id"])
+    con.execute("UPDATE users SET name=?, email=?, bio=?, links=?, company=?, slug=? WHERE id=?",
+                (name, email, str(d.get("bio") if "bio" in d else (u.get("bio") or "")).strip()[:600], json.dumps(links), company, slug, u["id"]))
+    return None
+
+
 async def my_profile(request):
     u, e = need_user(request)
     if e:
         return e
     if request.method == "POST":
         d = await body_json(request)
-        name = str(d.get("name") or u["name"]).strip()[:60] or u["name"]
-        email = str(d.get("email") or "").strip()[:120]
-        if email and not EMAIL_RE.match(email):
-            return err("Check the email address")
-        try:
-            cur = json.loads(u.get("links") or "{}")
-        except ValueError:
-            cur = {}
-        links = clean_links(d.get("links") or {}, cur)
         with _LOCK, db() as con:
-            con.execute("UPDATE users SET name=?, email=?, bio=?, links=? WHERE id=?",
-                        (name, email, str(d.get("bio") or "").strip()[:600], json.dumps(links), u["id"]))
-            if u["role"] in PARTNER_ROLES and not u.get("slug"):
-                con.execute("UPDATE users SET slug=? WHERE id=?", (unique_slug(con, name, u["id"]), u["id"]))
+            msg = save_profile(con, u, d)
+            if msg:
+                return err(msg)
             audit(con, u, "profile_save", "user", u["id"], "")
         return ok()
     try:
@@ -1277,7 +1295,7 @@ async def my_profile(request):
     except ValueError:
         links = {}
     out = {"name": u["name"], "email": u.get("email") or "", "bio": u.get("bio") or "", "links": links, "slug": u.get("slug") or "",
-           "phone": u["phone"], "kg_agent": bool(is_kg_agent(u))}
+           "phone": u["phone"], "kg_agent": bool(is_kg_agent(u)), "company": u.get("company") or "", "role": u["role"]}
     if is_kg_agent(u):
         loop = asyncio.get_running_loop()
         rows, updated = await loop.run_in_executor(None, crm_rows_for, u["name"])
@@ -2096,6 +2114,23 @@ async def admin_users(request):
                 if role not in ("owner",) + PARTNER_ROLES + ("moderator", "finance"):
                     return err("Unknown role")
                 con.execute("UPDATE users SET role=? WHERE id=? AND role!='admin'", (role, uid))
+            elif action == "get_profile":
+                t = con.execute("SELECT id, name, company, slug, email, bio, links, role, phone FROM users WHERE id=?", (uid,)).fetchone()
+                if not t:
+                    return err("User not found", 404)
+                out = dict(t)
+                try:
+                    out["links"] = json.loads(out["links"] or "{}")
+                except ValueError:
+                    out["links"] = {}
+                return ok(profile=out)
+            elif action == "edit_profile":
+                t = con.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+                if not t:
+                    return err("User not found", 404)
+                msg = save_profile(con, dict(t), d.get("profile") or {})
+                if msg:
+                    return err(msg)
             elif action == "set_limit":
                 con.execute("UPDATE users SET listing_limit=? WHERE id=?", (max(0, min(100000, int(d.get("limit") or 0))), uid))
             elif action in ("verify_contact", "unverify_contact"):
