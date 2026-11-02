@@ -85,23 +85,34 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
     });
   }
   // password reset: temporary password + one-time login link, shown once, ready to send on WhatsApp
+  // in-page dialog (browser confirm/alert pop-ups are blocked in some browsers and in-app panes)
+  function kgModal(html) {
+    var box = document.createElement('div');
+    box.style.cssText = 'position:fixed;inset:0;background:rgba(5,12,24,.55);display:grid;place-items:center;z-index:60;padding:16px';
+    box.innerHTML = '<div class="card" style="padding:22px;max-width:520px;width:100%;display:flex;flex-direction:column;gap:10px">' + html + '</div>';
+    document.body.appendChild(box);
+    return box;
+  }
+  // password reset: temporary password + one-time login link, shown once, ready to send on WhatsApp
   function pwReset(id, after) {
-    if (!confirm('Reset this password? The user is logged out and gets a temporary password / login link to send them.')) return;
-    api('/api/admin/users', {method: 'POST', json: {id: +id, action: 'reset_password'}}).then(function (r) {
-      if (!r.ok) { alert(r.error); return; }
-      var msg = 'KEY GROUP — ' + r.name + '\n' + 'Login: keygroup.ge/account\nPhone: ' + r.phone + '\nTemporary password: ' + r.password + '\n(or one-tap login, 24 h: ' + r.link + ')\nPlease set your own password after logging in.';
-      var box = document.createElement('div');
-      box.style.cssText = 'position:fixed;inset:0;background:rgba(5,12,24,.55);display:grid;place-items:center;z-index:60;padding:16px';
-      box.innerHTML = '<div class="card" style="padding:22px;max-width:520px;width:100%;display:flex;flex-direction:column;gap:10px"><h3>🔑 Password reset — ' + esc(r.name) + '</h3>' +
-        '<div>Phone: <b>' + esc(r.phone) + '</b></div><div>Temporary password: <b style="font:800 22px var(--display);letter-spacing:.06em">' + esc(r.password) + '</b></div>' +
-        '<div class="muted" style="font-size:13px;word-break:break-all">One-tap login link (24 h, one use): ' + esc(r.link) + '</div>' +
-        '<p class="muted" style="font-size:12px;margin:0">Shown only now. The user is asked to choose their own password after logging in.</p>' +
-        '<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn b-wa" target="_blank" rel="noopener" href="https://wa.me/' + String(r.phone).replace(/\D/g, '') + '?text=' + encodeURIComponent(msg) + '">Send on WhatsApp</a>' +
-        '<button class="btn b-ghost" type="button" id="pwcopy">Copy message</button><button class="btn b-navy" type="button" id="pwclose">Close</button></div></div>';
-      document.body.appendChild(box);
-      box.querySelector('#pwcopy').onclick = function () { if (navigator.clipboard) navigator.clipboard.writeText(msg).then(function () { box.querySelector('#pwcopy').textContent = 'Copied ✓'; }); };
-      box.querySelector('#pwclose').onclick = function () { box.remove(); if (after) after(); };
-    });
+    var box = kgModal('<h3>🔑 Reset password?</h3><p class="muted" style="margin:0">The user is logged out and gets a temporary password and a one-time login link that you send them. They choose their own password after logging in.</p>' +
+      '<div style="display:flex;gap:8px"><button class="btn b-coral" type="button" id="pwgo">Reset password</button><button class="btn b-ghost" type="button" id="pwno">Cancel</button></div><div id="pwerr"></div>');
+    box.querySelector('#pwno').onclick = function () { box.remove(); };
+    box.querySelector('#pwgo').onclick = function () {
+      this.disabled = true; this.textContent = '…';
+      api('/api/admin/users', {method: 'POST', json: {id: +id, action: 'reset_password'}}).then(function (r) {
+        if (!r.ok) { box.querySelector('#pwerr').className = 'msg err'; box.querySelector('#pwerr').textContent = r.error || 'Error'; box.querySelector('#pwgo').remove(); return; }
+        var msg = 'KEY GROUP — ' + r.name + '\nLogin: keygroup.ge/account\nPhone: ' + r.phone + '\nTemporary password: ' + r.password + '\n(or one-tap login, 24 h: ' + r.link + ')\nPlease set your own password after logging in.';
+        box.firstChild.innerHTML = '<h3>🔑 Password reset — ' + esc(r.name) + '</h3>' +
+          '<div>Phone: <b>' + esc(r.phone) + '</b></div><div>Temporary password: <b style="font:800 22px var(--display);letter-spacing:.06em;user-select:all">' + esc(r.password) + '</b></div>' +
+          '<div class="muted" style="font-size:13px;word-break:break-all">One-tap login link (24 h, one use): <span style="user-select:all">' + esc(r.link) + '</span></div>' +
+          '<p class="muted" style="font-size:12px;margin:0">Shown only now. The user is asked to choose their own password after logging in.</p>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn b-wa" target="_blank" rel="noopener" href="https://wa.me/' + String(r.phone).replace(/\D/g, '') + '?text=' + encodeURIComponent(msg) + '">Send on WhatsApp</a>' +
+          '<button class="btn b-ghost" type="button" id="pwcopy">Copy message</button><button class="btn b-navy" type="button" id="pwclose">Close</button></div>';
+        box.querySelector('#pwcopy').onclick = function () { var b2 = this; (navigator.clipboard ? navigator.clipboard.writeText(msg) : Promise.reject()).then(function () { b2.textContent = 'Copied ✓'; }, function () { b2.textContent = 'Select the text above to copy'; }); };
+        box.querySelector('#pwclose').onclick = function () { box.remove(); if (after) after(); };
+      });
+    };
   }
   function agentsTab() {
     api('/api/admin/agents').then(function (j) {
@@ -132,10 +143,15 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
       $$('[data-pw]').forEach(function (b) { b.onclick = function () { pwReset(b.dataset.pw, agentsTab); }; });
       $$('[data-ag]').forEach(function (b) { b.onclick = function () {
         var act = b.dataset.ag;
-        if (act === 'block' && !confirm('Block this agent? They will be logged out and cannot log in.')) return;
         api('/api/admin/agents', {method: 'POST', json: {action: act, id: +b.dataset.id}}).then(function (r) {
-          if (!r.ok) { alert(r.error); return; }
-          if (act === 'link') { var done = function () { b.textContent = 'Copied ✓'; }; (navigator.clipboard ? navigator.clipboard.writeText(r.url).then(done, function () { prompt('Login link (24 h, one use) — send it to the agent privately:', r.url); }) : prompt('Login link (24 h, one use):', r.url)); return; }
+          if (!r.ok) { kgModal('<div class="msg err">' + esc(r.error || 'Error') + '</div><button class="btn b-navy" onclick="this.closest(\'div[style*=fixed]\').remove()">Close</button>'); return; }
+          if (act === 'link') {
+            var m = kgModal('<h3>Login link</h3><p class="muted" style="margin:0">One use, valid 24 hours — send it to the agent privately.</p><div style="word-break:break-all;user-select:all;background:var(--page);padding:10px;border-radius:8px">' + esc(r.url) + '</div>' +
+              '<div style="display:flex;gap:8px"><button class="btn b-ghost" id="lkc">Copy</button><button class="btn b-navy" id="lkx">Close</button></div>');
+            m.querySelector('#lkc').onclick = function () { var b2 = this; (navigator.clipboard ? navigator.clipboard.writeText(r.url) : Promise.reject()).then(function () { b2.textContent = 'Copied ✓'; }, function () { b2.textContent = 'Select the link to copy'; }); };
+            m.querySelector('#lkx').onclick = function () { m.remove(); };
+            return;
+          }
           agentsTab();
         });
       }; });
@@ -519,7 +535,7 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
         if (b.dataset.u === 'reset_password') b.textContent = '🔑 Reset password';
         b.onclick = function () {
           if (b.dataset.u === 'reset_password') { pwReset(b.dataset.id, shell); return; }
-          if (b.dataset.u === 'block' && !confirm('Block this user? Their listings stay but they cannot log in.')) return;
+
           api('/api/admin/users', {method: 'POST', json: {id: +b.dataset.id, action: b.dataset.u}}).then(function (r) {
             if (r.password) alert('New password: ' + r.password + '\nSend it to the owner on WhatsApp.');
             shell();
