@@ -727,6 +727,33 @@ def on_message(msg):
             lst.append(f"• {e(n)} — <code>{e(i)}</code> · MyHome: {'✅ ' + str(act) if p.get('myhome') else '❌'} · SS.ge: {'✅' if p.get('ss') else '❌'}")
         send(chat, tr(uid, "აგენტები:\n", "Agents:\n") + ("\n".join(lst) or tr(uid, "ჯერ არავინ — გაგზავნე /invite", "No agents yet — send /invite")))
         return
+    if text.startswith("/setprofile") and is_admin(uid) and len([l for l in text.splitlines() if l.strip().startswith("/setprofile")]) > 1:
+        # several agents in one message: one "/setprofile <TelegramID> <link>" per line
+        done, todo = [], []
+        for line in text.splitlines():
+            parts = line.strip().split(maxsplit=2)
+            if len(parts) != 3 or parts[0] != "/setprofile":
+                continue
+            if parts[1] not in STATE["agents"]:
+                done.append(f"❌ {e(parts[1])}: " + tr(uid, "ასეთი აგენტი არ არის", "no such agent"))
+                continue
+            try:
+                msg_ = set_profile_from_text(parts[1], parts[2])
+            except Exception as ex:
+                msg_ = f"❌ {e(type(ex).__name__)}"
+            done.append(f"<b>{e(agent_name(parts[1]) or parts[1])}</b>: " + (msg_ or tr(uid, "ბმული ვერ ვიცანი", "link not recognised")).split("\n")[0])
+            if msg_ and msg_.startswith("✅ MyHome"):
+                todo.append(parts[1])
+        send(chat, "\n".join(done) or tr(uid, "ვერაფერი ვიცანი.", "Nothing recognised."))
+
+        def _run(ids=todo):
+            for a in ids:
+                send(chat, agent_report(sync_agent(a, notify=False), uid))
+                time.sleep(2)
+            send(chat, site_status_text(uid))
+        if todo:
+            threading.Thread(target=_run, daemon=True).start()
+        return
     if text.startswith("/setprofile") and is_admin(uid):
         parts = text.split(maxsplit=2)
         if len(parts) == 3 and parts[1] in STATE["agents"]:
