@@ -1085,8 +1085,14 @@ async def bot_listing(request):
             photos.append(await loop.run_in_executor(None, save_photo, raw))
         except Exception:
             pass
+    want_photos = [str(x) for x in (d.get("photos") or [])][:12]
+    if old and d.get("own") and want_photos:      # daily re-sync of the agent's own listing: keep photos we already have
+        with db() as con:
+            have = json.loads((con.execute("SELECT photos FROM listings WHERE id=?", (old["id"],)).fetchone() or {"photos": "[]"})["photos"] or "[]")
+        if len(have) == len(want_photos):
+            want_photos = []
     if d.get("with_photos") and not photos:
-        for u in [str(x) for x in (d.get("photos") or [])][:12]:
+        for u in want_photos:
             name = await loop.run_in_executor(None, bot_photo, u)
             if name:
                 photos.append(name)
@@ -1107,18 +1113,37 @@ async def bot_listing(request):
             lid = cur_.lastrowid
         find_duplicates(con, lid)
         xs, xid = ext_from_url(src)
-        if xs:
-            save_ext(con, lid, xs, xid, adm["id"], source="import", url=src)
+        if xs:   # "agent" = the agent's own listing on their MyHome / SS account; "import" = copied from someone else's link
+            save_ext(con, lid, xs, xid, adm["id"], source="agent" if d.get("own") else "import", url=src)
         audit(con, {"id": 0, "name": "Telegram bot · " + agent}, "bot_listing", "listing", lid, src)
-        track(con, "listing_submitted", props={"deal": f["deal"], "type": f["type"], "source": "bot"})
-    notify(f"🤖 {esc(agent or 'Agent')} listed #{lid} on the website via the bot\n{esc(f['deal'])} · {esc(f['district'] or f['address'])} · "
-           f"{f['price']:,.0f} {esc(f['currency'])} · {len(photos)} photos\n{SITE}/p/?id={lid}")
+        if not old:
+            track(con, "listing_submitted", props={"deal": f["deal"], "type": f["type"], "source": "sync" if d.get("own") else "bot"})
+    if not d.get("quiet"):
+        notify(f"🤖 {esc(agent or 'Agent')} listed #{lid} on the website via the bot\n{esc(f['deal'])} · {esc(f['district'] or f['address'])} · "
+               f"{f['price']:,.0f} {esc(f['currency'])} · {len(photos)} photos\n{SITE}/p/?id={lid}")
     with db() as con:
         u = con.execute("SELECT slug, role FROM users WHERE id=?", (adm["id"],)).fetchone()
     path = f"/{u['slug']}/{listing_slug(f)}-{lid}" if u and u["slug"] and u["role"] in PARTNER_ROLES else f"/p/?id={lid}"
     return ok(id=lid, url=SITE + path, profile=(f"{SITE}/{u['slug']}/" if u and u["slug"] and u["role"] in PARTNER_ROLES else ""),
               photos=len(photos), updated=bool(old))
 
+
+
+async def bot_source_gone(request):
+    """The daily MyHome sync saw an agent remove a listing from their account: pause the copy on keygroup.ge (not deleted)."""
+    sec = request.headers.get("x-bot-secret", "")
+    if not CRM_SECRET or not hmac.compare_digest(sec, CRM_SECRET):
+        return err("unauthorized", 401)
+    d = await body_json(request)
+    src = str(d.get("url") or "").split("?")[0][:300]
+    if not src:
+        return err("url required")
+    with _LOCK, db() as con:
+        rows = con.execute("SELECT id FROM listings WHERE source_url=? AND status='active'", (src,)).fetchall()
+        for r in rows:
+            con.execute("UPDATE listings SET status='paused', updated=? WHERE id=?", (time.time(), r["id"]))
+            audit(con, {"id": 0, "name": "MyHome sync"}, "source_gone", "listing", r["id"], src)
+    return ok(paused=[r["id"] for r in rows])
 
 
 async def bot_agent_access(request):
@@ -2822,6 +2847,7 @@ routes = [
     Route("/api/publish/{code}/done", publish_done, methods=["POST", "OPTIONS"]),
     Route("/api/publish/{code}", publish_data),
     Route("/api/bot/outbox", bot_outbox, methods=["POST"]),
+    Route("/api/bot/source-gone", bot_source_gone, methods=["POST"]),
     Route("/api/my/profile", my_profile, methods=["GET", "POST"]),
     Route("/api/admin/agents", admin_agents, methods=["GET", "POST"]),
     Route("/api/login/link", login_link, methods=["GET", "POST"]),

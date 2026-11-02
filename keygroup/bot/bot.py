@@ -204,12 +204,12 @@ HELP = (
 
 ADMIN_HELP_EN = (
     "\n\n👑 <b>Admin</b>\n/invite — link to send to agents · /team — company report (24 h)\n"
-    "/syncall — update all agents now · /agents — agents and their profiles\n"
+    "/syncall — update all agents now · /agents — agents and their profiles\n/website — agents' MyHome listings on keygroup.ge (on / off / now)\n"
     "/addadmin &lt;ID&gt; — add another admin · /setprofile &lt;TelegramID&gt; &lt;link&gt; — set an agent's profile"
 )
 
 ADMIN_HELP = (
-    "\n\n👑 <b>ადმინი</b>\n/invite — აგენტების ბმული · /team — კომპანიის ანგარიში · /syncall — ყველა აგენტის განახლება\n"
+    "\n\n👑 <b>ადმინი</b>\n/invite — აგენტების ბმული · /team — კომპანიის ანგარიში · /syncall — ყველა აგენტის განახლება\n/website — აგენტების MyHome განცხადებები keygroup.ge-ზე\n"
     "/agents — აგენტები · /addadmin &lt;ID&gt; — მეორე ადმინი · /setprofile &lt;TelegramID&gt; &lt;ბმული&gt; — აგენტის პროფილი"
 )
 
@@ -430,10 +430,122 @@ def sync_agent(uid, notify=True):
         return stats
     new, upd, rem, same = DB.apply_snapshot(uid, "myhome", recs, full=True)
     stats.update(new=new, updated=upd, removed=rem, total=len(recs))
+    queue_site(uid, name, recs, rem)
     push_to_crm(uid, name, new, upd, rem, same)
     if notify:
         send(uid, agent_report(stats, uid))
     return stats
+
+
+# ---------------------------------------------------------------- agents' own MyHome listings -> keygroup.ge
+# Every daily sync queues the agent's own MyHome listings; a background thread sends them to the website one by one
+# (under the agent's own profile and phone, with the listing's photos). Unchanged listings are skipped; listings the
+# agent removed from MyHome are paused on the website.
+
+SITE_LOCK = threading.Lock()
+
+
+def site_import_on():
+    return STATE.get("site_import", True)
+
+
+def queue_site(uid, name, recs, removed=()):
+    if not site_import_on() or not CRM_SECRET:
+        return 0
+    uid = str(uid)
+    synced = STATE.setdefault("site_synced", {}).setdefault(uid, {})
+    with SITE_LOCK:
+        q = STATE.setdefault("site_queue", [])
+        queued = {(it["uid"], it["rec"]["id"]) for it in q if it.get("rec")}
+        n = 0
+        for r in recs:
+            if r.get("status_on_site") != "active" or synced.get(r["id"]) == r.get("hash") or (uid, r["id"]) in queued:
+                continue
+            q.append({"uid": uid, "name": name, "rec": r, "tries": 0})
+            n += 1
+        for r in removed or []:
+            if r.get("id") in synced:
+                q.append({"uid": uid, "name": name, "gone": r.get("url") or f"https://www.myhome.ge/pr/{r['id']}/", "id": r["id"], "tries": 0})
+        save_state()
+    return n
+
+
+def agent_phone_of(uid, name):
+    return STATE.get("phones", {}).get(str(uid)) or STATE.get("phones_by_name", {}).get(drafts.name_key(name)) or ""
+
+
+def site_record_payload(uid, name, r):
+    return {"url": r["url"], "deal": r.get("deal"), "type": r.get("type"), "city": r.get("city"), "district": r.get("district"),
+            "address": r.get("address"), "rooms": r.get("rooms"), "bedrooms": r.get("bedrooms"), "area": r.get("area"),
+            "floor": r.get("floor"), "total_floors": r.get("total_floors"),
+            "price_usd": r.get("price_usd") or None, "price": r.get("price_gel") or None, "currency": "USD" if r.get("price_usd") else "GEL",
+            "title": r.get("title"), "description": r.get("description"), "agent": name, "contact_phone": agent_phone_of(uid, name),
+            "with_photos": True, "photos": (r.get("images") or [])[:12], "profiles": drafts.profile_links(uid),
+            "own": True, "quiet": True}
+
+
+def site_push_loop():
+    """Send queued listings to keygroup.ge — one every few seconds so neither site is overloaded."""
+    while True:
+        try:
+            busy = site_push_once()
+        except Exception:
+            traceback.print_exc()
+            busy = False
+        time.sleep(4 if busy else 20)
+
+
+def site_push_once():
+    item = None
+    with SITE_LOCK:
+        q = STATE.get("site_queue") or []
+        if q:
+            item = q[0]
+    if not item:
+        return False
+    if True:
+        ok_ = False
+        try:
+            hdr = {"X-Bot-Secret": CRM_SECRET}
+            if item.get("gone"):
+                ok_ = requests.post(PORTAL_URL + "/api/bot/source-gone", json={"url": item["gone"]}, headers=hdr, timeout=60).json().get("ok")
+                if ok_:
+                    STATE.setdefault("site_synced", {}).setdefault(item["uid"], {}).pop(item["id"], None)
+            elif not agent_phone_of(item["uid"], item["name"]):
+                ok_ = True     # no phone for this agent yet: skip (it would land on the company account); retried on the next sync
+                STATE.setdefault("site_missing_phone", {})[item["uid"]] = item["name"]
+            else:
+                j = requests.post(PORTAL_URL + "/api/bot/listing", json=site_record_payload(item["uid"], item["name"], item["rec"]),
+                                  headers=hdr, timeout=300).json()
+                ok_ = bool(j.get("ok"))
+                if ok_:
+                    STATE.setdefault("site_synced", {}).setdefault(item["uid"], {})[item["rec"]["id"]] = item["rec"].get("hash")
+                else:
+                    print("site push", item["rec"]["id"], j.get("error"))
+        except Exception as ex:
+            print("site push", ex)
+        with SITE_LOCK:
+            q = STATE.get("site_queue") or []
+            if q and q[0] is item:
+                q.pop(0)
+                if not ok_ and item["tries"] < 2:
+                    item["tries"] += 1
+                    q.append(item)
+            save_state()
+        return True
+
+
+def site_status_text(uid=None):
+    en = uid is None or lang_of(uid) == "en"
+    q = STATE.get("site_queue") or []
+    synced = STATE.get("site_synced", {})
+    lines = ["<b>keygroup.ge ⇠ MyHome</b>" + ("" if site_import_on() else (" — OFF" if en else " — გამორთულია"))]
+    for auid, name in sorted(STATE.get("agents", {}).items(), key=lambda x: x[1]):
+        waiting = sum(1 for it in q if it.get("uid") == auid)
+        miss = auid in STATE.get("site_missing_phone", {}) and not agent_phone_of(auid, name)
+        lines.append(f"• {e(name)}: {len(synced.get(auid, {}))} " + ("on the website" if en else "საიტზე") +
+                     (f" · ⏳ {waiting}" if waiting else "") + (" · ⚠️ " + ("no phone — send /contacts" if en else "ნომერი არ არის — /contacts") if miss else ""))
+    return "\n".join(lines)
 
 
 def fmt_price(r):
@@ -624,6 +736,15 @@ def on_message(msg):
                 threading.Thread(target=lambda: send(chat, agent_report(sync_agent(parts[1], notify=False), uid)), daemon=True).start()
         else:
             send(chat, tr(uid, "ფორმატი", "Format") + ": <code>/setprofile 123456789 https://www.myhome.ge/udzravi-qoneba/?users=9925395</code>")
+        return
+    if text.startswith("/website") and is_admin(uid):
+        arg = (text.split() + [""])[1].lower()
+        if arg in ("on", "off"):
+            STATE["site_import"] = arg == "on"; save_state()
+        if arg == "now":
+            send(chat, tr(uid, "⏳ ყველა აგენტის განცხადებები იგზავნება keygroup.ge-ზე…", "⏳ Sending every agent's MyHome listings to keygroup.ge…"))
+            threading.Thread(target=sync_all, kwargs={"notify_agents": False}, daemon=True).start()
+        send(chat, site_status_text(uid) + "\n\n<code>/website on</code> · <code>/website off</code> · <code>/website now</code>")
         return
     if text.startswith("/syncall") and is_admin(uid):
         send(chat, tr(uid, "⏳ ყველა აგენტის განახლება დაიწყო…", "⏳ Updating all agents… the report will follow."))
@@ -942,6 +1063,7 @@ def main():
             {"command": "lang", "description": "English / ქართული"}])
     threading.Thread(target=scheduler, daemon=True).start()
     threading.Thread(target=outbox_loop, daemon=True).start()
+    threading.Thread(target=site_push_loop, daemon=True).start()
     while True:
         try:
             r = requests.get(API + "getUpdates", params={"offset": STATE.get("offset", 0), "timeout": 50}, timeout=70)
