@@ -1121,10 +1121,23 @@ async def my_find(request):
                         "district": r["district"], "address": r["address"], "rooms": r["rooms"], "area": r["area"], "floor": r["floor"],
                         "price": r["price"], "currency": r["currency"], "status": r["status"], "agent": ag["name"] if ag else "",
                         "owner": r["prop_owner"], "phone": r["prop_phone"],
-                        "links": {k: v.get("url") or "" for k, v in ext.items()}, "source_url": r["source_url"]})
-    # the Master CRM (agents' Google Sheets) — the agent's own rows only
-    crm, _ = await asyncio.get_running_loop().run_in_executor(None, crm_find, ids, None if admin else u["name"])
+                        "links": {k: v.get("url") or "" for k, v in ext.items()}, "source_url": r["source_url"],
+                        "source_id": str((ext_from_url(r["source_url"]) if r["source_url"] else (None, ""))[1] or "")})
+    # the Master CRM (agents' Google Sheets + what the bot recorded) — the agent's own rows only
+    crm, _ = await asyncio.get_running_loop().run_in_executor(None, crm_find, ids | {str(x.get("source_id")) for x in out if x.get("source_id")}, None if admin else u["name"])
+    bot_rows = [c for c in crm if c.get("from") == "bot"]
+    for x in out:   # older listings: fill the owner from the bot's CRM record of the same MyHome / SS ad (and keep it)
+        if x["from"] == "keygroup.ge" and not x["phone"]:
+            hit = next((c for c in bot_rows if c.get("source_id") and c["source_id"] == x.get("source_id")), None)
+            if hit:
+                x["owner"], x["phone"] = x["owner"] or hit["owner"], hit["phone"]
+                with _LOCK, db() as con:
+                    set_prop_owner(con, x["id"], hit["owner"], hit["phone"])
+    have_src = {x.get("source_id") for x in out if x["from"] == "keygroup.ge"}
     for c in crm:
+        if c.get("from") == "bot" and c.get("source_id") in have_src:
+            continue
+        c["from"] = "CRM"
         out.append(c)
     return ok(results=out[:20], query=q)
 
@@ -1155,6 +1168,22 @@ def crm_find(ids, agent_name):
                     "owner": get(r, "Owner / Contact"), "phone": owner_digits(get(r, "Phone")) or str(get(r, "Phone")),
                     "url": get(r, "Listing Link"), "myhome_id": get(r, "MyHome ID"), "ss_id": get(r, "SS ID")})
         if len(out) >= 10:
+            break
+    # what the bot recorded when the agent took an owner's ad (owner name / number, source id)
+    b = ((data or {}).get("tabs") or {}).get("Bot Listings") or {}
+    BH, brows = b.get("headers") or [], b.get("rows") or []
+    bget = lambda r, h: (r[BH.index(h)] if h in BH and BH.index(h) < len(r) else "")
+    for r in reversed(brows):   # newest first
+        if key and name_key(bget(r, "Agent")) != key:
+            continue
+        sid, link = str(bget(r, "Source ID")), str(bget(r, "Source Link"))
+        if not any(x == sid or x in link for x in ids):
+            continue
+        out.append({"from": "bot", "agent": bget(r, "Agent"), "deal": bget(r, "Deal"), "type": bget(r, "Type"), "district": bget(r, "District"),
+                    "address": bget(r, "Address"), "rooms": bget(r, "Rooms"), "area": bget(r, "Area m2"), "floor": bget(r, "Floor"),
+                    "price": bget(r, "Price USD") or bget(r, "Price GEL"), "currency": "USD" if bget(r, "Price USD") else "GEL",
+                    "owner": bget(r, "Owner Name"), "phone": owner_digits(bget(r, "Owner Phone")), "url": link, "source_id": sid})
+        if len(out) >= 14:
             break
     return out, None
 
