@@ -204,12 +204,12 @@ HELP = (
 
 ADMIN_HELP_EN = (
     "\n\n👑 <b>Admin</b>\n/invite — link to send to agents · /team — company report (24 h)\n"
-    "/syncall — update all agents now · /agents — agents and their profiles\n/website — agents' MyHome listings on keygroup.ge (on / off / now)\n"
+    "/syncall — update all agents now · /agents — agents and their profiles\n/website — agents' MyHome listings on keygroup.ge (on / off / now)\n/report — today's report now (also every evening at 20:00)\n"
     "/addadmin &lt;ID&gt; — add another admin · /setprofile &lt;TelegramID&gt; &lt;link&gt; — set an agent's profile"
 )
 
 ADMIN_HELP = (
-    "\n\n👑 <b>ადმინი</b>\n/invite — აგენტების ბმული · /team — კომპანიის ანგარიში · /syncall — ყველა აგენტის განახლება\n/website — აგენტების MyHome განცხადებები keygroup.ge-ზე\n"
+    "\n\n👑 <b>ადმინი</b>\n/invite — აგენტების ბმული · /team — კომპანიის ანგარიში · /syncall — ყველა აგენტის განახლება\n/website — აგენტების MyHome განცხადებები keygroup.ge-ზე · /report — დღის ანგარიში (ყოველ საღამოს 20:00)\n"
     "/agents — აგენტები · /addadmin &lt;ID&gt; — მეორე ადმინი · /setprofile &lt;TelegramID&gt; &lt;ბმული&gt; — აგენტის პროფილი"
 )
 
@@ -609,6 +609,25 @@ def sync_all(report_to_admin=True, notify_agents=True):
         return results
 
 
+EVENING_REPORT_HOUR = int(os.environ.get("EVENING_REPORT_HOUR", "20"))
+
+
+def send_evening_report(chat=None):
+    """The website's evening summary (listings, leads, unanswered, clicks, SS / VIP per agent) to the admins."""
+    if not CRM_SECRET:
+        return
+    try:
+        j = requests.post(PORTAL_URL + "/api/bot/daily-report", headers={"X-Bot-Secret": CRM_SECRET}, timeout=60).json()
+    except Exception as ex:
+        print("evening report", ex)
+        return
+    if j.get("ok") and j.get("text"):
+        if chat:
+            send(chat, j["text"])
+        else:
+            send_admins(lambda a: j["text"])
+
+
 def scheduler():
     while True:
         try:
@@ -618,6 +637,10 @@ def scheduler():
                 STATE["last_daily"] = today
                 save_state()
                 sync_all()
+            if now.hour >= EVENING_REPORT_HOUR and STATE.get("last_evening") != today:
+                STATE["last_evening"] = today
+                save_state()
+                send_evening_report()
         except Exception:
             traceback.print_exc()
         time.sleep(300)
@@ -765,6 +788,9 @@ def on_message(msg):
                 threading.Thread(target=lambda: send(chat, agent_report(sync_agent(parts[1], notify=False), uid)), daemon=True).start()
         else:
             send(chat, tr(uid, "ფორმატი", "Format") + ": <code>/setprofile 123456789 https://www.myhome.ge/udzravi-qoneba/?users=9925395</code>")
+        return
+    if text.startswith("/report") and is_admin(uid):
+        threading.Thread(target=send_evening_report, kwargs={"chat": chat}, daemon=True).start()
         return
     if text.startswith("/website") and is_admin(uid):
         arg = (text.split() + [""])[1].lower()

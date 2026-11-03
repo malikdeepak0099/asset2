@@ -1134,6 +1134,48 @@ async def bot_listing(request):
 
 
 
+def daily_report_text(con, hours=24):
+    """Evening summary for the admin: per KEY GROUP agent — new listings, leads (and unanswered), clicks, SS / paid coverage."""
+    since = time.time() - hours * 3600
+    agents = con.execute("SELECT id, name, last_login FROM users WHERE role='agent' AND UPPER(company)='KEY GROUP' AND blocked=0 ORDER BY name").fetchall()
+    clicks = {}
+    for r in con.execute("SELECT name, props FROM events WHERE ts>? AND name IN ('call_click','whatsapp_click')", (since,)):
+        try:
+            lid_ = int(json.loads(r["props"] or "{}").get("listing_id") or 0)
+        except (ValueError, TypeError):
+            lid_ = 0
+        if lid_:
+            clicks[lid_] = clicks.get(lid_, 0) + 1
+    owner_of = {r["id"]: r["user_id"] for r in con.execute("SELECT id, user_id FROM listings WHERE id IN (%s)" % (",".join(str(k) for k in clicks) or "0"))}
+    lines = [f"🏢 <b>KEY GROUP — დღის ანგარიში / daily report</b> · {time.strftime('%d.%m %H:%M', time.gmtime(time.time() + 4 * 3600))}", ""]
+    tot = {"new": 0, "leads": 0, "open": 0, "clicks": 0, "live": 0}
+    for a in agents:
+        live = con.execute("SELECT COUNT(*) AS n FROM listings WHERE user_id=? AND status='active'", (a["id"],)).fetchone()["n"]
+        new = con.execute("SELECT COUNT(*) AS n FROM listings WHERE user_id=? AND created>? AND status!='deleted'", (a["id"], since)).fetchone()["n"]
+        ld = con.execute("SELECT COUNT(*) AS n FROM leads WHERE COALESCE(NULLIF(assigned_to,0), owner_id)=? AND created>?", (a["id"], since)).fetchone()["n"]
+        op = con.execute("SELECT COUNT(*) AS n FROM leads WHERE COALESCE(NULLIF(assigned_to,0), owner_id)=? AND stage='new' AND created<?", (a["id"], time.time() - 2 * 3600)).fetchone()["n"]
+        ck = sum(v for k, v in clicks.items() if owner_of.get(k) == a["id"])
+        x = con.execute("""SELECT SUM(x.site='ss') AS ss, SUM(x.promo!='') AS paid FROM ext_posts x JOIN listings l ON l.id=x.listing_id
+                           WHERE l.user_id=? AND l.status='active'""", (a["id"],)).fetchone()
+        seen = "" if a["last_login"] and a["last_login"] > since else " · 💤"
+        lines.append(f"• <b>{esc(a['name'])}</b>: {live} live · 🆕 {new} · 📞 {ld} " + ("ლიდი" if True else "") +
+                     (f" (⚠️ {op} უპასუხო)" if op else "") + f" · 👆 {ck} · SS {x['ss'] or 0} · VIP {x['paid'] or 0}{seen}")
+        tot["new"] += new; tot["leads"] += ld; tot["open"] += op; tot["clicks"] += ck; tot["live"] += live
+    lines += ["", f"სულ / total: {tot['live']} live · 🆕 {tot['new']} · 📞 {tot['leads']} · 👆 {tot['clicks']}" + (f" · ⚠️ {tot['open']} უპასუხო ლიდი" if tot["open"] else ""),
+              "🆕 ახალი განცხადება / new · 📞 ლიდი / leads · 👆 ზარი+WhatsApp დაჭერა / call+WhatsApp clicks · 💤 დღეს არ შესულა / no login today",
+              f"{SITE}/admin/#agents"]
+    return "\n".join(lines)
+
+
+async def bot_daily_report(request):
+    """The bot asks for the evening report and sends it to the admins."""
+    sec = request.headers.get("x-bot-secret", "")
+    if not CRM_SECRET or not hmac.compare_digest(sec, CRM_SECRET):
+        return err("unauthorized", 401)
+    with db() as con:
+        return ok(text=daily_report_text(con))
+
+
 async def bot_source_gone(request):
     """The daily MyHome sync saw an agent remove a listing from their account: pause the copy on keygroup.ge (not deleted)."""
     sec = request.headers.get("x-bot-secret", "")
@@ -1832,6 +1874,23 @@ async def public_listing(request):
     return ok(listing=out, settings=public_settings())
 
 
+def alert_owner(con, user_id, lid, row, name, phone, message, source):
+    """Tell the listing's own agent / owner about a new lead in Telegram (if the bot knows them) — Georgian + English."""
+    u = con.execute("SELECT name, tg_id, role FROM users WHERE id=?", (user_id,)).fetchone()
+    if not u or not str(u["tg_id"] or "").isdigit():
+        return False
+    place = esc(row["district"] or row["address"] or "")
+    price = f"{(row['price'] or 0):,.0f} {esc(row['currency'] or '')}"
+    via = {"chat": "საიტის ჩატი / website chat", "callback": "ზარის მოთხოვნა / callback", "viewing": "ნახვის მოთხოვნა / viewing"}.get(source, esc(source))
+    text = (f"📞 <b>ახალი ლიდი / New lead</b> — #{lid} {place} · {price}\n"
+            f"👤 {esc(name or '—')}  📱 <b>{esc(phone)}</b>\n"
+            + (f"💬 {esc(str(message)[:300])}\n" if message else "") +
+            f"↪️ {via}\n\nდაურეკე რაც შეიძლება მალე / Please call back soon.")
+    con.execute("INSERT INTO bot_outbox (tg_id, text, button_url, button_text, created) VALUES (?,?,?,?,?)",
+                (u["tg_id"], text, f"{SITE}/account/#leads", "📋 ჩემი ლიდები / My leads", time.time()))
+    return True
+
+
 async def listing_enquiry(request):
     """A buyer / tenant asks about a listing: saved as a lead for the listing's owner or agent, plus a Telegram alert."""
     if too_many(request, "enq", 8, 600):
@@ -1853,6 +1912,7 @@ async def listing_enquiry(request):
         con.execute("INSERT INTO leads (listing_id, owner_id, name, phone, message, source, consent_at, created, updated) VALUES (?,?,?,?,?,?,?,?,?)",
                     (lid, row["user_id"], str(d.get("name") or "")[:80], phone, str(d.get("message") or "")[:1000], str(d.get("source") or "callback")[:20], now, now, now))
         track(con, "viewing_requested", f"/p/?id={lid}", {"listing_id": lid})
+        alert_owner(con, row["user_id"], lid, row, str(d.get("name") or "")[:80], phone, str(d.get("message") or "")[:300], str(d.get("source") or "callback")[:20])
     notify(f"📞 New enquiry for listing #{lid} ({esc(row['district'] or row['address'])})\n{esc(d.get('name'))} {esc(phone)}\n{esc(str(d.get('message') or '')[:300])}\n{SITE}/admin/#leads")
     return ok()
 
@@ -2676,10 +2736,11 @@ async def chat_send(request):
                             (state.get("name", ""), state.get("phone", ""), state.get("topic", ""), time.time(), chat["id"]))
                 track(con, "lead_submitted", chat["page"], {"channel": "chat", "topic": state.get("topic", "")[:60]})
                 m = re.search(r"/p/\?id=(\d+)", chat["page"] or "")
-                lrow = con.execute("SELECT id, user_id FROM listings WHERE id=?", (int(m.group(1)),)).fetchone() if m else None
+                lrow = con.execute("SELECT * FROM listings WHERE id=?", (int(m.group(1)),)).fetchone() if m else None
                 if lrow:
                     con.execute("INSERT INTO leads (listing_id, owner_id, name, phone, message, source, consent_at, created, updated) VALUES (?,?,?,?,?,?,?,?,?)",
                                 (lrow["id"], lrow["user_id"], state.get("name", ""), state.get("phone", ""), state.get("topic", ""), "chat", time.time(), time.time(), time.time()))
+                    alert_owner(con, lrow["user_id"], lrow["id"], lrow, state.get("name", ""), state.get("phone", ""), state.get("topic", ""), "chat")
                 tr = transcript(con, chat["id"])
                 alert = (f"🙋 <b>Website chat #{chat['id']} — visitor wants an agent</b>\n"
                          f"Name: {esc(state.get('name'))}\nPhone: {esc(state.get('phone'))}\nTopic: {esc(state.get('topic'))}\n"
@@ -2973,6 +3034,7 @@ routes = [
     Route("/api/publish/{code}", publish_data),
     Route("/api/bot/outbox", bot_outbox, methods=["POST"]),
     Route("/api/bot/source-gone", bot_source_gone, methods=["POST"]),
+    Route("/api/bot/daily-report", bot_daily_report, methods=["POST"]),
     Route("/api/my/profile", my_profile, methods=["GET", "POST"]),
     Route("/api/admin/agents", admin_agents, methods=["GET", "POST"]),
     Route("/api/login/link", login_link, methods=["GET", "POST"]),

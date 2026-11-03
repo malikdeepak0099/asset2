@@ -43,7 +43,7 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
   var t = KG.t, esc = KG.esc, $ = KG.$, $$ = KG.$$, api = KG.api;
   KG.header('account');
   document.documentElement.lang = KG.lang === 'en' ? 'en' : 'ka';
-  var ME = null, SETTINGS = null, DATA = {listings: [], orders: []}, TAB = location.hash === '#profile' ? 'profile' : 'listings';
+  var ME = null, SETTINGS = null, DATA = {listings: [], orders: []}, TAB = location.hash === '#profile' ? 'profile' : location.hash === '#leads' ? 'leads' : 'listings';
   var PARTNER = function () { return ME && ['agent', 'agency', 'developer', 'admin'].indexOf(ME.role) >= 0; };
   var ROLE = function (r) { return {agent: t('Agent', 'აგენტი'), agency: t('Agency', 'სააგენტო'), developer: t('Developer', 'დეველოპერი'), admin: 'Admin', owner: t('Owner', 'მესაკუთრე')}[r] || r; };
   var STAGES = [['new', t('New', 'ახალი')], ['contacted', t('Contacted', 'დაკავშირებული')], ['viewing', t('Viewing', 'დათვალიერება')], ['offer', t('Offer', 'შეთავაზება')], ['closed', t('Deal closed', 'გარიგება')], ['lost', t('Lost', 'დაკარგული')]];
