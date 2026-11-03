@@ -1835,6 +1835,12 @@ def queue_auto_publish(con, user_id, lid, d):
     sites = [x for x in (d.get("sites") or ["myhome", "ss"]) if x in ("myhome", "ss")]
     if not sites:
         return None, "Choose MyHome and / or SS"
+    # never post a second copy: skip the sites where this listing is already live (imported from the agent's profile or published before)
+    have = {r["site"] for r in con.execute("SELECT site FROM ext_posts WHERE listing_id=?", (lid,)).fetchall()}
+    sites = [x for x in sites if x not in have]
+    if not sites:
+        return None, "უკვე განთავსებულია MyHome-სა და SS-ზე / Already on " + " + ".join("MyHome" if x == "myhome" else "SS" for x in sorted(have))
+    d["_sites"] = sites
     cond, bld = d.get("condition"), d.get("building") or "old"
     if cond not in CONDITIONS:
         return None, "Choose the condition (renovation)"
@@ -1928,7 +1934,7 @@ async def bot_auto_publish(request):
         jid, msg = queue_auto_publish(con, l["user_id"], l["id"], d)
         if msg:
             return err(msg)
-        return ok(job_id=jid, extension_seen=l["ext_seen"] or 0)
+        return ok(job_id=jid, extension_seen=l["ext_seen"] or 0, sites=d.get("_sites", []))
 
 
 async def ext_next(request):

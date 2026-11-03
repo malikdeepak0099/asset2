@@ -1065,7 +1065,9 @@ def auto_publish_callback(chat, uid, key, msg_id):
     warn = "" if j.get("extension_seen") and time.time() - j["extension_seen"] < 600 else (
         "\n\n⚠️ შენი KEY GROUP გაფართოება ბოლო 10 წუთში არ ჩანდა — ჩართე კომპიუტერი და Chrome. / Your extension was not seen in the last 10 minutes — "
         "turn on your computer and Chrome. დაყენება / install: " + PORTAL_URL + "/publish/")
-    edit(f"✅ #{lid} — რიგშია / queued. გაფართოება 1–2 წუთში გამოაქვეყნებს MyHome-სა და SS-ზე, შედეგს აქ მოგწერ.\n"
+    where = " + ".join("MyHome" if x == "myhome" else "SS" for x in (j.get("sites") or ["myhome", "ss"]))
+    edit(f"✅ #{lid} — რიგშია / queued: {where}. გაფართოება 1–2 წუთში გამოაქვეყნებს, შედეგს აქ მოგწერ.\n"
+         f"(უკვე განთავსებულ საიტზე მეორედ არ დადებს / sites where it is already live are skipped)\n"
          f"The extension will publish it within 1–2 minutes; I'll send the result here.{warn}", [])
 
 
