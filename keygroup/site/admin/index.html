@@ -169,7 +169,8 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
         '<textarea id="agtxt" style="width:100%;min-height:120px;border:1.5px solid var(--line);border-radius:10px;padding:10px;font:inherit"></textarea>' +
         '<div style="margin-top:8px;display:flex;gap:8px;align-items:center"><button class="btn b-navy" id="agadd">Create / update accounts</button><span id="agm"></span></div></details>' +
         '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 12px"><button class="btn b-gold" id="agsend">📨 Send every agent a login link (Telegram)</button>' +
-        '<span class="muted" style="font-size:13px">' + A.filter(function (a) { return a.tg; }).length + ' of ' + A.length + ' agents can get it in Telegram</span><span id="agsm"></span></div>' +
+        '<span class="muted" style="font-size:13px">' + A.filter(function (a) { return a.tg; }).length + ' of ' + A.length + ' agents can get it in Telegram</span><span id="agsm"></span>' +
+        '<button class="btn b-ghost" id="aglinkss">🔗 Link SS listings from the CRM</button><span id="aglm"></span></div>' +
         '<div class="card tablewrap"><table><thead><tr><th>Agent</th><th>Contact</th><th>keygroup.ge</th><th>On MyHome / SS</th><th>CRM (MyHome / SS)</th><th>Leads 30 d</th><th>Avg reply</th><th>Last login</th><th>Profiles</th><th></th></tr></thead><tbody>' +
         (A.length ? A.map(function (a) {
           var h = a.avg_hours;
@@ -193,6 +194,14 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
           b.disabled = false;
           $('#agsm').className = 'msg ' + (r.ok ? 'ok' : 'err');
           $('#agsm').textContent = r.ok ? '✅ Sent to ' + r.sent.length + (r.sent.length ? ' (' + r.sent.join(', ') + ')' : '') + (r.missing.length ? ' · no Telegram yet: ' + r.missing.join(', ') : '') : r.error;
+        });
+      };
+      $('#aglinkss').onclick = function () {
+        var b = this; b.disabled = true; $('#aglm').textContent = '…';
+        api('/api/admin/link-ss', {method: 'POST'}).then(function (r) {
+          b.disabled = false; $('#aglm').className = 'msg ' + (r.ok ? 'ok' : 'err');
+          $('#aglm').textContent = r.ok ? '✅ ' + r.linked + ' listings got their SS link' : r.error;
+          if (r.ok && r.linked) setTimeout(agentsTab, 1500);
         });
       };
       $$('[data-pw]').forEach(function (b) { b.onclick = function () { pwReset(b.dataset.pw, agentsTab); }; });

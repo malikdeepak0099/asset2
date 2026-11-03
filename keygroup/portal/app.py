@@ -1172,7 +1172,10 @@ async def bot_daily_report(request):
     sec = request.headers.get("x-bot-secret", "")
     if not CRM_SECRET or not hmac.compare_digest(sec, CRM_SECRET):
         return err("unauthorized", 401)
-    with db() as con:
+    data, _ = await asyncio.get_running_loop().run_in_executor(None, fetch_crm, False)
+    with _LOCK, db() as con:
+        if data:
+            link_ss_from_crm(con, data)
         return ok(text=daily_report_text(con))
 
 
@@ -2980,6 +2983,47 @@ def fetch_crm(force=False):
         return None, msg
 
 
+def link_ss_from_crm(con, data):
+    """Master CRM rows carry both the MyHome ID and the SS ID of an agent's listing: where the MyHome ID is a listing we already
+    know on keygroup.ge (from the agent's own MyHome profile), attach the SS ID too. Returns how many were linked."""
+    tab = ((data or {}).get("tabs") or {}).get("Master Listings") or {}
+    h = tab.get("headers") or []
+    if "MyHome ID" not in h or "SS ID" not in h:
+        return 0
+    mi, si = h.index("MyHome ID"), h.index("SS ID")
+    mh_to_listing = {r["ext_id"]: r["listing_id"] for r in con.execute(
+        "SELECT x.ext_id, x.listing_id FROM ext_posts x JOIN listings l ON l.id=x.listing_id WHERE x.site='myhome' AND l.status!='deleted'")}
+    has_ss = {r["listing_id"] for r in con.execute("SELECT listing_id FROM ext_posts WHERE site='ss'")}
+    used_ss = {r["ext_id"] for r in con.execute("SELECT ext_id FROM ext_posts WHERE site='ss'")}
+    n = 0
+    for row in tab.get("rows") or []:
+        mh = re.search(r"\d{6,10}", str(row[mi] if mi < len(row) else ""))
+        ss = re.search(r"\d{6,10}", str(row[si] if si < len(row) else ""))
+        if not mh or not ss:
+            continue
+        lid = mh_to_listing.get(mh.group(0))
+        if not lid or lid in has_ss or ss.group(0) in used_ss:
+            continue
+        uid = con.execute("SELECT user_id FROM listings WHERE id=?", (lid,)).fetchone()["user_id"]
+        if save_ext(con, lid, "ss", ss.group(0), uid, source="crm"):
+            has_ss.add(lid); used_ss.add(ss.group(0)); n += 1
+    return n
+
+
+async def admin_link_ss(request):
+    """Admin: attach SS links to keygroup.ge listings from the Master CRM (MyHome ID + SS ID on the same row)."""
+    u, e = need_user(request, perm="crm")
+    if e:
+        return e
+    data, warn = await asyncio.get_running_loop().run_in_executor(None, fetch_crm, True)
+    if not data:
+        return err(warn or "CRM unavailable", 502)
+    with _LOCK, db() as con:
+        n = link_ss_from_crm(con, data)
+        audit(con, u, "link_ss_crm", "listing", 0, f"linked={n}")
+    return ok(linked=n)
+
+
 async def admin_crm(request):
     u, e = need_user(request, perm="crm")
     if e:
@@ -3067,6 +3111,7 @@ routes = [
     Route("/api/bot/outbox", bot_outbox, methods=["POST"]),
     Route("/api/bot/source-gone", bot_source_gone, methods=["POST"]),
     Route("/api/bot/daily-report", bot_daily_report, methods=["POST"]),
+    Route("/api/admin/link-ss", admin_link_ss, methods=["POST"]),
     Route("/api/my/profile", my_profile, methods=["GET", "POST"]),
     Route("/api/admin/agents", admin_agents, methods=["GET", "POST"]),
     Route("/api/login/link", login_link, methods=["GET", "POST"]),
