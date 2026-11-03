@@ -273,7 +273,21 @@
     var hn = document.querySelector('input[name=house-number]'); if (hn && d.number) { val(hn, d.number); note(true, 'Number: ' + d.number); }
     if (d.rooms) note(chipNear('ოთახები', d.rooms > 8 ? '8+' : String(d.rooms)), 'Rooms: ' + d.rooms);
     var bedN = d.bedrooms || (d.type === 'flat' || d.type === 'house' ? Math.max(1, (d.rooms || 2) - 1) : 0);   // SS requires bedrooms for flats / houses
-    if (bedN) note(chipNear('საძინებელი', bedN > 8 ? '8+' : String(bedN)), 'Bedrooms: ' + bedN + (d.bedrooms ? '' : ' (from rooms — check)'));
+    if (bedN) {
+      // SS shows the bedroom choices only after the rooms are chosen (and only up to the room count) — wait for them
+      var bedOk = false, bedTxt = String(bedN);
+      for (var bw = 0; bw < 12 && !bedOk; bw++) {
+        await sleep(400);
+        var bh = leaves().find(function (e) { return /^საძინებ/.test(txt(e).replace(/\*$/, '')); });
+        var sec = bh && bh.parentElement && bh.parentElement.parentElement;
+        var opts = sec ? Array.prototype.filter.call(sec.querySelectorAll('p,span,div,button,label'), function (e) { return e.childElementCount === 0 && /^\d\+?$/.test(txt(e)); }) : [];
+        if (opts.length) {
+          var pick = opts.find(function (e) { return txt(e) === bedTxt; }) || opts[Math.min(opts.length, bedN) - 1];
+          press(pick.parentElement || pick); bedOk = true; bedTxt = txt(pick);
+        }
+      }
+      note(bedOk, 'Bedrooms: ' + bedTxt + (d.bedrooms ? '' : ' (from rooms — check)'));
+    }
     if (d.area) { val(document.querySelector('input[name=totalArea]'), d.area); note(true, 'Area: ' + d.area + ' m²'); }
     if (d.floor) val(document.querySelector('input[name=floor]'), d.floor);
     if (d.total_floors) val(document.querySelector('input[name=floors]'), d.total_floors);
