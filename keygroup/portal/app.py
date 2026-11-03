@@ -1951,9 +1951,20 @@ async def ext_next(request):
                     ss[x] = {"state": "failed", "message": "timeout"}
             con.execute("UPDATE pub_jobs SET site_status=? WHERE id=?", (json.dumps(ss), j["id"]))
             finish_job_if_done(con, j["id"])
-        j = con.execute("SELECT * FROM pub_jobs WHERE user_id=? AND status='queued' ORDER BY id LIMIT 1", (u["id"],)).fetchone()
-        if not j:
-            return ok(job=None)
+        while True:
+            j = con.execute("SELECT * FROM pub_jobs WHERE user_id=? AND status='queued' ORDER BY id LIMIT 1", (u["id"],)).fetchone()
+            if not j:
+                return ok(job=None)
+            # checked again when the job starts: a site where the listing is already live is never posted twice
+            have = {r["site"] for r in con.execute("SELECT site FROM ext_posts WHERE listing_id=?", (j["listing_id"],)).fetchall()}
+            left = [x for x in json.loads(j["sites"] or "[]") if x not in have]
+            if left:
+                if len(left) != len(json.loads(j["sites"] or "[]")):
+                    con.execute("UPDATE pub_jobs SET sites=? WHERE id=?", (json.dumps(left), j["id"]))
+                    j = con.execute("SELECT * FROM pub_jobs WHERE id=?", (j["id"],)).fetchone()
+                break
+            con.execute("UPDATE pub_jobs SET status='done', updated=? WHERE id=?", (now, j["id"]))
+            tell_agent(con, u["id"], f"ℹ️ #{j['listing_id']} — უკვე განთავსებულია, მეორედ არ დავდე / already live there, not posted twice.")
         code = "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(8))
         opts = json.loads(j["opts"] or "{}")
         con.execute("INSERT INTO publish_codes (code, listing_id, user_id, expires, promo, job_id) VALUES (?,?,?,?,?,?)",
