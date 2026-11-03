@@ -111,8 +111,10 @@
     note(chip('add-statement-real-estate-type', TYPE_KA[d.type] || 'ბინა'), 'Property type: ' + (TYPE_KA[d.type] || 'ბინა'));
     note(chip('add-statement-deal-type', DEAL_KA[d.deal] || 'იყიდება'), 'Deal: ' + (DEAL_KA[d.deal] || 'იყიდება'));
     await sleep(500);
-    note(chip('add-statement-status', 'ძველი აშენებული') ? null : false, 'Status: “old building” chosen — change it if the building is new');
-    note(false, 'Condition: choose it yourself (renovated, white frame…)');
+    if (d.auto && d.auto.building) note(chip('add-statement-status', d.auto.building), 'Status: ' + d.auto.building);
+    else note(chip('add-statement-status', 'ძველი აშენებული') ? null : false, 'Status: “old building” chosen — change it if the building is new');
+    if (d.auto && d.auto.condition_myhome) note(chip('add-statement-condition', d.auto.condition_myhome), 'Condition: ' + d.auto.condition_myhome);
+    else note(false, 'Condition: choose it yourself (renovated, white frame…)');
     // location
     var loc = T('add-statement-location-id'), li;
     if (loc && d.district_ka) {
@@ -221,6 +223,7 @@
       chips.forEach(function (c) { var n = parseInt(txt(c), 10); if (n <= p.days && (!best || n > parseInt(txt(best), 10))) best = c; });
       if (best) { realClick(best); await sleep(500); }
       note(best ? null : false, 'SS paid: ' + name + (best ? ' · ' + txt(best) : ' — choose the days yourself') + ' — check your SS balance; it is charged when you press “განაცხადის განთავსება”');
+      window.__kgPromoDone = true;
       draw();
     }, 500);
   }
@@ -236,6 +239,12 @@
       if (el) { press(el); }
       return !!el;
     };
+    // "you have an unfinished listing" dialog: start a new one
+    for (var m0 = 0; m0 < 10; m0++) {
+      var nb = Array.prototype.find.call(document.querySelectorAll('button'), function (b) { return txt(b) === 'დაამატე ახალი განცხადება'; });
+      if (nb) { nb.click(); await sleep(1500); break; }
+      await sleep(300);
+    }
     var ssType = {flat: 'ბინა', house: 'კერძო სახლი', land: 'მიწის ნაკვეთი', commercial: 'კომერციული', hotel: 'სასტუმრო'}[d.type] || 'ბინა';
     var ssDeal = {sale: 'იყიდება', rent: 'ქირავდება', daily: 'ქირავდება დღიურად'}[d.deal] || 'იყიდება';
     note(chipNear('აირჩიეთ უძრავი ქონების ტიპი', ssType), 'Property type: ' + ssType);
@@ -268,8 +277,10 @@
     if (d.floor) val(document.querySelector('input[name=floor]'), d.floor);
     if (d.total_floors) val(document.querySelector('input[name=floors]'), d.total_floors);
     note(!!d.floor, 'Floor: ' + (d.floor || '—') + ' / ' + (d.total_floors || '—'));
-    note(chipNear('სტატუსი', 'ძველი აშენებული') ? null : false, 'Status: “old building” — change it if the building is new');
-    note(false, 'Condition: choose it yourself');
+    if (d.auto && d.auto.building) note(chipNear('სტატუსი', d.auto.building), 'Status: ' + d.auto.building);
+    else note(chipNear('სტატუსი', 'ძველი აშენებული') ? null : false, 'Status: “old building” — change it if the building is new');
+    if (d.auto && d.auto.condition_ss) note(chipNear('მდგომარეობა', d.auto.condition_ss), 'Condition: ' + d.auto.condition_ss);
+    else note(false, 'Condition: choose it yourself');
     var ta = document.querySelector('textarea');
     if (ta && (d.desc_ka || d.desc_en)) { val(ta, (d.desc_ka || d.desc_en).slice(0, 3000)); note(true, 'Description (GE)'); }
     // price: SS keeps ₾ in the input; for $ prices switch the currency first
@@ -292,6 +303,7 @@
   function watchPublish(code, d) {
     if (window.__kgWatch) return; window.__kgWatch = true;
     function report(site, extId) {
+      window.__kgDone = site;
       var body = JSON.stringify({site: site, ext_id: String(extId), promo: d.promo || null, account: ACC});
       fetch(API + '/api/publish/' + code + '/done', {method: 'POST', body: body, keepalive: true})
         .then(function (r) { return r.json(); })
@@ -321,13 +333,20 @@
     var oo = XMLHttpRequest.prototype.open, os = XMLHttpRequest.prototype.send;
     XMLHttpRequest.prototype.open = function (m, u) { this.__kgu = String(u); return oo.apply(this, arguments); };
     XMLHttpRequest.prototype.send = function () {
-      var x = this; this.addEventListener('load', function () { if (x.status < 300) seen(x.__kgu || x.responseURL, String(x.responseText || '')); });
+      var x = this; this.addEventListener('load', function () {
+        var u = x.__kgu || x.responseURL;
+        if (x.status < 300) seen(u, String(x.responseText || ''));
+        else if (/statements\/create|create-application/i.test(u) && window.__kgOnFail) window.__kgOnFail(u, x.status, String(x.responseText || ''));
+      });
       return os.apply(this, arguments);
     };
     var of = window.fetch;
     window.fetch = function (i, o) {
       var u = typeof i === 'string' ? i : (i && i.url) || '';
-      return of.apply(this, arguments).then(function (r) { if (/statements\/create|create-application/i.test(u) && r.ok) r.clone().text().then(function (t) { seen(u, t); }); return r; });
+      return of.apply(this, arguments).then(function (r) {
+        if (/statements\/create|create-application/i.test(u)) r.clone().text().then(function (t) { if (r.ok) seen(u, t); else if (window.__kgOnFail) window.__kgOnFail(u, r.status, t); });
+        return r;
+      });
     };
   }
 
@@ -367,12 +386,60 @@
       '<br><span style="opacity:.75;font-size:12px">Unclear ones can be linked by hand: keygroup.ge → listing → “MyHome / SS ⇢” → add the link.</span></div>');
   }
 
+  // ---------- auto mode (KEY GROUP extension): press Publish after filling, report problems to keygroup.ge
+  var AUTO = /kgauto=/.test(location.hash);
+  function reportStatus(code, state, message) {
+    try { fetch(API + '/api/publish/' + code + '/status', {method: 'POST', keepalive: true, body: JSON.stringify({site: SITE, state: state, message: String(message || '').slice(0, 200)})}); } catch (e) { /* ignore */ }
+  }
+  function visibleText(re) { return leaves().filter(function (e) { return e.offsetParent && re.test(txt(e)); }).map(txt).slice(0, 6); }
+  async function waitFor(fn, ms) { for (var t = 0; t < ms; t += 400) { var v = fn(); if (v) return v; await sleep(400); } return null; }
+  async function autoSubmit(code) {
+    window.__kgOnFail = function (u, status, text) {
+      var msg = 'HTTP ' + status;
+      try { var j = JSON.parse(text); msg = (j.errors || []).map ? (j.errors || []).map(function (e) { return e.field || (e.messages || []).join(' '); }).join(', ') || (j.userMessage || msg) : (j.userMessage || msg); } catch (e) { /* not JSON */ }
+      window.__kgFailed = msg; note(false, 'Not published: ' + msg); reportStatus(code, 'failed', msg);
+    };
+    if (SITE === 'myhome') {
+      var T = function (id) { return document.querySelector('[data-test-id="' + id + '"]'); };
+      var otp = T('add-statement-otp-code'), oi = otp && otp.querySelector('input');
+      if (oi && !oi.disabled) {        // phone not confirmed yet on this account: MyHome sends an SMS code to the agent
+        var gb = Array.prototype.find.call(document.querySelectorAll('button'), function (b) { return /კოდის მიღება/.test(txt(b)); });
+        if (gb) gb.click();
+        note(false, 'Enter the SMS code here and press Publish yourself'); reportStatus(code, 'needs_otp', 'SMS code');
+        return;
+      }
+      var pb = Array.prototype.find.call((T('add-statement-actions') || document).querySelectorAll('button'), function (b) { return txt(b) === 'გამოქვეყნება'; });
+      if (!pb) { reportStatus(code, 'failed', 'Publish button not found'); return; }
+      note(null, 'Publishing on MyHome…'); pb.click();
+      var r = await waitFor(function () { return window.__kgDone || window.__kgFailed; }, 45000);
+      if (!r) { var errs = visibleText(/სავალდებულო|შეცდომ|required/i); reportStatus(code, 'failed', errs.join(', ') || 'no answer from MyHome'); }
+      return;
+    }
+    // SS: continue → package step → publish
+    var cb = Array.prototype.find.call(document.querySelectorAll('button'), function (b) { return /^გაგრძელება/.test(txt(b)); });
+    if (!cb) { reportStatus(code, 'failed', 'Continue button not found'); return; }
+    note(null, 'SS: continuing…'); cb.click();
+    var step = await waitFor(function () { return leaves().find(function (e) { return txt(e) === 'აირჩიე სტატუსი' && e.offsetParent; }); }, 25000);
+    if (!step) {
+      var miss = visibleText(/სავალდებულოა/); note(false, 'SS did not continue: ' + (miss.join(', ') || 'check the form'));
+      reportStatus(code, 'failed', 'form: ' + (miss.join(', ') || 'check the form')); return;
+    }
+    if (window.__kgPromoWanted) await waitFor(function () { return window.__kgPromoDone; }, 10000);
+    await sleep(1200);
+    var fb = Array.prototype.find.call(document.querySelectorAll('button'), function (b) { return txt(b) === 'განაცხადის განთავსება'; });
+    if (!fb) { reportStatus(code, 'failed', 'Publish button not found'); return; }
+    note(null, 'Publishing on SS…'); fb.click();
+    var r2 = await waitFor(function () { return window.__kgDone || window.__kgFailed; }, 45000);
+    if (!r2) reportStatus(code, 'failed', 'no answer from SS — check the SS window (balance / SMS code?)');
+  }
+
   // ---------- run
   (async function () {
     if (!SITE) { note(false, 'Open MyHome.ge or SS.ge “add listing” first'); return; }
     if (SITE === 'ss' && /\/user\/my-applications/.test(location.pathname)) { try { await ssCollect(); } catch (e) { note(false, 'Stopped: ' + e.message); } window.__kgpubRunning = false; return; }
-    var code = (location.hash.match(/kgpub=([A-Z0-9]{6,12})/i) || [])[1];
+    var code = (location.hash.match(/kg(?:pub|auto)=([A-Z0-9]{6,12})/i) || [])[1];
     try { code = code || sessionStorage.getItem('kgpub'); } catch (e) { /* storage blocked */ }
+    if (AUTO) head = 'KEY GROUP ⇢ auto-publish';
     if (!code) code = (prompt('KEY GROUP publish code (from the MyHome / SS button on keygroup.ge):') || '').trim();
     if (!code) { note(false, 'No code'); return; }
     try { sessionStorage.setItem('kgpub', code.toUpperCase()); } catch (e) { /* ignore */ }
@@ -398,7 +465,13 @@
     if (acc && want && acc !== want) {
       log.unshift([false, '<b style="color:#ffb4a8">Wrong account?</b> You are signed in as <b>' + acc + '</b>, but this listing belongs to <b>' +
         String(d.contact_name || '').replace(/</g, '') + ' (' + want + ')</b>. To keep it under the agent’s own name, sign in to that agent’s ' + (SITE === 'myhome' ? 'MyHome' : 'SS') + ' account and press the bookmark again.']);
+      if (AUTO) { reportStatus(code.toUpperCase(), 'failed', 'signed in as ' + acc + ', not the listing agent ' + want); draw(); window.__kgpubRunning = false; return; }
     } else if (acc && want) note(true, 'Account: ' + acc + ' — matches the listing’s agent');
+    if (AUTO && d.auto && d.auto.submit) {
+      window.__kgPromoWanted = !!d.promo && SITE === 'ss';
+      try { await autoSubmit(code.toUpperCase()); } catch (e) { reportStatus(code.toUpperCase(), 'failed', 'script: ' + e.message); }
+      draw(); window.__kgpubRunning = false; return;
+    }
     draw('<div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.2)"><b>Check the form, fix ⚠️ items, then press Publish yourself.</b><br><span style="opacity:.75;font-size:12px">' + (d.promo ? 'Paid package pre-selected — you press Publish / Pay yourself.' : 'Paid options (VIP…) are not selected.') + '</span></div>');
     window.__kgpubRunning = false;
   })();

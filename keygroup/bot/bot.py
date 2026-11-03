@@ -789,6 +789,13 @@ def on_message(msg):
         else:
             send(chat, tr(uid, "ფორმატი", "Format") + ": <code>/setprofile 123456789 https://www.myhome.ge/udzravi-qoneba/?users=9925395</code>")
         return
+    if text.startswith("/auto"):
+        parts = text.split()
+        if len(parts) == 2 and parts[1].isdigit():
+            offer_auto_publish(chat, int(parts[1]))
+        else:
+            send(chat, "ფორმატი / format: <code>/auto 123</code> — keygroup.ge განცხადების ნომერი / listing number")
+        return
     if text.startswith("/report") and is_admin(uid):
         threading.Thread(target=send_evening_report, kwargs={"chat": chat}, daemon=True).start()
         return
@@ -1000,10 +1007,74 @@ def on_message(msg):
                            [{"text": "❌ გაუქმება", "callback_data": "no|" + key}]])
 
 
+# ---------------------------------------------------------------- auto-publish on MyHome / SS (KEY GROUP extension)
+AU_COND = [("nr", "new_renovated", "ახალი გარემონტებული"), ("or", "old_renovated", "ძველი გარემონტებული"), ("og", "ongoing", "მიმდინარე რემონტი"),
+           ("nd", "needs", "სარემონტო"), ("wf", "white_frame", "თეთრი კარკასი"), ("bf", "black_frame", "შავი კარკასი"),
+           ("gf", "green_frame", "მწვანე კარკასი"), ("wp", "white_plus", "თეთრი პლიუსი")]
+AU_BLD = [("o", "old", "ძველი აშენებული"), ("n", "new", "ახალი აშენებული"), ("c", "construction", "მშენებარე")]
+AU_PKG = [("f", None, "უფასო / Free", ""), ("v3", ("vip", 3), "VIP · 3 დღე", "MyHome ~9₾ · SS ~6₾"), ("v7", ("vip", 7), "VIP · 7 დღე", "MyHome ~21₾ · SS ~14₾"),
+          ("p3", ("vipplus", 3), "VIP+ · 3 დღე", "MyHome ~13.5₾"), ("s3", ("supervip", 3), "Super VIP · 3 დღე", "MyHome ~27₾ · SS ~30₾")]
+
+
+def offer_auto_publish(chat, lid):
+    send(chat, "🚀 <b>MyHome.ge + SS.ge</b>: გინდა, რომ KEY GROUP გაფართოებამ შენს კომპიუტერზე თავად გამოაქვეყნოს ეს განცხადება შენს ანგარიშებზე?\n"
+               "Publish it automatically on your own MyHome / SS accounts (KEY GROUP extension on your computer)?",
+         [[{"text": "🚀 MyHome + SS-ზე ავტომატურად", "callback_data": f"au|{lid}"}]])
+
+
+def auto_publish_callback(chat, uid, key, msg_id):
+    """au|lid → condition → building → package → confirm → queue on keygroup.ge (callback data stays under 64 bytes)."""
+    parts = key.split("|")
+    lid = parts[0] if parts and parts[0].isdigit() else ""
+    if not lid:
+        return
+    edit = lambda text, rows: tg("editMessageText", chat_id=chat, message_id=msg_id, text=text, parse_mode="HTML", reply_markup={"inline_keyboard": rows})
+    if len(parts) == 1:
+        rows = [[{"text": c[2], "callback_data": f"au|{lid}|{c[0]}"}] for c in AU_COND]
+        return edit(f"🚀 #{lid} — 1/3 <b>მდგომარეობა</b> (condition):", rows)
+    cond = next((c for c in AU_COND if c[0] == parts[1]), None)
+    if not cond:
+        return
+    if len(parts) == 2:
+        rows = [[{"text": b[2], "callback_data": f"au|{lid}|{cond[0]}|{b[0]}"}] for b in AU_BLD]
+        return edit(f"🚀 #{lid} — {cond[2]}\n2/3 <b>სტატუსი</b> (building):", rows)
+    bld = next((b for b in AU_BLD if b[0] == parts[2]), None)
+    if not bld:
+        return
+    if len(parts) == 3:
+        rows = [[{"text": p[2] + (f" ({p[3]})" if p[3] else ""), "callback_data": f"au|{lid}|{cond[0]}|{bld[0]}|{p[0]}"}] for p in AU_PKG]
+        return edit(f"🚀 #{lid} — {cond[2]} · {bld[2]}\n3/3 <b>პაკეტი</b> (package — paid ones use your MyHome / SS balance):", rows)
+    pkg = next((p for p in AU_PKG if p[0] == parts[3]), None)
+    if not pkg:
+        return
+    if len(parts) == 4:
+        rows = [[{"text": "✅ დიახ, გამოაქვეყნე / Yes, publish", "callback_data": f"au|{lid}|{cond[0]}|{bld[0]}|{pkg[0]}|ok"}],
+                [{"text": "❌ გაუქმება / Cancel", "callback_data": f"au|{lid}|{cond[0]}|{bld[0]}|{pkg[0]}|no"}]]
+        return edit(f"🚀 #{lid} — MyHome.ge + SS.ge\n• {cond[2]}\n• {bld[2]}\n• {pkg[2]}" + (f" — {pkg[3]}" if pkg[3] else "") +
+                    "\n\nდავადასტურო? შენი კომპიუტერი და Chrome ჩართული უნდა იყოს. / Confirm? Your computer and Chrome must be on.", rows)
+    if parts[4] == "no":
+        return edit(f"#{lid} — გაუქმდა / cancelled.", [])
+    body = {"tg": str(uid), "listing_id": int(lid), "sites": ["myhome", "ss"], "condition": cond[1], "building": bld[1],
+            "promo": {"tier": pkg[1][0], "days": pkg[1][1]} if pkg[1] else None}
+    try:
+        j = requests.post(PORTAL_URL + "/api/bot/auto-publish", json=body, headers={"X-Bot-Secret": CRM_SECRET}, timeout=30).json()
+    except Exception as ex:
+        j = {"ok": False, "error": str(ex)[:100]}
+    if not j.get("ok"):
+        return edit(f"⚠️ #{lid}: {e(j.get('error') or 'error')}", [])
+    warn = "" if j.get("extension_seen") and time.time() - j["extension_seen"] < 600 else (
+        "\n\n⚠️ შენი KEY GROUP გაფართოება ბოლო 10 წუთში არ ჩანდა — ჩართე კომპიუტერი და Chrome. / Your extension was not seen in the last 10 minutes — "
+        "turn on your computer and Chrome. დაყენება / install: " + PORTAL_URL + "/publish/")
+    edit(f"✅ #{lid} — რიგშია / queued. გაფართოება 1–2 წუთში გამოაქვეყნებს MyHome-სა და SS-ზე, შედეგს აქ მოგწერ.\n"
+         f"The extension will publish it within 1–2 minutes; I'll send the result here.{warn}", [])
+
+
 def on_callback(cb):
     tg("answerCallbackQuery", callback_query_id=cb["id"])
     action, _, key = (cb.get("data") or "").partition("|")
     chat = cb["message"]["chat"]["id"]
+    if action == "au":
+        return auto_publish_callback(chat, cb["from"]["id"], key, cb["message"]["message_id"])
     if action in ("reg", "rej", "adm"):
         if not is_admin(cb["from"]["id"]):
             return
@@ -1086,6 +1157,10 @@ def on_callback(cb):
                f"შეიქმნა დრაფტი #{e(dr['id'])}.")
         send_admins(f"⚠️ Website publish error for {e(item['agent'])}: {e(j.get('error'))}")
     send(chat, msg, ([[{"text": "💬 WhatsApp მესაკუთრეს", "url": link}]] if link else []) + [[{"text": "👁 გადახედვა / შეცვლა", "callback_data": "pv|" + dr["id"]}]])
+    if j.get("ok") and j.get("id"):
+        dr["site_id"] = j["id"]
+        save_state()
+        offer_auto_publish(chat, j["id"])
     if j.get("ok"):
         send_admins(lambda a: tr(a, f"🌐 {e(item['agent'])}-მა დაამატა განცხადება keygroup.ge-ზე:\n{e(j.get('url'))}", f"🌐 {e(item['agent'])} listed on keygroup.ge:\n{e(j.get('url'))}"))
 

@@ -3,6 +3,7 @@ admin/index.html
 agent/index.html
 assets/chat.js
 assets/keygroup-import-template.csv
+assets/kg-extension.zip
 assets/kg-publish.js
 assets/portal.css
 assets/portal.js

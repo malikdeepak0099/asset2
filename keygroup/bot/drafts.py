@@ -346,6 +346,8 @@ def preview(chat, dr, with_photos=True):
     B.save_state()
     if with_photos and dr["photos"]:
         send_album(chat, photo_paths(dr))
+    if dr.get("site_id"):
+        B.offer_auto_publish(chat, dr["site_id"])
     B.send(chat, platform_text(dr, "myhome"))
     B.send(chat, platform_text(dr, "ss"))
     B.send(chat, preview_text(dr), keyboard(dr))
@@ -458,6 +460,8 @@ def publish(chat, uid, did):
                           headers={"X-Bot-Secret": B.CRM_SECRET}, timeout=240)
         j = r.json()
         site_ok, site_url = bool(j.get("ok")), j.get("url") or j.get("error") or str(r.status_code)
+        if site_ok and j.get("id"):
+            dr["site_id"] = j["id"]
     except Exception as ex:
         site_url = str(ex)[:120]
     results.append(("🌐 keygroup.ge", site_ok, site_url))

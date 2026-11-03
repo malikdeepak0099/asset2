@@ -23,6 +23,8 @@ ol li{margin:8px 0;line-height:1.55}
     <p class="muted" style="margin:12px 0 0;font-size:13px" id="drag"></p>
   </div>
   <div class="card" style="padding:22px"><h3 id="howh"></h3><ol id="how"></ol></div>
+  <div class="card" style="padding:22px;margin-top:16px" id="extension"><h3 id="exh"></h3><p class="muted" id="exi"></p>
+    <a class="bm" href="/assets/kg-extension.zip" download id="exd" style="margin:6px 0 12px">⬇ KEY GROUP extension</a><ol id="exs"></ol></div>
   <p class="muted" style="font-size:13px;margin-top:16px" id="safe"></p>
 </main>
 <script src="/assets/portal.js"></script>
@@ -45,6 +47,19 @@ ol li{margin:8px 0;line-height:1.55}
     t('Open MyHome.ge (or SS.ge) from that window and press the “KEY GROUP fill” bookmark.', 'გახსენი MyHome.ge (ან SS.ge) იმ ფანჯრიდან და დააჭირე სანიშნეს „KEY GROUP fill“.'),
     t('Type, deal, location, street, price, area, rooms, floor, description and photos fill in. Choose the items marked ⚠️ (e.g. condition).', 'შეივსება ტიპი, გარიგება, მდებარეობა, ქუჩა, ფასი, ფართი, ოთახები, სართული, აღწერა და ფოტოები. ⚠️-ით მონიშნული აირჩიე თავად (მაგ. მდგომარეობა).'),
     t('Check everything and press Publish on MyHome / SS yourself. Paid options are never selected automatically.', 'შეამოწმე და თავად დააჭირე გამოქვეყნებას. ფასიანი სერვისები ავტომატურად არ ირჩევა.')
+  ].map(function (x) { return '<li>' + KG.esc(x) + '</li>'; }).join('');
+  $('#exh').textContent = t('🚀 Full auto-publish: KEY GROUP extension', '🚀 სრულად ავტომატური: KEY GROUP გაფართოება');
+  $('#exi').textContent = t('With the extension you only press “🚀 Auto” (keygroup.ge or the Telegram bot): your own Chrome opens MyHome / SS, fills the form and presses Publish. Your password never leaves your computer.',
+    'გაფართოებით მხოლოდ „🚀 Auto“-ს აჭერ (keygroup.ge-ზე ან Telegram ბოტში): შენი Chrome თავად ხსნის MyHome / SS-ს, ავსებს ფორმას და აჭერს გამოქვეყნებას. პაროლი შენს კომპიუტერს არ ტოვებს.');
+  $('#exd').textContent = '⬇ ' + t('Download the extension (ZIP)', 'გაფართოების ჩამოტვირთვა (ZIP)');
+  $('#exs').innerHTML = [
+    t('Download the ZIP above and unzip it (right-click → Extract All). Keep the folder — don’t delete it.', 'ჩამოტვირთე ZIP და გახსენი (მარჯვენა ღილაკი → Extract All). საქაღალდე შეინახე — არ წაშალო.'),
+    t('In Chrome open chrome://extensions and switch on “Developer mode” (top right).', 'Chrome-ში გახსენი chrome://extensions და ჩართე „Developer mode“ (ზედა მარჯვენა კუთხე).'),
+    t('Press “Load unpacked” and choose the unzipped folder. “KEY GROUP Publisher” appears.', 'დააჭირე „Load unpacked“ და აირჩიე გახსნილი საქაღალდე. გამოჩნდება „KEY GROUP Publisher“.'),
+    t('Pin it: puzzle icon in the toolbar → pin “KEY GROUP Publisher” (gold K).', 'მიამაგრე: ზოლში თავსატეხის ნიშანი → „KEY GROUP Publisher“ (ოქროსფერი K).'),
+    t('keygroup.ge → My account → My profile → “🔑 Get my key”, copy it, click the K icon, paste and Save. It shows ✅ Connected.', 'keygroup.ge → ჩემი ანგარიში → ჩემი პროფილი → „🔑 გასაღების მიღება“, დააკოპირე, დააჭირე K ნიშანს, ჩასვი და Save. გამოჩნდება ✅ Connected.'),
+    t('Stay logged in to your own MyHome.ge and SS.ge in this Chrome. Keep the computer on when you publish.', 'ამ Chrome-ში დარჩი შესული შენს MyHome.ge-სა და SS.ge-ზე. გამოქვეყნებისას კომპიუტერი ჩართული იყოს.'),
+    t('Publish: “🚀 Auto” next to a listing on keygroup.ge, or the “🚀 MyHome + SS” button in the Telegram bot → choose condition, building, package → confirm. The result comes to Telegram.', 'გამოქვეყნება: „🚀 Auto“ განცხადებასთან keygroup.ge-ზე, ან Telegram ბოტში „🚀 MyHome + SS“ → აირჩიე მდგომარეობა, სტატუსი, პაკეტი → დაადასტურე. შედეგი Telegram-ში მოვა.')
   ].map(function (x) { return '<li>' + KG.esc(x) + '</li>'; }).join('');
   $('#safe').textContent = t('Safe: your MyHome / SS password never leaves your computer. It only works in your own browser, on the account you are logged in to.',
     'უსაფრთხოა: შენი MyHome / SS პაროლი შენს კომპიუტერს არ ტოვებს. მუშაობს მხოლოდ შენს ბრაუზერში, იმ ანგარიშზე, რომელზეც შესული ხარ.');

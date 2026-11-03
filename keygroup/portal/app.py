@@ -132,6 +132,9 @@ def init_db():
         CREATE TABLE IF NOT EXISTS login_tokens (token TEXT PRIMARY KEY, user_id INTEGER, expires REAL, used REAL DEFAULT 0, purpose TEXT DEFAULT 'login');
         CREATE TABLE IF NOT EXISTS bot_outbox (id INTEGER PRIMARY KEY, tg_id TEXT, text TEXT, button_url TEXT DEFAULT '', button_text TEXT DEFAULT '', created REAL, sent REAL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS publish_codes (code TEXT PRIMARY KEY, listing_id INTEGER, user_id INTEGER, expires REAL, used INTEGER DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS pub_jobs (
+            id INTEGER PRIMARY KEY, listing_id INTEGER, user_id INTEGER, sites TEXT, opts TEXT DEFAULT '{}', status TEXT DEFAULT 'queued',
+            site_status TEXT DEFAULT '{}', code TEXT DEFAULT '', created REAL, started REAL DEFAULT 0, updated REAL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS ext_posts (
             id INTEGER PRIMARY KEY, listing_id INTEGER, site TEXT, ext_id TEXT, url TEXT DEFAULT '', promo TEXT DEFAULT '',
             account TEXT DEFAULT '', user_id INTEGER, source TEXT DEFAULT '', created REAL, UNIQUE(listing_id, site));
@@ -159,7 +162,7 @@ def init_db():
                                 ("projects", "inst_note", "TEXT DEFAULT ''"), ("listings", "source_url", "TEXT DEFAULT ''"),
                                 ("listings", "agent_name", "TEXT DEFAULT ''"), ("users", "slug", "TEXT DEFAULT ''"),
                                 ("users", "links", "TEXT DEFAULT '{}'"), ("users", "pw_set", "INTEGER DEFAULT 1"),
-                                ("login_tokens", "purpose", "TEXT DEFAULT 'login'"), ("publish_codes", "promo", "TEXT DEFAULT ''"), ("users", "tg_id", "TEXT DEFAULT ''"), ("users", "email", "TEXT DEFAULT ''"), ("users", "bio", "TEXT DEFAULT ''"), ("users", "last_login", "REAL DEFAULT 0")):
+                                ("login_tokens", "purpose", "TEXT DEFAULT 'login'"), ("publish_codes", "promo", "TEXT DEFAULT ''"), ("publish_codes", "job_id", "INTEGER DEFAULT 0"), ("users", "ext_key", "TEXT DEFAULT ''"), ("users", "ext_seen", "REAL DEFAULT 0"), ("users", "tg_id", "TEXT DEFAULT ''"), ("users", "email", "TEXT DEFAULT ''"), ("users", "bio", "TEXT DEFAULT ''"), ("users", "last_login", "REAL DEFAULT 0")):
             have = [r[1] for r in con.execute(f"PRAGMA table_info({table})")]
             if col not in have:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
@@ -1700,6 +1703,12 @@ async def publish_data(request):
          "photos": photos, "video_url": row["video_url"] or "", "contact_name": (owner["name"] if owner else "") or "KEY GROUP",
          "contact_phone": row["contact_phone"],
          "promo": json.loads(c["promo"]) if c["promo"] else None}
+    if c["job_id"]:
+        with db() as con:
+            j = con.execute("SELECT opts FROM pub_jobs WHERE id=?", (c["job_id"],)).fetchone()
+        o = json.loads(j["opts"] or "{}") if j else {}
+        cond = CONDITIONS.get(o.get("condition")) or ("", "")
+        d["auto"] = {"condition_myhome": cond[0], "condition_ss": cond[1], "building": BUILDINGS.get(o.get("building"), ""), "submit": True}
     if not d["bedrooms"] and d["rooms"] and d["type"] == "flat":
         d["bedrooms"] = max(1, int(d["rooms"]) - 1)
     return JSONResponse(d, headers=hdr)
@@ -1797,6 +1806,209 @@ async def ss_match(request):
     return JSONResponse(dict(ok=True, **res), headers=hdr)
 
 
+# ---------------------------------------------------------------- auto-publish (KEY GROUP Chrome extension on the agent's computer)
+# The agent approves a listing (Telegram or keygroup.ge) → a job is queued → the extension in the agent's own Chrome (logged in to
+# their own MyHome / SS) opens the add-listing pages, the publisher script fills them and presses Publish → results come back here.
+# No passwords: everything runs in the agent's browser session. Paid packages only as the agent chose them for that listing.
+CONDITIONS = {"new_renovated": ("ახალი გარემონტებული", "ახალი რემონტით"), "old_renovated": ("ძველი გარემონტებული", "ძველი რემონტით"),
+              "ongoing": ("მიმდინარე რემონტი", "მიმდინარე რემონტი"), "needs": ("სარემონტო", "სარემონტო"),
+              "white_frame": ("თეთრი კარკასი", "თეთრი კარკასი"), "black_frame": ("შავი კარკასი", "შავი კარკასი"),
+              "green_frame": ("მწვანე კარკასი", "მწვანე კარკასი"), "white_plus": ("თეთრი პლიუსი", "თეთრი კარკასი")}
+BUILDINGS = {"old": "ძველი აშენებული", "new": "ახალი აშენებული", "construction": "მშენებარე"}
+
+
+def ext_key_user(con, request):
+    key = request.headers.get("x-kg-ext", "")
+    if len(key) < 20:
+        return None
+    u = con.execute("SELECT * FROM users WHERE ext_key=? AND blocked=0", (hashlib.sha256(key.encode()).hexdigest(),)).fetchone()
+    if u:
+        con.execute("UPDATE users SET ext_seen=? WHERE id=?", (time.time(), u["id"]))
+    return u
+
+
+def queue_auto_publish(con, user_id, lid, d):
+    """Validate the agent's choices and queue a job; returns (job_id, error)."""
+    sites = [x for x in (d.get("sites") or ["myhome", "ss"]) if x in ("myhome", "ss")]
+    if not sites:
+        return None, "Choose MyHome and / or SS"
+    cond, bld = d.get("condition"), d.get("building") or "old"
+    if cond not in CONDITIONS:
+        return None, "Choose the condition (renovation)"
+    if bld not in BUILDINGS:
+        return None, "Choose the building status"
+    if con.execute("SELECT 1 FROM pub_jobs WHERE listing_id=? AND status IN ('queued','running')", (lid,)).fetchone():
+        return None, "This listing is already waiting to be published"
+    opts = {"condition": cond, "building": bld, "promo": clean_promo(d.get("promo"))}
+    cur = con.execute("INSERT INTO pub_jobs (listing_id, user_id, sites, opts, created, updated) VALUES (?,?,?,?,?,?)",
+                      (lid, user_id, json.dumps(sites), json.dumps(opts), time.time(), time.time()))
+    return cur.lastrowid, None
+
+
+def job_out(j):
+    if not j:
+        return None
+    return {"id": j["id"], "listing_id": j["listing_id"], "sites": json.loads(j["sites"] or "[]"), "status": j["status"],
+            "site_status": json.loads(j["site_status"] or "{}"), "opts": json.loads(j["opts"] or "{}"), "created": j["created"]}
+
+
+def tell_agent(con, user_id, text, url=""):
+    u = con.execute("SELECT tg_id FROM users WHERE id=?", (user_id,)).fetchone()
+    if u and str(u["tg_id"] or "").isdigit():
+        con.execute("INSERT INTO bot_outbox (tg_id, text, button_url, button_text, created) VALUES (?,?,?,?,?)",
+                    (u["tg_id"], text, url, "keygroup.ge" if url else "", time.time()))
+
+
+def finish_job_if_done(con, job_id):
+    j = con.execute("SELECT * FROM pub_jobs WHERE id=?", (job_id,)).fetchone()
+    if not j:
+        return
+    ss = json.loads(j["site_status"] or "{}")
+    sites = json.loads(j["sites"] or "[]")
+    if all((ss.get(x) or {}).get("state") in ("done", "failed") for x in sites):
+        ok_all = all(ss[x]["state"] == "done" for x in sites)
+        con.execute("UPDATE pub_jobs SET status=?, updated=? WHERE id=?", ("done" if ok_all else "failed", time.time(), job_id))
+        parts = []
+        for x in sites:
+            name = "MyHome" if x == "myhome" else "SS"
+            st = ss[x]
+            parts.append(f"{'✅' if st['state'] == 'done' else '⚠️'} {name}" + (f" #{st.get('ext_id')}" if st.get("ext_id") else "") +
+                         ("" if st["state"] == "done" else f" — {esc(st.get('message') or 'not published')}"))
+        tell_agent(con, j["user_id"], (f"🚀 #{j['listing_id']} — " + ("გამოქვეყნდა / published" if ok_all else "ნაწილობრივ / partly") + "\n" + "\n".join(parts)),
+                   f"{SITE}/account/")
+
+
+async def my_ext_key(request):
+    """The agent pairs the KEY GROUP extension: a new key (shown once); an older key stops working."""
+    u, e = need_user(request)
+    if e:
+        return e
+    key = "kgx_" + secrets.token_urlsafe(28)
+    with _LOCK, db() as con:
+        con.execute("UPDATE users SET ext_key=? WHERE id=?", (hashlib.sha256(key.encode()).hexdigest(), u["id"]))
+        audit(con, u, "ext_key", "user", u["id"], "")
+    return ok(key=key)
+
+
+async def my_auto_publish(request):
+    """keygroup.ge: the agent asks the extension to publish a listing on MyHome / SS (GET = latest job of this listing)."""
+    u, e = need_user(request)
+    if e:
+        return e
+    lid = int(request.path_params["lid"])
+    d = await body_json(request) if request.method == "POST" else {}
+    with _LOCK, db() as con:
+        if not own_listing(u, lid, con):
+            return err("Not found", 404)
+        if request.method == "GET":
+            j = con.execute("SELECT * FROM pub_jobs WHERE listing_id=? ORDER BY id DESC LIMIT 1", (lid,)).fetchone()
+            seen = con.execute("SELECT ext_seen FROM users WHERE id=?", (u["id"],)).fetchone()["ext_seen"]
+            return ok(job=job_out(j), extension_seen=seen or 0)
+        jid, msg = queue_auto_publish(con, u["id"], lid, d)
+        if msg:
+            return err(msg)
+        audit(con, u, "auto_publish", "listing", lid, json.dumps(d)[:300])
+        return ok(job_id=jid)
+
+
+async def bot_auto_publish(request):
+    """Telegram: the agent approved auto-publishing one of their listings."""
+    sec = request.headers.get("x-bot-secret", "")
+    if not CRM_SECRET or not hmac.compare_digest(sec, CRM_SECRET):
+        return err("unauthorized", 401)
+    d = await body_json(request)
+    with _LOCK, db() as con:
+        l = con.execute("SELECT l.id, l.user_id, u.tg_id, u.ext_seen FROM listings l JOIN users u ON u.id=l.user_id WHERE l.id=? AND l.status='active'",
+                        (int(d.get("listing_id") or 0),)).fetchone()
+        if not l or str(l["tg_id"] or "") != str(d.get("tg") or "-"):
+            return err("Not your listing", 404)
+        jid, msg = queue_auto_publish(con, l["user_id"], l["id"], d)
+        if msg:
+            return err(msg)
+        return ok(job_id=jid, extension_seen=l["ext_seen"] or 0)
+
+
+async def ext_next(request):
+    """The extension asks for work: the agent's oldest queued job, with a short code the publisher script uses."""
+    with _LOCK, db() as con:
+        u = ext_key_user(con, request)
+        if not u:
+            return err("Extension key not valid — pair it again on keygroup.ge → My profile", 401)
+        now = time.time()
+        for j in con.execute("SELECT * FROM pub_jobs WHERE user_id=? AND status='running' AND started<?", (u["id"], now - 20 * 60)).fetchall():
+            ss = json.loads(j["site_status"] or "{}")
+            for x in json.loads(j["sites"] or "[]"):
+                if (ss.get(x) or {}).get("state") not in ("done", "failed"):
+                    ss[x] = {"state": "failed", "message": "timeout"}
+            con.execute("UPDATE pub_jobs SET site_status=? WHERE id=?", (json.dumps(ss), j["id"]))
+            finish_job_if_done(con, j["id"])
+        j = con.execute("SELECT * FROM pub_jobs WHERE user_id=? AND status='queued' ORDER BY id LIMIT 1", (u["id"],)).fetchone()
+        if not j:
+            return ok(job=None)
+        code = "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(8))
+        opts = json.loads(j["opts"] or "{}")
+        con.execute("INSERT INTO publish_codes (code, listing_id, user_id, expires, promo, job_id) VALUES (?,?,?,?,?,?)",
+                    (code, j["listing_id"], u["id"], now + 7200, json.dumps(opts.get("promo")) if opts.get("promo") else "", j["id"]))
+        con.execute("UPDATE pub_jobs SET status='running', started=?, updated=?, code=? WHERE id=?", (now, now, code, j["id"]))
+        out = job_out(j)
+        out.update(status="running", code=code,
+                   urls={"myhome": f"https://statements.myhome.ge/ka/statement/create?referrer=myhome#kgauto={code}",
+                         "ss": f"https://home.ss.ge/ka/udzravi-qoneba/create#kgauto={code}"})
+        return ok(job=out)
+
+
+async def ext_job(request):
+    """The extension follows one job (to know when a site is finished)."""
+    with db() as con:
+        u = ext_key_user(con, request)
+        if not u:
+            return err("Extension key not valid", 401)
+        j = con.execute("SELECT * FROM pub_jobs WHERE id=? AND user_id=?", (int(request.path_params["jid"]), u["id"])).fetchone()
+    return ok(job=job_out(j)) if j else err("Not found", 404)
+
+
+async def ext_ping(request):
+    with _LOCK, db() as con:
+        u = ext_key_user(con, request)
+        if not u:
+            return err("Extension key not valid", 401)
+        waiting = con.execute("SELECT COUNT(*) AS n FROM pub_jobs WHERE user_id=? AND status IN ('queued','running')", (u["id"],)).fetchone()["n"]
+    return ok(name=u["name"], waiting=waiting)
+
+
+async def publish_status(request):
+    """The publisher script reports a problem on MyHome / SS (CORS, code-protected): failed / needs the SMS code."""
+    code = str(request.path_params["code"]).upper()[:12]
+    origin = request.headers.get("origin", "")
+    hdr = {"Access-Control-Allow-Origin": origin if origin in PUBLISH_ORIGINS else "https://statements.myhome.ge", "Vary": "Origin"}
+    if request.method == "OPTIONS":
+        hdr.update({"Access-Control-Allow-Methods": "POST", "Access-Control-Allow-Headers": "Content-Type"})
+        return Response("", headers=hdr)
+    try:
+        d = json.loads((await request.body())[:4000] or b"{}")
+    except Exception:
+        d = {}
+    site, state = d.get("site"), d.get("state")
+    if site not in ("myhome", "ss") or state not in ("failed", "needs_otp", "working"):
+        return JSONResponse({"ok": False}, status_code=400, headers=hdr)
+    with _LOCK, db() as con:
+        c = con.execute("SELECT * FROM publish_codes WHERE code=? AND expires>?", (code, time.time())).fetchone()
+        j = con.execute("SELECT * FROM pub_jobs WHERE id=?", (c["job_id"],)).fetchone() if c and c["job_id"] else None
+        if not j:
+            return JSONResponse({"ok": False}, status_code=404, headers=hdr)
+        ss = json.loads(j["site_status"] or "{}")
+        if (ss.get(site) or {}).get("state") == "done":
+            return JSONResponse({"ok": True}, headers=hdr)
+        ss[site] = {"state": state, "message": str(d.get("message") or "")[:200], "at": time.time()}
+        con.execute("UPDATE pub_jobs SET site_status=?, updated=? WHERE id=?", (json.dumps(ss, ensure_ascii=False), time.time(), j["id"]))
+        name = "MyHome" if site == "myhome" else "SS"
+        if state == "needs_otp":
+            tell_agent(con, j["user_id"], f"🔐 #{j['listing_id']} — {name}: შეიყვანე SMS კოდი კომპიუტერზე გახსნილ ფანჯარაში და დააჭირე „გამოქვეყნება“.\n"
+                                          f"Enter the SMS code in the {name} window on your computer and press Publish.")
+        finish_job_if_done(con, j["id"])
+    return JSONResponse({"ok": True}, headers=hdr)
+
+
 async def publish_done(request):
     """The publisher reports back after MyHome / SS accepted the listing (CORS, code-protected; text/plain body to skip preflight)."""
     code = str(request.path_params["code"]).upper()[:12]
@@ -1815,6 +2027,13 @@ async def publish_done(request):
                                    json.dumps(d.get("promo")) if d.get("promo") else "", d.get("account"), "publisher")
         if okk:
             con.execute("UPDATE publish_codes SET used=1 WHERE code=?", (code,))
+            if c["job_id"]:
+                j = con.execute("SELECT * FROM pub_jobs WHERE id=?", (c["job_id"],)).fetchone()
+                if j:
+                    ss = json.loads(j["site_status"] or "{}")
+                    ss[d.get("site")] = {"state": "done", "ext_id": str(d.get("ext_id")), "at": time.time()}
+                    con.execute("UPDATE pub_jobs SET site_status=?, updated=? WHERE id=?", (json.dumps(ss), time.time(), j["id"]))
+                    finish_job_if_done(con, j["id"])
     return JSONResponse({"ok": okk}, headers=hdr, status_code=200 if okk else 400)
 
 
@@ -3106,6 +3325,13 @@ routes = [
     Route("/api/my/listings/{lid:int}/ext", listing_ext, methods=["POST"]),
     Route("/api/publish/{code}/done", publish_done, methods=["POST", "OPTIONS"]),
     Route("/api/my/ss-link-code", ss_link_code, methods=["POST"]),
+    Route("/api/my/ext-key", my_ext_key, methods=["POST"]),
+    Route("/api/my/listings/{lid:int}/auto", my_auto_publish, methods=["GET", "POST"]),
+    Route("/api/bot/auto-publish", bot_auto_publish, methods=["POST"]),
+    Route("/api/ext/next", ext_next),
+    Route("/api/ext/ping", ext_ping),
+    Route("/api/ext/job/{jid:int}", ext_job),
+    Route("/api/publish/{code}/status", publish_status, methods=["POST", "OPTIONS"]),
     Route("/api/ss-match/{code}", ss_match, methods=["POST", "OPTIONS"]),
     Route("/api/publish/{code}", publish_data),
     Route("/api/bot/outbox", bot_outbox, methods=["POST"]),

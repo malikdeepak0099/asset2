@@ -191,11 +191,24 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
         '<span class="muted" style="font-size:13px">' + t('Shows the SS badge on your keygroup.ge listings. Open your SS.ge “my listings” page with the button and press the “KEY GROUP ⇢ fill” bookmark there (on every page if you have several).',
           'keygroup.ge-ზე შენს განცხადებებს SS-ის ბეჯი დაემატება. ღილაკით გახსენი SS.ge-ზე „ჩემი განცხადებები“ და იქ დააჭირე სანიშნეს „KEY GROUP ⇢ fill“ (თითოეულ გვერდზე, თუ რამდენიმეა).') + '</span>' +
         '<div><button class="btn b-navy" type="button" id="sslink">🔗 ' + t('Link my SS.ge listings', 'SS.ge განცხადებების მიბმა') + '</button> <span id="sslm"></span></div></div>' +
+        '<div style="border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:8px"><b>🚀 ' + t('KEY GROUP extension (auto-publish)', 'KEY GROUP გაფართოება (ავტომატური გამოქვეყნება)') + '</b>' +
+        '<span class="muted" style="font-size:13px">' + t('Install it once in Chrome on your computer, paste your key, stay logged in to your own MyHome / SS — then “🚀 Auto” (here or in the Telegram bot) publishes for you.',
+          'ერთხელ დააყენე Chrome-ში შენს კომპიუტერზე, ჩასვი გასაღები და დარჩი შესული შენს MyHome / SS ანგარიშებზე — შემდეგ „🚀 Auto“ (აქ ან Telegram ბოტში) თავად გამოაქვეყნებს.') + '</span>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn b-coral" href="/assets/kg-extension.zip" download>⬇ ' + t('Download extension', 'გაფართოების ჩამოტვირთვა') + '</a>' +
+        '<a class="btn b-ghost" target="_blank" href="/publish/#extension">' + t('How to install', 'როგორ დავაყენო') + '</a>' +
+        '<button class="btn b-navy" type="button" id="extkey">🔑 ' + t('Get my key', 'გასაღების მიღება') + '</button></div><div id="extm"></div></div>' +
         '</div></div>' +
         (P.kg_agent ? '<div class="card tablewrap" style="margin-top:16px"><h3 style="padding:14px 16px 0">' + t('My MyHome / SS listings', 'ჩემი MyHome / SS განცხადებები') + ' (' + (P.crm_total || 0) + ')</h3><table><thead><tr><th>' + t('Deal', 'გარიგება') + '</th><th>' + t('District', 'უბანი') + '</th><th>' + t('Address', 'მისამართი') + '</th><th>' + t('Rooms', 'ოთახი') + '</th><th>m²</th><th>' + t('Price', 'ფასი') + '</th><th>' + t('Status', 'სტატუსი') + '</th><th></th></tr></thead><tbody>' +
           (C.length ? C.slice(0, 200).map(function (r) { return '<tr><td>' + v(r.Deal) + '</td><td>' + v(r.District) + '</td><td>' + v(r.Address) + '</td><td>' + v(r.Rooms) + '</td><td>' + v(r['Area m2']) + '</td><td><b>' + v(r.Price) + ' ' + v(r.Currency) + '</b></td><td>' + v(r.Status) + '</td><td>' + (/^https?:/.test(r['Listing Link'] || '') ? '<a target="_blank" rel="noopener" style="color:var(--blue)" href="' + v(r['Listing Link']) + '">' + t('open', 'გახსნა') + ' ↗</a>' : '') + '</td></tr>'; }).join('')
             : '<tr><td colspan="8" class="muted">' + t('Nothing from the CRM yet for your name.', 'CRM-ში შენი სახელით ჯერ არაფერია.') + '</td></tr>') + '</tbody></table></div>' : '');
       bindHead();
+      $('#extkey').onclick = function () {
+        if (!confirm(t('A new key replaces your old one (the extension must be paired again). Continue?', 'ახალი გასაღები ძველს ჩაანაცვლებს (გაფართოებაში თავიდან უნდა ჩასვა). გავაგრძელო?'))) return;
+        api('/api/my/ext-key', {method: 'POST'}).then(function (r) {
+          $('#extm').innerHTML = r.ok ? '<div class="msg ok" style="word-break:break-all">' + t('Copy it into the extension (Chrome toolbar → K icon). Shown only now:', 'დააკოპირე გაფართოებაში (Chrome-ის ზოლი → K ნიშანი). მხოლოდ ახლა ჩანს:') +
+            '<br><b style="user-select:all">' + esc(r.key) + '</b></div>' : '<div class="msg err">' + esc(r.error) + '</div>';
+        });
+      };
       $('#sslink').onclick = function () {
         api('/api/my/ss-link-code', {method: 'POST'}).then(function (r) {
           if (!r.ok) { $('#sslm').textContent = r.error; return; }
@@ -321,6 +334,7 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       '<button class="btn sm b-ghost" data-act="edit" data-id="' + l.id + '">' + KG.icon('edit') + t('Edit', 'რედაქტირება') + '</button>' +
       '<button class="btn sm b-gold" data-act="promo" data-id="' + l.id + '">' + KG.icon('rocket') + t('Promote', 'VIP / Boost') + '</button>' +
       (l.status === 'active' ? '<button class="btn sm b-navy" data-act="pub" data-id="' + l.id + '">MyHome / SS ⇢</button>' : '') +
+      (l.status === 'active' ? '<button class="btn sm b-gold" data-act="auto" data-id="' + l.id + '">🚀 Auto</button>' : '') +
       '<button class="btn sm b-red" data-act="del" data-id="' + l.id + '" aria-label="' + t('Delete', 'წაშლა') + '">' + KG.icon('trash') + '</button></div></div>';
   }
   function needConfirm(l) {
@@ -333,10 +347,51 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
     if (a === 'edit') form(l);
     if (a === 'promo') promo(l);
     if (a === 'pub') publishOut(l);
+    if (a === 'auto') autoOut(l);
     if (a === 'del' && confirm(t('Delete this listing?', 'წავშალო განცხადება?'))) api('/api/my/listings/' + id, {method: 'DELETE'}).then(dash);
   }
 
   // ---------------- publish to my own MyHome.ge / SS.ge account (the bookmark fills the form there)
+  // ---------------- auto-publish through the KEY GROUP extension on the agent's own computer
+  var COND = [['new_renovated', 'ახალი გარემონტებული'], ['old_renovated', 'ძველი გარემონტებული'], ['ongoing', 'მიმდინარე რემონტი'], ['needs', 'სარემონტო'],
+    ['white_frame', 'თეთრი კარკასი'], ['black_frame', 'შავი კარკასი'], ['green_frame', 'მწვანე კარკასი'], ['white_plus', 'თეთრი პლიუსი']];
+  var BLD = [['old', 'ძველი აშენებული'], ['new', 'ახალი აშენებული'], ['construction', 'მშენებარე']];
+  function autoOut(l) {
+    var has = l.ext || {};
+    var box = document.createElement('div');
+    box.style.cssText = 'position:fixed;inset:0;background:rgba(5,12,24,.55);display:grid;place-items:center;z-index:60;padding:16px;overflow:auto';
+    box.innerHTML = '<form class="card" style="padding:22px;max-width:520px;width:100%;display:flex;flex-direction:column;gap:12px" id="auf">' +
+      '<h3>🚀 ' + t('Auto-publish', 'ავტომატური გამოქვეყნება') + ' — #' + l.id + '</h3>' +
+      '<div id="aust" class="muted" style="font-size:13px">…</div>' +
+      '<div style="display:flex;gap:14px"><label><input type="checkbox" name="myhome"' + (has.myhome ? '' : ' checked') + '> MyHome.ge' + (has.myhome ? ' (✅ #' + esc(has.myhome.id) + ')' : '') + '</label>' +
+      '<label><input type="checkbox" name="ss"' + (has.ss ? '' : ' checked') + '> SS.ge' + (has.ss ? ' (✅ #' + esc(has.ss.id) + ')' : '') + '</label></div>' +
+      '<label class="f">' + t('Condition', 'მდგომარეობა') + sel('condition', [['', '—']].concat(COND), '') + '</label>' +
+      '<label class="f">' + t('Building', 'სტატუსი') + sel('building', BLD, 'old') + '</label>' +
+      '<label class="f">' + t('Package', 'პაკეტი') + sel('pkg', [['', t('Free', 'უფასო')], ['vip:3', 'VIP · 3'], ['vip:7', 'VIP · 7'], ['vipplus:3', 'VIP+ · 3'], ['supervip:3', 'Super VIP · 3']], '') + '</label>' +
+      '<p class="muted" style="font-size:12px;margin:0">' + t('Your computer and Chrome must be on, with the KEY GROUP extension and your own MyHome / SS logged in. Paid packages use your MyHome / SS balance.',
+        'კომპიუტერი და Chrome ჩართული უნდა იყოს, KEY GROUP გაფართოებით და შენს MyHome / SS ანგარიშებზე შესული. ფასიანი პაკეტი შენი MyHome / SS ბალანსიდან იხდება.') + '</p>' +
+      '<div style="display:flex;gap:8px"><button class="btn b-gold" type="submit">🚀 ' + t('Publish', 'გამოქვეყნება') + '</button><button class="btn b-ghost" type="button" id="aux">' + t('Close', 'დახურვა') + '</button></div><div id="aum"></div></form>';
+    document.body.appendChild(box);
+    var f = box.querySelector('#auf');
+    box.querySelector('#aux').onclick = function () { box.remove(); dash(); };
+    api('/api/my/listings/' + l.id + '/auto').then(function (r) {
+      var seen = r.extension_seen && (Date.now() / 1000 - r.extension_seen < 600);
+      var j = r.job;
+      box.querySelector('#aust').innerHTML = (seen ? '🟢 ' + t('Extension online', 'გაფართოება ჩართულია') : '🔴 ' + t('Extension not seen in the last 10 min', 'გაფართოება ბოლო 10 წუთში არ ჩანდა') + ' — <a href="/publish/#extension" target="_blank" style="text-decoration:underline">' + t('install', 'დაყენება') + '</a>') +
+        (j ? ' · ' + t('last job', 'ბოლო') + ': <b>' + esc(j.status) + '</b> ' + Object.keys(j.site_status || {}).map(function (k) { var x = j.site_status[k]; return (k === 'myhome' ? 'MyHome ' : 'SS ') + (x.state === 'done' ? '✅' : '⚠️ ' + esc(x.message || x.state)); }).join(' · ') : '');
+    });
+    f.onsubmit = function (e) {
+      e.preventDefault();
+      var pk = f.pkg.value.split(':');
+      var body = {sites: [f.myhome.checked && 'myhome', f.ss.checked && 'ss'].filter(Boolean), condition: f.condition.value, building: f.building.value,
+                  promo: pk[0] ? {tier: pk[0], days: +pk[1]} : null};
+      api('/api/my/listings/' + l.id + '/auto', {method: 'POST', json: body}).then(function (r) {
+        box.querySelector('#aum').className = 'msg ' + (r.ok ? 'ok' : 'err');
+        box.querySelector('#aum').textContent = r.ok ? t('Queued ✓ — the extension publishes it within 1–2 minutes; the result comes to Telegram.', 'რიგშია ✓ — გაფართოება 1–2 წუთში გამოაქვეყნებს, შედეგი Telegram-ში მოვა.') : r.error;
+      });
+    };
+  }
+
   // paid option prices (₾ per day) — shown so the agent sees the cost before choosing; the site itself charges
   var PROMO = [
     ['', t('Free', 'უფასო'), 0, 0],
