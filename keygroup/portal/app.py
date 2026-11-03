@@ -161,6 +161,7 @@ def init_db():
                                 ("projects", "frame", "TEXT DEFAULT ''"), ("projects", "handover", "TEXT DEFAULT ''"),
                                 ("projects", "down_pct", "REAL DEFAULT 0"), ("projects", "inst_months", "INTEGER DEFAULT 0"),
                                 ("projects", "inst_note", "TEXT DEFAULT ''"), ("listings", "source_url", "TEXT DEFAULT ''"),
+                                ("listings", "prop_owner", "TEXT DEFAULT ''"), ("listings", "prop_phone", "TEXT DEFAULT ''"),
                                 ("listings", "agent_name", "TEXT DEFAULT ''"), ("users", "slug", "TEXT DEFAULT ''"),
                                 ("users", "links", "TEXT DEFAULT '{}'"), ("users", "pw_set", "INTEGER DEFAULT 1"),
                                 ("login_tokens", "purpose", "TEXT DEFAULT 'login'"), ("publish_codes", "promo", "TEXT DEFAULT ''"), ("publish_codes", "job_id", "INTEGER DEFAULT 0"), ("users", "ext_key", "TEXT DEFAULT ''"), ("users", "ext_seen", "REAL DEFAULT 0"), ("users", "tg_id", "TEXT DEFAULT ''"), ("users", "email", "TEXT DEFAULT ''"), ("users", "bio", "TEXT DEFAULT ''"), ("users", "last_login", "REAL DEFAULT 0")):
@@ -422,6 +423,9 @@ def listing_out(row, owner_view=False, admin_view=False, settings=None):
         d["contact_name"] = (d.get("contact_name") or "").split(" ")[0]
     if not admin_view:
         d.pop("user_id", None)
+    if not (owner_view or admin_view):   # the property owner's name / number: only the listing's agent and the office
+        d.pop("prop_owner", None)
+        d.pop("prop_phone", None)
     return d
 
 
@@ -1035,6 +1039,126 @@ def bot_photo(url):
         return ""
 
 
+def owner_digits(p):
+    """A Georgian mobile as 9 digits ('555123456'), keeping '*' of a hidden number ('555477***'); '' if it is not a phone."""
+    p = re.sub(r"[^\d*]", "", str(p or ""))
+    if p.startswith("995"):
+        p = p[3:]
+    return p if 7 <= len(p) <= 12 else ""
+
+
+def set_prop_owner(con, lid, name, phone):
+    """Remember the property owner (private). A full number is never replaced by a hidden one ('555477***')."""
+    name, phone = str(name or "").strip()[:80], owner_digits(phone)
+    cur = con.execute("SELECT prop_owner, prop_phone FROM listings WHERE id=?", (lid,)).fetchone()
+    if not cur:
+        return False
+    if phone and ("*" not in phone or not cur["prop_phone"] or "*" in cur["prop_phone"]):
+        con.execute("UPDATE listings SET prop_phone=? WHERE id=?", (phone, lid))
+    if name and (not cur["prop_owner"] or name != cur["prop_owner"]):
+        con.execute("UPDATE listings SET prop_owner=? WHERE id=?", (name, lid))
+    return True
+
+
+async def bot_owner_phone(request):
+    """The agent sends the owner's full number in Telegram (MyHome hides it) — saved on their listing, only they and the office see it."""
+    sec = request.headers.get("x-bot-secret", "")
+    if not CRM_SECRET or not hmac.compare_digest(sec, CRM_SECRET):
+        return err("unauthorized", 401)
+    d = await body_json(request)
+    tg, lid = str(d.get("tg") or ""), int(d.get("listing_id") or 0)
+    phone = owner_digits(d.get("phone"))
+    if not phone or "*" in phone or len(phone) != 9:
+        return err("Send the owner's full number, 9 digits (5XX XXX XXX)")
+    with _LOCK, db() as con:
+        u = con.execute("SELECT id, role FROM users WHERE tg_id=? AND tg_id!=''", (tg,)).fetchone() if tg.isdigit() else None
+        l = con.execute("SELECT id, user_id FROM listings WHERE id=? AND status!='deleted'", (lid,)).fetchone()
+        if not u or not l or (l["user_id"] != u["id"] and u["role"] != "admin"):
+            return err("Not found", 404)
+        set_prop_owner(con, lid, d.get("name"), phone)
+    return ok(phone=phone)
+
+
+ID_IN_TEXT = re.compile(r"(\d{6,9})")
+
+
+def find_ids(q):
+    """MyHome / SS id(s) from a pasted link or number; also '#123' for a keygroup.ge listing."""
+    q = str(q or "").strip()
+    site, xid = ext_from_url(q) if q.startswith("http") else (None, None)
+    ids = {str(xid)} if xid else set(ID_IN_TEXT.findall(q))
+    kg = re.fullmatch(r"#?(\d{1,5})", q)
+    return ids, (int(kg.group(1)) if kg else 0)
+
+
+async def my_find(request):
+    """Inquiry came in for MyHome / SS id X → the agent's own listing with the property owner's name and number.
+    Agents search their own listings and their own Master CRM rows; the office (admin) searches everyone's."""
+    u, e = need_user(request)
+    if e:
+        return e
+    q = request.query_params.get("q", "")
+    ids, kg_id = find_ids(q)
+    if not ids and not kg_id:
+        return err("Paste a MyHome / SS link or ID")
+    admin = u["role"] == "admin"
+    out = []
+    with db() as con:
+        rows = []
+        for xid in ids:
+            rows += con.execute("SELECT l.* FROM ext_posts x JOIN listings l ON l.id=x.listing_id WHERE x.ext_id=? AND l.status!='deleted'", (xid,)).fetchall()
+            rows += con.execute("SELECT * FROM listings WHERE status!='deleted' AND source_url LIKE ?", (f"%{xid}%",)).fetchall()
+        if kg_id:
+            rows += con.execute("SELECT * FROM listings WHERE id=? AND status!='deleted'", (kg_id,)).fetchall()
+        seen = set()
+        for r in rows:
+            if r["id"] in seen or (not admin and r["user_id"] != u["id"]):
+                continue
+            seen.add(r["id"])
+            ag = con.execute("SELECT name FROM users WHERE id=?", (r["user_id"],)).fetchone()
+            ext = ext_map(con, [r["id"]]).get(r["id"], {})
+            out.append({"from": "keygroup.ge", "id": r["id"], "url": f"{SITE}/p/?id={r['id']}", "deal": r["deal"], "type": r["type"],
+                        "district": r["district"], "address": r["address"], "rooms": r["rooms"], "area": r["area"], "floor": r["floor"],
+                        "price": r["price"], "currency": r["currency"], "status": r["status"], "agent": ag["name"] if ag else "",
+                        "owner": r["prop_owner"], "phone": r["prop_phone"],
+                        "links": {k: v.get("url") or "" for k, v in ext.items()}, "source_url": r["source_url"]})
+    # the Master CRM (agents' Google Sheets) — the agent's own rows only
+    crm, _ = await asyncio.get_running_loop().run_in_executor(None, crm_find, ids, None if admin else u["name"])
+    for c in crm:
+        out.append(c)
+    return ok(results=out[:20], query=q)
+
+
+def crm_find(ids, agent_name):
+    if not CRM_URL or not ids:
+        return [], None
+    try:
+        data, _w = fetch_crm()
+    except Exception:
+        return [], None
+    t = ((data or {}).get("tabs") or {}).get("Master Listings") or {}
+    H, rows = t.get("headers") or [], t.get("rows") or []
+    col = lambda h: H.index(h) if h in H else -1
+    ai, li, mi, si = col("Agent"), col("Listing Link"), col("MyHome ID"), col("SS ID")
+    get = lambda r, h: (r[col(h)] if col(h) >= 0 and col(h) < len(r) else "")
+    key = name_key(agent_name) if agent_name else None
+    out = []
+    for r in rows:
+        if key and (ai < 0 or name_key(r[ai]) != key):
+            continue
+        hay = " ".join(str(r[i]) for i in (li, mi, si) if 0 <= i < len(r))
+        if not any(x in hay for x in ids):
+            continue
+        out.append({"from": "CRM", "agent": get(r, "Agent"), "deal": get(r, "Deal"), "type": get(r, "Category"), "district": get(r, "District"),
+                    "address": get(r, "Address"), "rooms": get(r, "Rooms"), "area": get(r, "Area m2"), "floor": get(r, "Floor"),
+                    "price": get(r, "Price"), "currency": get(r, "Currency"), "status": get(r, "Status"),
+                    "owner": get(r, "Owner / Contact"), "phone": owner_digits(get(r, "Phone")) or str(get(r, "Phone")),
+                    "url": get(r, "Listing Link"), "myhome_id": get(r, "MyHome ID"), "ss_id": get(r, "SS ID")})
+        if len(out) >= 10:
+            break
+    return out, None
+
+
 async def bot_listing(request):
     """The staff Telegram bot posts a listing after the agent confirmed the owner's consent.
     It goes live at once under KEY GROUP (company phone, never the owner's), verified level 2."""
@@ -1120,6 +1244,7 @@ async def bot_listing(request):
                                    VALUES (?,{','.join('?' * len(f))},'active',?,?,?,?,?,2,?,?,?)""",
                                (adm["id"], *f.values(), now, now, now, exp, now, json.dumps(photos), src, agent))
             lid = cur_.lastrowid
+        set_prop_owner(con, lid, d.get("owner_name"), d.get("owner_phone"))
         find_duplicates(con, lid)
         xs, xid = ext_from_url(src)
         if xs:   # "agent" = the agent's own listing on their MyHome / SS account; "import" = copied from someone else's link
@@ -3411,6 +3536,8 @@ routes = [
     Route("/api/bot/source-gone", bot_source_gone, methods=["POST"]),
     Route("/api/bot/daily-report", bot_daily_report, methods=["POST"]),
     Route("/api/admin/link-ss", admin_link_ss, methods=["POST"]),
+    Route("/api/my/find", my_find),
+    Route("/api/bot/owner-phone", bot_owner_phone, methods=["POST"]),
     Route("/api/admin/publish-errors", admin_publish_errors),
     Route("/api/my/profile", my_profile, methods=["GET", "POST"]),
     Route("/api/admin/agents", admin_agents, methods=["GET", "POST"]),

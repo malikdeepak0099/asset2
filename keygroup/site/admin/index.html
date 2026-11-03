@@ -171,7 +171,7 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
         '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 12px"><button class="btn b-gold" id="agsend">📨 Send every agent a login link (Telegram)</button>' +
         '<span class="muted" style="font-size:13px">' + A.filter(function (a) { return a.tg; }).length + ' of ' + A.length + ' agents can get it in Telegram</span><span id="agsm"></span>' +
         '<button class="btn b-ghost" id="aglinkss">🔗 Link SS listings from the CRM</button><span id="aglm"></span>' +
-        '<button class="btn b-ghost" id="agperr">⚠️ MyHome / SS publish errors</button></div><div id="agperrbox"></div>' +
+        '<button class="btn b-ghost" id="agperr">⚠️ MyHome / SS publish errors</button></div><div id="agperrbox"></div>' + KG.findBox() +
         '<div class="card tablewrap"><table><thead><tr><th>Agent</th><th>Contact</th><th>keygroup.ge</th><th>On MyHome / SS</th><th>CRM (MyHome / SS)</th><th>Leads 30 d</th><th>Avg reply</th><th>Last login</th><th>Profiles</th><th></th></tr></thead><tbody>' +
         (A.length ? A.map(function (a) {
           var h = a.avg_hours;
@@ -206,6 +206,7 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
           if (r.ok && r.linked) setTimeout(agentsTab, 1500);
         });
       };
+      KG.bindFind();
       $('#agperr').onclick = function () {
         api('/api/admin/publish-errors').then(function (r) {
           var E = (r && r.errors) || [];

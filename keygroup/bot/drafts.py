@@ -62,7 +62,7 @@ def new_draft(uid, agent, d=None, consent_at=""):
     price, cur = (d.get("price_usd"), "USD") if d.get("price_usd") else (d.get("price"), "GEL" if d.get("price") else "USD")
     dr = {
         "id": did, "uid": str(uid), "agent": agent, "created": time.time(), "status": "draft", "consent_at": consent_at,
-        "source": {k: d.get(k) for k in ("source", "url", "id", "owner", "posted_at")} if d else {},
+        "source": {k: d.get(k) for k in ("source", "url", "id", "owner", "phone", "posted_at")} if d else {},
         "source_desc": strip_phones(d.get("description"))[:4000],
         "deal": d.get("deal") or "sale", "type": d.get("type") or "flat", "city": d.get("city") or "", "district": d.get("district") or "",
         "address": d.get("address") or "", "area": d.get("area") or "", "rooms": d.get("rooms") or "", "bedrooms": d.get("bedrooms") or "",
@@ -127,7 +127,9 @@ def site_payload(dr):
             "description": "\n\n".join(x for x in (dr["desc_en"], dr["desc_ka"]) if x)
                            + ("\n\n" + "\n".join(f"• {k}: {v}" for k, v in dr.get("details") or []) if dr.get("details") else ""),
             "agent": name, "contact_phone": agent_phone(dr), "video_url": dr.get("video_url"), "lat": dr.get("lat"), "lon": dr.get("lon"),
-            "profiles": profile_links(dr["uid"]), "tg": dr["uid"]}
+            "profiles": profile_links(dr["uid"]), "tg": dr["uid"],
+            # the property owner — private on keygroup.ge: only this agent and the office see it (the agent's CRM search)
+            "owner_name": (dr["source"] or {}).get("owner") or "", "owner_phone": (dr["source"] or {}).get("phone") or ""}
 
 
 def is_own_listing(uid, d):
@@ -146,6 +148,8 @@ def quick_publish(chat, dr, d):
     own = is_own_listing(dr["uid"], d)
     agency = bool(d.get("posted_by_agency")) and not own     # the agent's own listing: its photos are theirs to use
     payload.update(with_photos=not agency, photos=(d.get("images") or [])[:15], own=own)
+    if own:   # the agent's own ad: the "owner" shown there is the agent
+        payload.update(owner_name="", owner_phone="")
     try:
         r = requests.post(B.PORTAL_URL + "/api/bot/listing", json=payload, headers={"X-Bot-Secret": B.CRM_SECRET}, timeout=240)
         j = r.json()

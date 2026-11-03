@@ -683,6 +683,26 @@ def on_message(msg):
         send(chat, tr(uid, f"შენი Telegram ID: <code>{uid}</code>\nგაუგზავნე ადმინისტრატორს.",
                       f"Your Telegram ID: <code>{uid}</code>"))
         return
+    # ---- the property owner's full number for the agent's CRM ("/owner 596 555123456", or a plain number right after we asked)
+    wait = STATE.get("await_owner", {}).get(str(uid))
+    owner_cmd = re.match(r"^/owner\s+#?(\d{1,6})\s+(.+)$", text)
+    plain_num = re.fullmatch(r"(?:\+?995)?[\s-]*5\d{2}(?:[\s-]*\d){6}", text) if wait and time.time() - wait.get("at", 0) < 3 * 3600 else None
+    if owner_cmd or plain_num:
+        lid = int(owner_cmd.group(1)) if owner_cmd else wait["lid"]
+        num = owner_cmd.group(2) if owner_cmd else text
+        try:
+            r = requests.post(PORTAL_URL + "/api/bot/owner-phone", json={"tg": str(uid), "listing_id": lid, "phone": num},
+                              headers={"X-Bot-Secret": CRM_SECRET}, timeout=30).json()
+        except Exception as ex:
+            r = {"ok": False, "error": str(ex)[:100]}
+        if r.get("ok"):
+            STATE.get("await_owner", {}).pop(str(uid), None)
+            save_state()
+            send(chat, f"✅ #{lid} — მესაკუთრის ნომერი შენახულია შენს CRM-ში: <b>{e(r.get('phone'))}</b>\n"
+                       f"(ჩანს მხოლოდ შენთვის და ოფისისთვის · keygroup.ge → ჩემი ანგარიში → 🔎 ძებნა ID-ით)")
+        else:
+            send(chat, f"⚠️ {e(r.get('error') or 'შეცდომა')}\nფორმატი: <code>/owner {lid} 5XXXXXXXX</code>")
+        return
     if text.startswith("/lang"):
         cur = lang_of(uid)
         STATE.setdefault("lang", {})[str(uid)] = "ka" if cur == "en" else "en"
@@ -1161,6 +1181,12 @@ def on_callback(cb):
     send(chat, msg, ([[{"text": "💬 WhatsApp მესაკუთრეს", "url": link}]] if link else []) + [[{"text": "👁 გადახედვა / შეცვლა", "callback_data": "pv|" + dr["id"]}]])
     if j.get("ok") and j.get("id"):
         dr["site_id"] = j["id"]
+        if not drafts.is_own_listing(item["uid"], d) and (d.get("phone_masked") or not d.get("phone")):
+            # MyHome hides the owner's number — ask the agent for it once, for their own CRM (private)
+            STATE.setdefault("await_owner", {})[str(item["uid"])] = {"lid": j["id"], "at": time.time()}
+            send(chat, f"📞 <b>#{j['id']} — მესაკუთრის სრული ნომერი</b> ({e(d.get('owner') or '—')}, {e(d.get('phone') or '—')}):\n"
+                       "გამომიგზავნე 9 ციფრი, მაგ. <code>555123456</code> — შეინახება შენს CRM-ში (ჩანს მხოლოდ შენთვის და ოფისისთვის).\n"
+                       f"მოგვიანებით: <code>/owner {j['id']} 5XXXXXXXX</code>")
         save_state()
         offer_auto_publish(chat, j["id"])
     if j.get("ok"):

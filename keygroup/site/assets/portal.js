@@ -30,6 +30,40 @@
         KG.esc(x.source === 'import' ? 'Imported from this link' : 'Published ' + new Date((x.at || 0) * 1000).toLocaleDateString()) + '">' + KG.esc(label) + ' ↗</a>';
     }).join(' ');
   };
+  // Inquiry came for MyHome / SS id X → the agent's own listing with the property owner's name and number (agent + office only)
+  KG.findBox = function () {
+    var t = KG.t;
+    return '<form class="card" id="kgfind" style="padding:14px 16px;margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:end">' +
+      '<label class="f" style="flex:1 1 300px;margin:0">🔎 ' + t('Inquiry came? Paste the MyHome / SS link or ID', 'მოთხოვნა მოვიდა? ჩასვი MyHome / SS ბმული ან ID') +
+      '<input name="q" placeholder="37227816 · https://www.myhome.ge/…" autocomplete="off"></label>' +
+      '<button class="btn b-navy" type="submit">' + t('Find owner', 'მესაკუთრის ძებნა') + '</button><div id="kgfindo" style="flex-basis:100%"></div></form>';
+  };
+  KG.bindFind = function () {
+    var f = document.getElementById('kgfind'), t = KG.t, esc = KG.esc;
+    if (!f) return;
+    f.onsubmit = function (e) {
+      e.preventDefault();
+      var o = document.getElementById('kgfindo'); o.innerHTML = '<span class="muted">…</span>';
+      KG.api('/api/my/find?q=' + encodeURIComponent(f.q.value.trim())).then(function (r) {
+        if (!r.ok) { o.innerHTML = '<div class="msg err">' + esc(r.error || 'Error') + '</div>'; return; }
+        if (!r.results.length) { o.innerHTML = '<div class="msg err">' + t('Not found in your listings or your CRM. Check the ID.', 'შენს განცხადებებსა და CRM-ში ვერ მოიძებნა. შეამოწმე ID.') + '</div>'; return; }
+        o.innerHTML = r.results.map(function (x) {
+          var ph = String(x.phone || ''), full = /^\d{9}$/.test(ph), tel = full ? '+995' + ph : '';
+          return '<div style="border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:10px">' +
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><span class="pill ' + (x.from === 'CRM' ? 'st-paused' : 'st-active') + '">' + esc(x.from) + '</span>' +
+            (x.id ? '<a href="/p/?id=' + x.id + '" target="_blank" style="color:var(--blue);font-weight:700">#' + x.id + '</a>' : '') +
+            '<b>' + esc([x.deal, x.type].filter(Boolean).join(' · ')) + '</b><span class="muted">' + esc([x.district, x.address].filter(Boolean).join(', ')) + '</span>' +
+            (x.agent ? '<span class="muted">· ' + esc(x.agent) + '</span>' : '') + '</div>' +
+            '<div class="muted" style="font-size:13px;margin-top:4px">' + esc([x.rooms ? x.rooms + ' ' + t('rooms', 'ოთახი') : '', x.area ? x.area + ' m²' : '', x.floor ? t('floor ', 'სართ. ') + x.floor : '', x.price ? x.price + ' ' + (x.currency || '') : ''].filter(Boolean).join(' · ')) + '</div>' +
+            '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:8px;font-size:16px">👤 <b>' + esc(x.owner || t('Owner: —', 'მესაკუთრე: —')) + '</b> 📞 ' +
+            (full ? '<a href="tel:' + tel + '" style="color:var(--blue);font-weight:800">' + esc(ph.replace(/(\d{3})(\d{2})(\d{2})(\d{2})/, '$1 $2 $3 $4')) + '</a> <a class="btn sm b-wa" target="_blank" rel="noopener" href="https://wa.me/995' + ph + '">WhatsApp</a>'
+              : '<b>' + esc(ph || '—') + '</b> <span class="muted" style="font-size:12px">' + t('full number missing — in Telegram: /owner ', 'სრული ნომერი არ არის — Telegram-ში: /owner ') + (x.id || 'ID') + ' 5XXXXXXXX</span>') + '</div>' +
+            '<div style="font-size:12px;margin-top:6px">' + Object.keys(x.links || {}).filter(function (k) { return x.links[k]; }).map(function (k) { return '<a target="_blank" rel="noopener" style="color:var(--blue);margin-right:10px" href="' + esc(x.links[k]) + '">' + (k === 'myhome' ? 'MyHome' : 'SS') + ' ↗</a>'; }).join('') +
+            (x.url && x.from === 'CRM' ? '<a target="_blank" rel="noopener" style="color:var(--blue)" href="' + esc(x.url) + '">' + t('Listing', 'განცხადება') + ' ↗</a>' : '') + '</div></div>';
+        }).join('');
+      });
+    };
+  };
   KG.esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; }); };
   KG.$ = function (s, r) { return (r || document).querySelector(s); };
   KG.$$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
