@@ -423,6 +423,18 @@
     try { fetch(API + '/api/publish/' + code + '/status', {method: 'POST', keepalive: true, body: JSON.stringify({site: SITE, state: state, message: String(message || '').slice(0, 200), ext_id: extId ? String(extId) : ''})}); } catch (e) { /* ignore */ }
   }
   function visibleText(re) { return leaves().filter(function (e) { return e.offsetParent && re.test(txt(e)); }).map(txt).slice(0, 6); }
+  // short red texts on the page (how SS marks missing fields), with the field label above when it can find one
+  function redTexts() {
+    return leaves().filter(function (e) {
+      if (!e.offsetParent) return false; var t = txt(e); if (!t || t.length > 80) return false;
+      var c = (getComputedStyle(e).color.match(/\d+/g) || []).map(Number);
+      return c.length >= 3 && c[0] > 170 && c[1] < 110 && c[2] < 110;
+    }).map(function (e) {
+      var box = e.parentElement && e.parentElement.parentElement, lab = box && box.querySelector('label, p, span');
+      var l = lab && lab !== e ? txt(lab).slice(0, 40) : '';
+      return (l && l !== txt(e) ? l + ': ' : '') + txt(e);
+    }).slice(0, 6);
+  }
   async function waitFor(fn, ms) { for (var t = 0; t < ms; t += 400) { var v = fn(); if (v) return v; await sleep(400); } return null; }
   async function autoSubmit(code) {
     if (SITE === 'myhome') {
@@ -434,7 +446,10 @@
         note(false, 'Enter the SMS code here and press Publish yourself'); reportStatus(code, 'needs_otp', 'SMS code');
         return;
       }
-      var pb = Array.prototype.find.call((T('add-statement-actions') || document).querySelectorAll('button'), function (b) { return txt(b) === 'გამოქვეყნება'; });
+      // over the free limit MyHome shows the price on the button: “გამოქვეყნება (2₾)”
+      var pb = T('add-statement-publish') || Array.prototype.find.call((T('add-statement-actions') || document).querySelectorAll('button'), function (b) { return /^გამოქვეყნება/.test(txt(b)); });
+      var price = (txt(pb || {}).match(/\(([\d.,]+)\s*₾\)/) || [])[1];
+      if (pb && price) note(null, '💳 MyHome charges ' + price + ' ₾ for this listing (free limit used) — you confirm the payment on the next page');
       if (!pb) { reportStatus(code, 'failed', 'Publish button not found'); return; }
       note(null, 'Publishing on MyHome…'); pb.click();
       var r = await waitFor(function () { return window.__kgDone || window.__kgFailed || window.__kgPay; }, 45000);
@@ -447,7 +462,9 @@
     note(null, 'SS: continuing…'); cb.click();
     var step = await waitFor(function () { return leaves().find(function (e) { return txt(e) === 'აირჩიე სტატუსი' && e.offsetParent; }); }, 25000);
     if (!step) {
-      var miss = visibleText(/სავალდებულოა/); note(false, 'SS did not continue: ' + (miss.join(', ') || 'check the form'));
+      var miss = visibleText(/სავალდებულოა|აირჩიე|მიუთითე|შეავსე/);
+      if (!miss.length) miss = redTexts();
+      note(false, 'SS did not continue: ' + (miss.join(', ') || 'check the form'));
       reportStatus(code, 'failed', 'form: ' + (miss.join(', ') || 'check the form')); return;
     }
     if (window.__kgPromoWanted) await waitFor(function () { return window.__kgPromoDone; }, 10000);
