@@ -85,7 +85,27 @@ PY
     echo "Caddy rules not valid - restored the previous config"; cp "$BK2" "$CF"
   fi
 fi
+# 3c) search engines: /sitemap.xml and /robots.txt come from the portal (all live listings + agent profiles)
+if ! grep -q 'kg-seo' "$CF"; then
+  BK3="$CF.bak-$(date +%s)"; cp "$CF" "$BK3"
+  python3 - "$CF" <<'PY'
+import sys, re
+p = sys.argv[1]; s = open(p).read()
+m = re.search(r'^[^\n#]*keygroup\.ge[^\n]*\{[ \t]*\n', s, re.M)
+if not m: sys.exit("keygroup.ge block not found")
+s = s[:m.end()] + "\t# kg-seo\n\treverse_proxy /sitemap.xml kg-portal:8000\n\treverse_proxy /robots.txt kg-portal:8000\n" + s[m.end():]
+open(p, "w").write(s)
+PY
+  CADDY_C=$(docker compose ps -q caddy)
+  if docker exec "$CADDY_C" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 || ! docker exec "$CADDY_C" test -f /etc/caddy/Caddyfile; then
+    docker compose restart caddy >/dev/null 2>&1; sleep 6
+    if ! docker compose ps caddy | grep -q Up; then echo "PROBLEM - restoring Caddy"; cp "$BK3" "$CF"; docker compose restart caddy; fi
+  else
+    echo "Caddy SEO rules not valid - restored the previous config"; cp "$BK3" "$CF"
+  fi
+fi
 sleep 2
+if curl -fsS https://keygroup.ge/sitemap.xml 2>/dev/null | grep -q '<urlset'; then echo "sitemap: OK"; fi
 if curl -fsS https://keygroup.ge/api/health >/dev/null 2>&1 || curl -fsS -H 'Host: keygroup.ge' http://127.0.0.1/api/health >/dev/null 2>&1; then echo "portal reachable: OK"; fi
 bash /opt/keygroup/restore_test.sh 2>/dev/null | tail -2
 echo "DONE - owner portal is live: https://keygroup.ge/account/  admin: https://keygroup.ge/admin/"

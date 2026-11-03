@@ -1176,6 +1176,35 @@ async def bot_daily_report(request):
         return ok(text=daily_report_text(con))
 
 
+SEO_PAGES = ("/", "/search/", "/tbilisi/", "/batumi/", "/invest-in-georgia/", "/partners/", "/ka/", "/ru/")
+
+
+async def sitemap_xml(request):
+    """Every live listing (at its agent URL when it has one), agent profiles and the main pages — for Google / Bing."""
+    def x(u):
+        return u.replace("&", "&amp;").replace("<", "&lt;")
+    urls = [(SITE + pg, None, "daily" if pg in ("/", "/search/") else "weekly") for pg in SEO_PAGES]
+    with db() as con:
+        users = {r["id"]: r for r in con.execute("SELECT id, slug, role FROM users")}
+        for r in con.execute("SELECT id, user_id, deal, type, rooms, district, city, updated FROM listings WHERE status='active' ORDER BY id DESC LIMIT 45000"):
+            u = users.get(r["user_id"])
+            path = f"/{u['slug']}/{listing_slug(dict(r))}-{r['id']}" if u and u["slug"] and u["role"] in PARTNER_ROLES else f"/p/?id={r['id']}"
+            urls.append((SITE + path, r["updated"], "weekly"))
+        for u in users.values():
+            if u["slug"] and u["role"] in PARTNER_ROLES:
+                urls.append((f"{SITE}/{u['slug']}/", None, "daily"))
+    body = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+    for loc, mod, freq in urls:
+        body.append(f"<url><loc>{x(loc)}</loc>" + (f"<lastmod>{time.strftime('%Y-%m-%d', time.gmtime(mod))}</lastmod>" if mod else "") + f"<changefreq>{freq}</changefreq></url>")
+    body.append("</urlset>")
+    return Response("\n".join(body), media_type="application/xml", headers={"Cache-Control": "public, max-age=3600"})
+
+
+async def robots_txt(request):
+    return Response("User-agent: *\nAllow: /\nDisallow: /admin/\nDisallow: /account/\nDisallow: /api/\nDisallow: /compare/\nDisallow: /publish/\n\n"
+                    f"Sitemap: {SITE}/sitemap.xml\n", media_type="text/plain")
+
+
 async def bot_source_gone(request):
     """The daily MyHome sync saw an agent remove a listing from their account: pause the copy on keygroup.ge (not deleted)."""
     sec = request.headers.get("x-bot-secret", "")
@@ -2993,6 +3022,9 @@ async def health(request):
 
 routes = [
     Route("/api/health", health),
+    Route("/sitemap.xml", sitemap_xml),
+    Route("/robots.txt", robots_txt),
+    Route("/api/sitemap.xml", sitemap_xml),
     Route("/api/register", register, methods=["POST"]),
     Route("/api/login", login, methods=["POST"]),
     Route("/api/logout", logout, methods=["POST"]),

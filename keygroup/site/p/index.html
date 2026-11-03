@@ -59,6 +59,23 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
     document.title = title + ' — KEY GROUP';
     if (l.path && location.pathname !== l.path) { try { history.replaceState(null, '', l.path + location.hash); } catch (e) {} }
     var can = document.createElement('link'); can.rel = 'canonical'; can.href = location.origin + (l.path || '/p/?id=' + l.id); document.head.appendChild(can);
+    // search engines and link previews: description, Open Graph and schema.org data for this listing
+    var cur = {USD: 'USD', GEL: 'GEL', EUR: 'EUR'}[l.currency] || 'USD';
+    var desc = [KG.DEAL(l.deal), l.rooms ? l.rooms + ' ' + t('rooms', 'ოთახი') : '', l.area ? l.area + ' m²' : '', [l.district, l.city].filter(Boolean).join(', '), KG.money(l.price, l.currency)].filter(Boolean).join(' · ') +
+      (l.description ? ' — ' + String(l.description).replace(/\s+/g, ' ').slice(0, 120) : '');
+    var meta = function (attr, key, val) { var m = document.querySelector('meta[' + attr + '="' + key + '"]'); if (!m) { m = document.createElement('meta'); m.setAttribute(attr, key); document.head.appendChild(m); } m.setAttribute('content', val); };
+    meta('name', 'description', desc.slice(0, 300));
+    meta('property', 'og:title', title + ' — KEY GROUP'); meta('property', 'og:description', desc.slice(0, 300)); meta('property', 'og:type', 'website');
+    meta('property', 'og:url', can.href); if (photos[0]) meta('property', 'og:image', location.origin + KG.photo(photos[0]));
+    var ld = document.createElement('script'); ld.type = 'application/ld+json';
+    ld.textContent = JSON.stringify({'@context': 'https://schema.org', '@type': 'RealEstateListing', name: title, url: can.href, description: desc.slice(0, 500),
+      image: photos.slice(0, 5).map(function (p) { return location.origin + KG.photo(p); }), datePosted: l.created ? new Date(l.created * 1000).toISOString().slice(0, 10) : undefined,
+      offers: {'@type': 'Offer', price: l.price, priceCurrency: cur, availability: 'https://schema.org/InStock', businessFunction: l.deal === 'sale' ? 'http://purl.org/goodrelations/v1#Sell' : 'http://purl.org/goodrelations/v1#LeaseOut'},
+      about: {'@type': l.type === 'house' ? 'House' : l.type === 'flat' ? 'Apartment' : 'Place', numberOfRooms: l.rooms || undefined,
+        floorSize: l.area ? {'@type': 'QuantitativeValue', value: l.area, unitCode: 'MTK'} : undefined,
+        address: {'@type': 'PostalAddress', addressLocality: l.city || 'Tbilisi', addressRegion: l.district || undefined, streetAddress: l.address || undefined, addressCountry: 'GE'},
+        geo: l.lat && l.lon ? {'@type': 'GeoCoordinates', latitude: l.lat, longitude: l.lon} : undefined}});
+    document.head.appendChild(ld);
     var per = l.deal === 'sale' ? '' : (l.deal === 'daily' ? t(' / day', ' / დღე') : t(' / month', ' / თვე'));
     var badges = '<span class="pill" style="background:var(--sky);color:var(--blue)">' + esc(KG.DEAL(l.deal)) + '</span>';
     if (l.tier === 'super') badges += ' <span class="pill t-super">Super VIP</span>'; else if (l.tier === 'vip') badges += ' <span class="pill t-vip">VIP</span>';
