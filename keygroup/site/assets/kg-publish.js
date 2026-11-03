@@ -300,8 +300,30 @@
 
   // ---------- after the person presses Publish: tell keygroup.ge the MyHome / SS id (so the admin sees where each listing is live)
   var ACC = '';
+  // the exact reason MyHome / SS gave when it refused the listing (any JSON shape), short and readable
+  function failReason(status, text) {
+    var out = [];
+    function walk(v, key, depth) {
+      if (out.length > 8 || depth > 4 || v == null) return;
+      if (typeof v === 'string' || typeof v === 'number') { var t = String(v).trim(); if (t && !/^(error|false|true)$/i.test(t)) out.push((key && !/^\d+$/.test(key) && !/^(message|messages|msg|error|errors|userMessage|detail|title)$/i.test(key) ? key + ': ' : '') + t); return; }
+      if (Array.isArray(v)) { v.forEach(function (x) { walk(x, key, depth + 1); }); return; }
+      if (typeof v === 'object') Object.keys(v).forEach(function (k) { if (!/^(code|status|statusCode|result|success|trace|stack|timestamp|path)$/i.test(k)) walk(v[k], k, depth + 1); });
+    }
+    try { var j = JSON.parse(text); walk(j.errors || j.error || j.message || j.userMessage || j.data || j, '', 0); } catch (e) { if (text && text.length < 300 && !/</.test(text)) out.push(text.trim()); }
+    var seenMsg = {}; out = out.filter(function (x) { if (seenMsg[x]) return false; seenMsg[x] = 1; return true; });
+    return ('HTTP ' + status + (out.length ? ' — ' + out.join(' · ') : '')).slice(0, 300);
+  }
+
   function watchPublish(code, d) {
     if (window.__kgWatch) return; window.__kgWatch = true;
+    window.__kgOnFail = function (u, status, text) {
+      var msg = failReason(status, text);
+      window.__kgFailed = msg;
+      note(false, '<b style="color:#ffb4a8">' + (SITE === 'myhome' ? 'MyHome' : 'SS') + ' did not publish:</b> ' + msg.replace(/</g, '&lt;') +
+        '<br><span style="opacity:.75;font-size:12px">Sent to keygroup.ge — the office sees this reason too.</span>');
+      draw();
+      reportStatus(code, 'failed', msg);
+    };
     function report(site, extId) {
       window.__kgDone = site;
       var body = JSON.stringify({site: site, ext_id: String(extId), promo: d.promo || null, account: ACC});
@@ -394,11 +416,6 @@
   function visibleText(re) { return leaves().filter(function (e) { return e.offsetParent && re.test(txt(e)); }).map(txt).slice(0, 6); }
   async function waitFor(fn, ms) { for (var t = 0; t < ms; t += 400) { var v = fn(); if (v) return v; await sleep(400); } return null; }
   async function autoSubmit(code) {
-    window.__kgOnFail = function (u, status, text) {
-      var msg = 'HTTP ' + status;
-      try { var j = JSON.parse(text); msg = (j.errors || []).map ? (j.errors || []).map(function (e) { return e.field || (e.messages || []).join(' '); }).join(', ') || (j.userMessage || msg) : (j.userMessage || msg); } catch (e) { /* not JSON */ }
-      window.__kgFailed = msg; note(false, 'Not published: ' + msg); reportStatus(code, 'failed', msg);
-    };
     if (SITE === 'myhome') {
       var T = function (id) { return document.querySelector('[data-test-id="' + id + '"]'); };
       var otp = T('add-statement-otp-code'), oi = otp && otp.querySelector('input');

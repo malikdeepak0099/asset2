@@ -170,7 +170,8 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
         '<div style="margin-top:8px;display:flex;gap:8px;align-items:center"><button class="btn b-navy" id="agadd">Create / update accounts</button><span id="agm"></span></div></details>' +
         '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 12px"><button class="btn b-gold" id="agsend">📨 Send every agent a login link (Telegram)</button>' +
         '<span class="muted" style="font-size:13px">' + A.filter(function (a) { return a.tg; }).length + ' of ' + A.length + ' agents can get it in Telegram</span><span id="agsm"></span>' +
-        '<button class="btn b-ghost" id="aglinkss">🔗 Link SS listings from the CRM</button><span id="aglm"></span></div>' +
+        '<button class="btn b-ghost" id="aglinkss">🔗 Link SS listings from the CRM</button><span id="aglm"></span>' +
+        '<button class="btn b-ghost" id="agperr">⚠️ MyHome / SS publish errors</button></div><div id="agperrbox"></div>' +
         '<div class="card tablewrap"><table><thead><tr><th>Agent</th><th>Contact</th><th>keygroup.ge</th><th>On MyHome / SS</th><th>CRM (MyHome / SS)</th><th>Leads 30 d</th><th>Avg reply</th><th>Last login</th><th>Profiles</th><th></th></tr></thead><tbody>' +
         (A.length ? A.map(function (a) {
           var h = a.avg_hours;
@@ -202,6 +203,14 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
           b.disabled = false; $('#aglm').className = 'msg ' + (r.ok ? 'ok' : 'err');
           $('#aglm').textContent = r.ok ? '✅ ' + r.linked + ' listings got their SS link' : r.error;
           if (r.ok && r.linked) setTimeout(agentsTab, 1500);
+        });
+      };
+      $('#agperr').onclick = function () {
+        api('/api/admin/publish-errors').then(function (r) {
+          var E = (r && r.errors) || [];
+          $('#agperrbox').innerHTML = '<div class="card tablewrap" style="margin-bottom:12px"><table><thead><tr><th>When</th><th>Agent</th><th>Listing</th><th>Site</th><th>Reason given by the site</th></tr></thead><tbody>' +
+            (E.length ? E.map(function (e) { return '<tr><td>' + new Date(e.created * 1000).toLocaleString() + '</td><td>' + esc(e.agent || '') + '</td><td><a href="/p/?id=' + e.listing_id + '" target="_blank" style="color:var(--blue)">#' + e.listing_id + '</a></td><td>' + (e.site === 'myhome' ? 'MyHome' : 'SS') + '</td><td>' + esc(e.message) + '</td></tr>'; }).join('')
+              : '<tr><td colspan="5" class="muted">No errors reported yet. They appear here when an agent publishes with the KEY GROUP bookmark or extension and MyHome / SS refuses.</td></tr>') + '</tbody></table></div>';
         });
       };
       $$('[data-pw]').forEach(function (b) { b.onclick = function () { pwReset(b.dataset.pw, agentsTab); }; });

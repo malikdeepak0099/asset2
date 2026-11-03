@@ -132,6 +132,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS login_tokens (token TEXT PRIMARY KEY, user_id INTEGER, expires REAL, used REAL DEFAULT 0, purpose TEXT DEFAULT 'login');
         CREATE TABLE IF NOT EXISTS bot_outbox (id INTEGER PRIMARY KEY, tg_id TEXT, text TEXT, button_url TEXT DEFAULT '', button_text TEXT DEFAULT '', created REAL, sent REAL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS publish_codes (code TEXT PRIMARY KEY, listing_id INTEGER, user_id INTEGER, expires REAL, used INTEGER DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS publish_errors (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, listing_id INTEGER, user_id INTEGER, site TEXT, message TEXT, created REAL);
         CREATE TABLE IF NOT EXISTS pub_jobs (
             id INTEGER PRIMARY KEY, listing_id INTEGER, user_id INTEGER, sites TEXT, opts TEXT DEFAULT '{}', status TEXT DEFAULT 'queued',
             site_status TEXT DEFAULT '{}', code TEXT DEFAULT '', created REAL, started REAL DEFAULT 0, updated REAL DEFAULT 0);
@@ -1994,8 +1995,22 @@ async def publish_status(request):
     with _LOCK, db() as con:
         c = con.execute("SELECT * FROM publish_codes WHERE code=? AND expires>?", (code, time.time())).fetchone()
         j = con.execute("SELECT * FROM pub_jobs WHERE id=?", (c["job_id"],)).fetchone() if c and c["job_id"] else None
+        if state == "failed" and c:     # keep every MyHome / SS refusal so we can see the exact reason, and tell the agent + admins
+            msg = str(d.get("message") or "")[:300]
+            recent = con.execute("SELECT 1 FROM publish_errors WHERE code=? AND site=? AND message=? AND created>?",
+                                 (code, site, msg, time.time() - 120)).fetchone()
+            if not recent:
+                con.execute("INSERT INTO publish_errors (code, listing_id, user_id, site, message, created) VALUES (?,?,?,?,?,?)",
+                            (code, c["listing_id"], c["user_id"], site, msg, time.time()))
+                if not j:
+                    name = "MyHome" if site == "myhome" else "SS"
+                    who = con.execute("SELECT name FROM users WHERE id=?", (c["user_id"],)).fetchone()
+                    for a in con.execute("SELECT id FROM users WHERE role='admin'").fetchall():
+                        if a["id"] != c["user_id"]:
+                            tell_agent(con, a["id"], f"⚠️ {name} publish error — #{c['listing_id']} ({(who['name'] if who else '')}):\n{msg}")
+                    tell_agent(con, c["user_id"], f"⚠️ #{c['listing_id']} — {name} არ გამოქვეყნდა / not published:\n{msg}")
         if not j:
-            return JSONResponse({"ok": False}, status_code=404, headers=hdr)
+            return JSONResponse({"ok": bool(c)}, status_code=200 if c else 404, headers=hdr)
         ss = json.loads(j["site_status"] or "{}")
         if (ss.get(site) or {}).get("state") == "done":
             return JSONResponse({"ok": True}, headers=hdr)
@@ -3229,6 +3244,17 @@ def link_ss_from_crm(con, data):
     return n
 
 
+async def admin_publish_errors(request):
+    """Admin: the latest MyHome / SS refusals reported by the publisher (exact reason from the site)."""
+    u, e = need_user(request, perm="crm")
+    if e:
+        return e
+    with db() as con:
+        rows = con.execute("""SELECT e.*, u.name AS agent FROM publish_errors e LEFT JOIN users u ON u.id=e.user_id
+                              ORDER BY e.id DESC LIMIT 100""").fetchall()
+    return ok(errors=[dict(r) for r in rows])
+
+
 async def admin_link_ss(request):
     """Admin: attach SS links to keygroup.ge listings from the Master CRM (MyHome ID + SS ID on the same row)."""
     u, e = need_user(request, perm="crm")
@@ -3338,6 +3364,7 @@ routes = [
     Route("/api/bot/source-gone", bot_source_gone, methods=["POST"]),
     Route("/api/bot/daily-report", bot_daily_report, methods=["POST"]),
     Route("/api/admin/link-ss", admin_link_ss, methods=["POST"]),
+    Route("/api/admin/publish-errors", admin_publish_errors),
     Route("/api/my/profile", my_profile, methods=["GET", "POST"]),
     Route("/api/admin/agents", admin_agents, methods=["GET", "POST"]),
     Route("/api/login/link", login_link, methods=["GET", "POST"]),
