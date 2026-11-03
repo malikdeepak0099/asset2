@@ -357,7 +357,8 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
     ['white_frame', 'თეთრი კარკასი'], ['black_frame', 'შავი კარკასი'], ['green_frame', 'მწვანე კარკასი'], ['white_plus', 'თეთრი პლიუსი']];
   var BLD = [['old', 'ძველი აშენებული'], ['new', 'ახალი აშენებული'], ['construction', 'მშენებარე']];
   function autoOut(l) {
-    var has = l.ext || {};
+    var has = {};   // an owner's ad the listing was copied from ("import") is not the agent's own post — still publish there
+    Object.keys(l.ext || {}).forEach(function (k) { if (l.ext[k] && l.ext[k].source !== 'import') has[k] = l.ext[k]; });
     var box = document.createElement('div');
     box.style.cssText = 'position:fixed;inset:0;background:rgba(5,12,24,.55);display:grid;place-items:center;z-index:60;padding:16px;overflow:auto';
     box.innerHTML = '<form class="card" style="padding:22px;max-width:520px;width:100%;display:flex;flex-direction:column;gap:12px" id="auf">' +

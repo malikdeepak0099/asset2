@@ -1518,7 +1518,7 @@ async def admin_agents(request):
             except ValueError:
                 links = {}
             x = con.execute("""SELECT SUM(x.site='myhome') AS mh, SUM(x.site='ss') AS ss, SUM(x.promo!='') AS paid
-                               FROM ext_posts x JOIN listings l ON l.id=x.listing_id WHERE l.user_id=? AND l.status='active'""", (a["id"],)).fetchone()
+                               FROM ext_posts x JOIN listings l ON l.id=x.listing_id WHERE l.user_id=? AND l.status='active' AND x.source!='import'""", (a["id"],)).fetchone()
             dup = con.execute("SELECT COUNT(*) AS n FROM listings WHERE user_id=? AND status='active' AND dup_of!=''", (a["id"],)).fetchone()["n"]
             out.append({"id": a["id"], "name": a["name"], "phone": a["phone"], "email": a["email"] or "", "slug": a["slug"] or "", "links": links,
                         "tg": bool(str(a["tg_id"] or "").isdigit()), "on_myhome": x["mh"] or 0, "on_ss": x["ss"] or 0, "paid": x["paid"] or 0, "dups": dup,
@@ -1836,7 +1836,8 @@ def queue_auto_publish(con, user_id, lid, d):
     if not sites:
         return None, "Choose MyHome and / or SS"
     # never post a second copy: skip the sites where this listing is already live (imported from the agent's profile or published before)
-    have = {r["site"] for r in con.execute("SELECT site FROM ext_posts WHERE listing_id=?", (lid,)).fetchall()}
+    # ("import" = the listing was copied from an owner's MyHome / SS ad — that is not the agent's own post, so it still gets published)
+    have = {r["site"] for r in con.execute("SELECT site FROM ext_posts WHERE listing_id=? AND source!='import'", (lid,)).fetchall()}
     sites = [x for x in sites if x not in have]
     if not sites:
         return None, "უკვე განთავსებულია MyHome-სა და SS-ზე / Already on " + " + ".join("MyHome" if x == "myhome" else "SS" for x in sorted(have))
@@ -1956,7 +1957,7 @@ async def ext_next(request):
             if not j:
                 return ok(job=None)
             # checked again when the job starts: a site where the listing is already live is never posted twice
-            have = {r["site"] for r in con.execute("SELECT site FROM ext_posts WHERE listing_id=?", (j["listing_id"],)).fetchall()}
+            have = {r["site"] for r in con.execute("SELECT site FROM ext_posts WHERE listing_id=? AND source!='import'", (j["listing_id"],)).fetchall()}
             left = [x for x in json.loads(j["sites"] or "[]") if x not in have]
             if left:
                 if len(left) != len(json.loads(j["sites"] or "[]")):
