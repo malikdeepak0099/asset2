@@ -1523,6 +1523,7 @@ async def admin_agents(request):
             out.append({"id": a["id"], "name": a["name"], "phone": a["phone"], "email": a["email"] or "", "slug": a["slug"] or "", "links": links,
                         "tg": bool(str(a["tg_id"] or "").isdigit()), "on_myhome": x["mh"] or 0, "on_ss": x["ss"] or 0, "paid": x["paid"] or 0, "dups": dup,
                         "blocked": a["blocked"], "pw_set": a["pw_set"], "last_login": a["last_login"] or 0, "created": a["created"],
+                        "ext_paired": bool(a["ext_key"]), "ext_seen": a["ext_seen"] or 0,
                         "active": l["active"] or 0, "pending": l["pending"] or 0, "total": l["total"] or 0, "last_listing": l["last_listing"] or 0,
                         "no_photos": l["no_photos"] or 0, "leads30": ld["n"] or 0, "leads_new": ld["new"] or 0, "avg_hours": st["avg_hours"], "trusted": st["trusted"]})
     crm = {}
