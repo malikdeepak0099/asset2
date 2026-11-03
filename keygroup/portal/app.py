@@ -1704,6 +1704,7 @@ async def publish_data(request):
          "price": row["price"], "currency": row["currency"], "title": row["title"], "desc_ka": ka, "desc_en": en, "desc_ru": ru,
          "photos": photos, "video_url": row["video_url"] or "", "contact_name": (owner["name"] if owner else "") or "KEY GROUP",
          "contact_phone": row["contact_phone"],
+         "agent_phones": sorted({re.sub(r"\D", "", str(x or ""))[-9:] for x in ((owner["phone"] if owner else ""), row["contact_phone"]) if re.sub(r"\D", "", str(x or ""))}),
          "promo": json.loads(c["promo"]) if c["promo"] else None}
     if c["job_id"]:
         with db() as con:

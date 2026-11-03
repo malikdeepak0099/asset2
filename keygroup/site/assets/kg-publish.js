@@ -257,7 +257,7 @@
     if (finput && d.photos.length) {
       note(null, 'Uploading ' + d.photos.length + ' photos…');
       var files = await photosToFiles(d.photos.slice(0, 16));
-      putFiles(finput, files);
+      putFiles(finput, files); window.__kgPhotoCount = files.length;
       log.pop(); note(files.length > 0, 'Photos: ' + files.length);
     } else note(false, 'Photos: none on keygroup.ge — add at least one');
     // street (city is preselected on SS: Tbilisi)
@@ -272,7 +272,8 @@
     }
     var hn = document.querySelector('input[name=house-number]'); if (hn && d.number) { val(hn, d.number); note(true, 'Number: ' + d.number); }
     if (d.rooms) note(chipNear('ოთახები', d.rooms > 8 ? '8+' : String(d.rooms)), 'Rooms: ' + d.rooms);
-    if (d.bedrooms) note(chipNear('საძინებელი', d.bedrooms > 8 ? '8+' : String(d.bedrooms)), 'Bedrooms: ' + d.bedrooms);
+    var bedN = d.bedrooms || (d.type === 'flat' || d.type === 'house' ? Math.max(1, (d.rooms || 2) - 1) : 0);   // SS requires bedrooms for flats / houses
+    if (bedN) note(chipNear('საძინებელი', bedN > 8 ? '8+' : String(bedN)), 'Bedrooms: ' + bedN + (d.bedrooms ? '' : ' (from rooms — check)'));
     if (d.area) { val(document.querySelector('input[name=totalArea]'), d.area); note(true, 'Area: ' + d.area + ' m²'); }
     if (d.floor) val(document.querySelector('input[name=floor]'), d.floor);
     if (d.total_floors) val(document.querySelector('input[name=floors]'), d.total_floors);
@@ -452,20 +453,32 @@
       if (pb && price) note(null, '💳 MyHome charges ' + price + ' ₾ for this listing (free limit used) — you confirm the payment on the next page');
       if (!pb) { reportStatus(code, 'failed', 'Publish button not found'); return; }
       note(null, 'Publishing on MyHome…'); pb.click();
-      var r = await waitFor(function () { return window.__kgDone || window.__kgFailed || window.__kgPay; }, 45000);
-      if (!r && !/checkout/i.test(location.pathname + location.search)) { var errs = visibleText(/სავალდებულო|შეცდომ|required/i); reportStatus(code, 'failed', errs.join(', ') || 'no answer from MyHome'); }
+      // MyHome can take a while (8 s+ to create, then the payment page) — wait up to 2 minutes
+      var r = await waitFor(function () { return window.__kgDone || window.__kgFailed || window.__kgPay || /checkout/i.test(location.pathname + location.search); }, 120000);
+      if (!r) {
+        var errs = visibleText(/სავალდებულო|შეცდომ|required/i).filter(function (x) { return !/^\*?\s*სავალდებულო ველი$|არასავალდებულო/.test(x); });
+        reportStatus(code, 'failed', errs.join(', ') || 'no answer from MyHome in 2 minutes');
+      }
       return;
     }
-    // SS: continue → package step → publish
-    var cb = Array.prototype.find.call(document.querySelectorAll('button'), function (b) { return /^გაგრძელება/.test(txt(b)); });
-    if (!cb) { reportStatus(code, 'failed', 'Continue button not found'); return; }
-    note(null, 'SS: continuing…'); cb.click();
-    var step = await waitFor(function () { return leaves().find(function (e) { return txt(e) === 'აირჩიე სტატუსი' && e.offsetParent; }); }, 25000);
+    // SS: wait for the photos to finish uploading, continue → package step → publish
+    var nPh = (window.__kgPhotoCount || 0);
+    await sleep(Math.min(30000, 3000 + nPh * 1500));
+    await waitFor(function () { return !leaves().some(function (e) { return e.offsetParent && /^\d{1,3}\s?%$/.test(txt(e)); }) && !document.querySelector('[class*="spinner"],[class*="Spinner"],[class*="progress"]:not([value="100"])'); }, 30000);
+    var onStep = function () { return leaves().find(function (e) { return e.offsetParent && txt(e) === 'აირჩიე სტატუსი'; }) || Array.prototype.find.call(document.querySelectorAll('button'), function (b) { return b.offsetParent && txt(b) === 'განაცხადის განთავსება'; }); };
+    var ssErrors = function () { var m = visibleText(/სავალდებულოა|აუცილებელია/); return m.length ? m : redTexts(); };
+    var step = null;
+    for (var tryN = 0; tryN < 2 && !step; tryN++) {
+      var cb = Array.prototype.find.call(document.querySelectorAll('button'), function (b) { return /^გაგრძელება/.test(txt(b)); });
+      if (!cb) { reportStatus(code, 'failed', 'Continue button not found'); return; }
+      note(null, 'SS: continuing…' + (tryN ? ' (again)' : '')); cb.scrollIntoView({block: 'center'}); press(cb);
+      step = await waitFor(onStep, 30000);
+      if (!step && ssErrors().length) break;   // SS named missing fields — pressing again will not help
+    }
     if (!step) {
-      var miss = visibleText(/სავალდებულოა|აირჩიე|მიუთითე|შეავსე/);
-      if (!miss.length) miss = redTexts();
-      note(false, 'SS did not continue: ' + (miss.join(', ') || 'check the form'));
-      reportStatus(code, 'failed', 'form: ' + (miss.join(', ') || 'check the form')); return;
+      var miss = ssErrors();
+      note(false, 'SS did not continue: ' + (miss.join(', ') || 'no message from SS'));
+      reportStatus(code, 'failed', 'form: ' + (miss.join(', ') || 'SS did not open the package step (no message)')); return;
     }
     if (window.__kgPromoWanted) await waitFor(function () { return window.__kgPromoDone; }, 10000);
     await sleep(1200);
@@ -505,6 +518,7 @@
     }
     ACC = acc;
     var want = String(d.contact_phone || '').replace(/\D/g, '').slice(-9);
+    if (acc && (d.agent_phones || []).indexOf(acc) >= 0) want = acc;   // the agent's own account (their profile phone) is fine even if the listing shows another number
     if (acc && want && acc !== want) {
       log.unshift([false, '<b style="color:#ffb4a8">Wrong account?</b> You are signed in as <b>' + acc + '</b>, but this listing belongs to <b>' +
         String(d.contact_name || '').replace(/</g, '') + ' (' + want + ')</b>. To keep it under the agent’s own name, sign in to that agent’s ' + (SITE === 'myhome' ? 'MyHome' : 'SS') + ' account and press the bookmark again.']);
