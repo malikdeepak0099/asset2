@@ -1060,6 +1060,59 @@ def set_prop_owner(con, lid, name, phone):
     return True
 
 
+def agent_sheet_id(name):
+    """The agent's own CRM Google Sheet (from the Master CRM 'Agents' tab), matched by name."""
+    data, _w = fetch_crm()
+    t = ((data or {}).get("tabs") or {}).get("Agents") or {}
+    H, rows = t.get("headers") or [], t.get("rows") or []
+    if "Agent Name" not in H or "Sheet Link" not in H:
+        return ""
+    ni, li, key = H.index("Agent Name"), H.index("Sheet Link"), name_key(name)
+    for r in rows:
+        if len(r) > max(ni, li) and name_key(r[ni]) == key:
+            m = re.search(r"/d/([a-zA-Z0-9_-]{20,})", str(r[li]))
+            return m.group(1) if m else ""
+    return ""
+
+
+def crm_agent_row(lid):
+    """Write / update this listing in its agent's own CRM sheet (SS ID, MyHome ID, district … owner; comments stay the agent's).
+    Only for listings the agent took (owner's ads, new ones) — their own MyHome / SS ads already come from that sheet."""
+    if not CRM_URL or not CRM_SECRET:
+        return
+
+    def run():
+        try:
+            with db() as con:
+                l = con.execute("SELECT l.*, u.name AS agent, u.role, u.company FROM listings l JOIN users u ON u.id=l.user_id WHERE l.id=?", (lid,)).fetchone()
+                if not l or l["status"] == "deleted" or not is_kg_agent(l):
+                    return
+                ext = {r["site"]: dict(r) for r in con.execute("SELECT * FROM ext_posts WHERE listing_id=?", (lid,)).fetchall()}
+            if any(x["source"] in ("agent", "crm") for x in ext.values()):
+                return
+            sheet = agent_sheet_id(l["agent"])
+            if not sheet:
+                return
+            pub = lambda site: ext.get(site) if ext.get(site) and ext[site]["source"] in ("publisher", "manual") else None
+            ss_, mh = pub("ss"), pub("myhome")
+            body = {"secret": CRM_SECRET, "action": "agentRow", "sheetId": sheet, "kgId": lid, "type": l["type"], "deal": l["deal"],
+                    "ssId": ss_["ext_id"] if ss_ else "", "ssUrl": (ss_["url"] or ext_url("ss", ss_["ext_id"])) if ss_ else "",
+                    "myhomeId": mh["ext_id"] if mh and str(mh["ext_id"]).isdigit() else "",
+                    "myhomeUrl": (mh["url"] or ext_url("myhome", mh["ext_id"])) if mh and str(mh["ext_id"]).isdigit() else "",
+                    "district": district_ka(l["district"]) or l["district"], "address": l["address"], "rooms": l["rooms"] or "",
+                    "bedrooms": l["bedrooms"] or "", "floor": l["floor"] or "", "totalFloors": l["total_floors"] or "",
+                    "area": (f"{l['area']:g}" if l["area"] else ""), "price": l["price"] or "", "currency": l["currency"],
+                    "ownerName": l["prop_owner"], "ownerPhone": l["prop_phone"]}
+            req = urllib.request.Request(CRM_URL, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST")
+            res = json.loads(urllib.request.urlopen(req, timeout=60).read().decode("utf-8") or "{}")
+            if not res.get("ok"):
+                print("crm_agent_row", lid, res.get("error"), flush=True)
+        except Exception as ex:
+            print("crm_agent_row", lid, ex, flush=True)
+
+    threading.Thread(target=run, daemon=True).start()
+
+
 async def bot_owner_phone(request):
     """The agent sends the owner's full number in Telegram (MyHome hides it) — saved on their listing, only they and the office see it."""
     sec = request.headers.get("x-bot-secret", "")
@@ -1076,6 +1129,7 @@ async def bot_owner_phone(request):
         if not u or not l or (l["user_id"] != u["id"] and u["role"] != "admin"):
             return err("Not found", 404)
         set_prop_owner(con, lid, d.get("name"), phone)
+    crm_agent_row(lid)
     return ok(phone=phone)
 
 
@@ -1275,12 +1329,15 @@ async def bot_listing(request):
             lid = cur_.lastrowid
         set_prop_owner(con, lid, d.get("owner_name"), d.get("owner_phone"))
         find_duplicates(con, lid)
+        crm_after = not d.get("own")
         xs, xid = ext_from_url(src)
         if xs:   # "agent" = the agent's own listing on their MyHome / SS account; "import" = copied from someone else's link
             save_ext(con, lid, xs, xid, adm["id"], source="agent" if d.get("own") else "import", url=src)
         audit(con, {"id": 0, "name": "Telegram bot · " + agent}, "bot_listing", "listing", lid, src)
         if not old:
             track(con, "listing_submitted", props={"deal": f["deal"], "type": f["type"], "source": "sync" if d.get("own") else "bot"})
+    if crm_after:
+        crm_agent_row(lid)
     if not d.get("quiet"):
         notify(f"🤖 {esc(agent or 'Agent')} listed #{lid} on the website via the bot\n{esc(f['deal'])} · {esc(f['district'] or f['address'])} · "
                f"{f['price']:,.0f} {esc(f['currency'])} · {len(photos)} photos\n{SITE}/p/?id={lid}")
@@ -2203,6 +2260,7 @@ async def publish_status(request):
                 prev = json.loads(j["site_status"] or "{}").get(site) or {}
             if prev.get("ext_id") or ext_id:
                 save_ext(con, c["listing_id"], site, ext_id or prev.get("ext_id"), c["user_id"], source="publisher")
+                crm_agent_row(c["listing_id"])
         if not j:
             return JSONResponse({"ok": bool(c)}, status_code=200 if c else 404, headers=hdr)
         ss = json.loads(j["site_status"] or "{}")
@@ -2243,6 +2301,7 @@ async def publish_done(request):
                                    json.dumps(d.get("promo")) if d.get("promo") else "", d.get("account"), "publisher")
         if okk:
             con.execute("UPDATE publish_codes SET used=1 WHERE code=?", (code,))
+            crm_agent_row(c["listing_id"])
             if c["job_id"]:
                 j = con.execute("SELECT * FROM pub_jobs WHERE id=?", (c["job_id"],)).fetchone()
                 if j:
@@ -2270,6 +2329,7 @@ async def listing_ext(request):
         if not site:
             return err("Paste the full MyHome.ge or SS.ge link of this listing")
         save_ext(con, lid, site, ext_id, u["id"], source="manual", url=str(d.get("url")).split("?")[0][:300])
+        crm_agent_row(lid)
         audit(con, u, "listing_ext", "listing", lid, f"{site}:{ext_id}")
         return ok(ext=ext_map(con, [lid]).get(lid, {}))
 
