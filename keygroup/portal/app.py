@@ -1991,7 +1991,7 @@ async def publish_status(request):
     except Exception:
         d = {}
     site, state = d.get("site"), d.get("state")
-    if site not in ("myhome", "ss") or state not in ("failed", "needs_otp", "working"):
+    if site not in ("myhome", "ss") or state not in ("failed", "needs_otp", "working", "needs_payment", "paid"):
         return JSONResponse({"ok": False}, status_code=400, headers=hdr)
     with _LOCK, db() as con:
         c = con.execute("SELECT * FROM publish_codes WHERE code=? AND expires>?", (code, time.time())).fetchone()
@@ -2010,14 +2010,41 @@ async def publish_status(request):
                         if a["id"] != c["user_id"]:
                             tell_agent(con, a["id"], f"⚠️ {name} publish error — #{c['listing_id']} ({(who['name'] if who else '')}):\n{msg}")
                     tell_agent(con, c["user_id"], f"⚠️ #{c['listing_id']} — {name} არ გამოქვეყნდა / not published:\n{msg}")
+        name = "MyHome" if site == "myhome" else "SS"
+        ext_id = str(d.get("ext_id") or "")
+        if c and state == "needs_payment":   # over the site's free limit: the listing waits on the site's payment page — the agent pays, never us
+            recent = con.execute("SELECT 1 FROM publish_errors WHERE code=? AND site=? AND message LIKE 'payment%' AND created>?",
+                                 (code, site, time.time() - 600)).fetchone()
+            if not recent:
+                con.execute("INSERT INTO publish_errors (code, listing_id, user_id, site, message, created) VALUES (?,?,?,?,?,?)",
+                            (code, c["listing_id"], c["user_id"], site, "payment needed (free limit used) " + ext_id, time.time()))
+                who = con.execute("SELECT name FROM users WHERE id=?", (c["user_id"],)).fetchone()
+                tell_agent(con, c["user_id"], f"💳 #{c['listing_id']} — {name}: უფასო ლიმიტი ამოიწურა. გახსნილ ფანჯარაში აირჩიე გადახდა (ბალანსი / ბარათი) და დააჭირე „გადახდა და ატვირთვა“.\n"
+                                              f"Free limit used — choose the payment in the open {name} window and press “Pay and upload”.")
+                for a in con.execute("SELECT id FROM users WHERE role='admin'").fetchall():
+                    if a["id"] != c["user_id"]:
+                        tell_agent(con, a["id"], f"💳 {name}: {(who['name'] if who else '')} — #{c['listing_id']} needs payment (free limit used). Check their {name} balance.")
+        if c and state == "paid" and c["listing_id"]:
+            prev = {}
+            if j:
+                prev = json.loads(j["site_status"] or "{}").get(site) or {}
+            if prev.get("ext_id") or ext_id:
+                save_ext(con, c["listing_id"], site, ext_id or prev.get("ext_id"), c["user_id"], source="publisher")
         if not j:
             return JSONResponse({"ok": bool(c)}, status_code=200 if c else 404, headers=hdr)
         ss = json.loads(j["site_status"] or "{}")
-        if (ss.get(site) or {}).get("state") == "done":
+        cur = ss.get(site) or {}
+        if cur.get("state") == "done" and state != "needs_payment":
             return JSONResponse({"ok": True}, headers=hdr)
-        ss[site] = {"state": state, "message": str(d.get("message") or "")[:200], "at": time.time()}
+        if state == "paid":
+            ss[site] = {"state": "done", "ext_id": ext_id or cur.get("ext_id", ""), "message": "paid", "at": time.time()}
+        else:
+            ss[site] = {"state": state, "message": str(d.get("message") or "")[:200], "at": time.time()}
+            if ext_id or cur.get("ext_id"):
+                ss[site]["ext_id"] = ext_id or cur.get("ext_id")
+        if state == "needs_payment" and j["status"] in ("done", "failed"):
+            con.execute("UPDATE pub_jobs SET status='running' WHERE id=?", (j["id"],))
         con.execute("UPDATE pub_jobs SET site_status=?, updated=? WHERE id=?", (json.dumps(ss, ensure_ascii=False), time.time(), j["id"]))
-        name = "MyHome" if site == "myhome" else "SS"
         if state == "needs_otp":
             tell_agent(con, j["user_id"], f"🔐 #{j['listing_id']} — {name}: შეიყვანე SMS კოდი კომპიუტერზე გახსნილ ფანჯარაში და დააჭირე „გამოქვეყნება“.\n"
                                           f"Enter the SMS code in the {name} window on your computer and press Publish.")

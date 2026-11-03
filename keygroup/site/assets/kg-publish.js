@@ -324,7 +324,16 @@
       draw();
       reportStatus(code, 'failed', msg);
     };
-    function report(site, extId) {
+    function onPayPage() { return /checkout/i.test(location.pathname + location.search); }
+    async function report(site, extId) {
+      // over MyHome's monthly free limit the listing is created unpaid and MyHome opens its payment page: the agent pays there, never us
+      if (site === 'myhome') { for (var w = 0; w < 10 && !onPayPage(); w++) await sleep(400); }
+      if (site === 'myhome' && onPayPage()) {
+        window.__kgPay = site;
+        note(false, '<b>💳 MyHome free limit used.</b> Choose the payment (balance / card) here and press “გადახდა და ატვირთვა” yourself. ID ' + String(extId).replace(/</g, ''));
+        reportStatus(code, 'needs_payment', 'MyHome payment page', extId);
+        return;
+      }
       window.__kgDone = site;
       var body = JSON.stringify({site: site, ext_id: String(extId), promo: d.promo || null, account: ACC});
       fetch(API + '/api/publish/' + code + '/done', {method: 'POST', body: body, keepalive: true})
@@ -410,8 +419,8 @@
 
   // ---------- auto mode (KEY GROUP extension): press Publish after filling, report problems to keygroup.ge
   var AUTO = /kgauto=/.test(location.hash);
-  function reportStatus(code, state, message) {
-    try { fetch(API + '/api/publish/' + code + '/status', {method: 'POST', keepalive: true, body: JSON.stringify({site: SITE, state: state, message: String(message || '').slice(0, 200)})}); } catch (e) { /* ignore */ }
+  function reportStatus(code, state, message, extId) {
+    try { fetch(API + '/api/publish/' + code + '/status', {method: 'POST', keepalive: true, body: JSON.stringify({site: SITE, state: state, message: String(message || '').slice(0, 200), ext_id: extId ? String(extId) : ''})}); } catch (e) { /* ignore */ }
   }
   function visibleText(re) { return leaves().filter(function (e) { return e.offsetParent && re.test(txt(e)); }).map(txt).slice(0, 6); }
   async function waitFor(fn, ms) { for (var t = 0; t < ms; t += 400) { var v = fn(); if (v) return v; await sleep(400); } return null; }
@@ -428,8 +437,8 @@
       var pb = Array.prototype.find.call((T('add-statement-actions') || document).querySelectorAll('button'), function (b) { return txt(b) === 'გამოქვეყნება'; });
       if (!pb) { reportStatus(code, 'failed', 'Publish button not found'); return; }
       note(null, 'Publishing on MyHome…'); pb.click();
-      var r = await waitFor(function () { return window.__kgDone || window.__kgFailed; }, 45000);
-      if (!r) { var errs = visibleText(/სავალდებულო|შეცდომ|required/i); reportStatus(code, 'failed', errs.join(', ') || 'no answer from MyHome'); }
+      var r = await waitFor(function () { return window.__kgDone || window.__kgFailed || window.__kgPay; }, 45000);
+      if (!r && !/checkout/i.test(location.pathname + location.search)) { var errs = visibleText(/სავალდებულო|შეცდომ|required/i); reportStatus(code, 'failed', errs.join(', ') || 'no answer from MyHome'); }
       return;
     }
     // SS: continue → package step → publish
