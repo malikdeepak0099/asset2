@@ -484,11 +484,13 @@
     var step = null;
     for (var tryN = 0; tryN < 2 && !step; tryN++) {
       var cb = Array.prototype.find.call(document.querySelectorAll('button'), function (b) { return /^გაგრძელება/.test(txt(b)); });
-      if (!cb) { reportStatus(code, 'failed', 'Continue button not found'); return; }
+      if (!cb) { if (!window.__kgDone && !onStep()) reportStatus(code, 'failed', 'Continue button not found'); break; }
       note(null, 'SS: continuing…' + (tryN ? ' (again)' : '')); cb.scrollIntoView({block: 'center'}); press(cb);
       step = await waitFor(onStep, 30000);
       if (!step && ssErrors().length) break;   // SS named missing fields — pressing again will not help
     }
+    if (!step) step = onStep();
+    if (window.__kgDone) return;   // SS already took it
     if (!step) {
       var miss = ssErrors();
       note(false, 'SS did not continue: ' + (miss.join(', ') || 'no message from SS'));
