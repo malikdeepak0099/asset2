@@ -315,43 +315,43 @@
     if (d.promo) { promoSS(d.promo); note(null, 'Paid: ' + TIER[d.promo.tier] + ' — it will be selected on the next step (after “გაგრძელება”)'); }
   }
 
-  // SS contact block: tick "WhatsApp" next to the phone number (never untick it if it is already on)
+  // SS contact block: under the phone there are two cards "WhatsApp [ ]" and "Viber [ ]" — tick the WhatsApp one
+  // (never untick it if it is already on)
   async function ssWhatsApp() {
     window.__kgWaMsg = '';
-    var phone = document.querySelector('input[placeholder="მობილურის ნომერი"]') || document.querySelector('input[type=tel]');
-    var box = phone;
-    for (var i = 0; i < 7 && box && !/whats\s?app/i.test(box.innerHTML || ''); i++) box = box.parentElement;
-    if (!box || !/whats\s?app/i.test(box.innerHTML || '')) {   // the WhatsApp option may only appear after the number is filled
-      await sleep(800);
-      box = document.getElementById('create-app-contact') || document.body;
+    var card = null;
+    for (var tries = 0; tries < 10 && !card; tries++) {
+      // the smallest visible element whose own text is "WhatsApp" → climb up to the card (stop before the Viber card joins in)
+      var leaf = Array.prototype.find.call(document.querySelectorAll('span,p,div,label,b,strong'), function (e) {
+        return e.offsetParent && /^\s*whats\s?app\s*$/i.test(txt(e));
+      });
+      if (leaf) {
+        card = leaf;
+        while (card.parentElement && !/viber/i.test(txt(card.parentElement)) && card.parentElement !== document.body) card = card.parentElement;
+      } else await sleep(500);
     }
-    var isWa = function (e) {
-      var h = ((e.getAttribute('aria-label') || '') + ' ' + (e.getAttribute('title') || '') + ' ' + (e.getAttribute('alt') || '') + ' ' +
-               (e.getAttribute('name') || '') + ' ' + (e.id || '') + ' ' + (e.getAttribute('src') || '') + ' ' + txt(e)).toLowerCase();
-      return /whats\s?app/.test(h) && txt(e).length < 40;
+    if (!card) { window.__kgWaMsg = 'not found — tick WhatsApp yourself'; return false; }
+    var input = card.querySelector('input[type=checkbox]');
+    var role = card.querySelector('[role=checkbox],[role=switch]') || (card.matches('[role=checkbox],[role=switch]') ? card : null);
+    var state = function () {
+      if (input) return input.checked;
+      if (role) return role.getAttribute('aria-checked') === 'true';
+      if (card.querySelector('[data-state=checked],[data-checked=true],[aria-checked=true],[aria-pressed=true]')) return true;
+      return null;                                    // unknown: compare the look before / after
     };
-    // 1) a real checkbox / switch
-    var cbs = Array.prototype.filter.call(box.querySelectorAll('input[type=checkbox]'), function (c) {
-      var l = c.closest('label') || c.parentElement; return isWa(c) || (l && isWa(l)) || (c.id && document.querySelector('label[for="' + c.id + '"]') && isWa(document.querySelector('label[for="' + c.id + '"]')));
-    });
-    if (cbs.length) {
-      var c = cbs[0];
-      if (!c.checked) { (c.closest('label') || c).click(); await sleep(300); if (!c.checked) c.click(); }
-      window.__kgWaMsg = c.checked ? 'ticked' : 'tick it yourself';
-      return c.checked;
-    }
-    // 2) a toggle button / icon (role=switch / checkbox or aria-pressed)
-    var el = Array.prototype.find.call(box.querySelectorAll('[role=switch],[role=checkbox],button,label,img,span,div'), function (e) { return e.offsetParent && isWa(e); });
-    if (!el) { window.__kgWaMsg = 'not found — tick WhatsApp yourself'; return false; }
-    var target = el.closest('[role=switch],[role=checkbox],button,label') || el;
-    var on = function () { var a = target.getAttribute('aria-checked') || target.getAttribute('aria-pressed'); return a === 'true' || /(^|\s)(active|selected|checked|is-active)(\s|$)/i.test(target.className || ''); };
-    if (on()) { window.__kgWaMsg = 'already on'; return true; }
-    target.click();
-    await sleep(400);
-    var a2 = target.getAttribute('aria-checked') || target.getAttribute('aria-pressed');
-    window.__kgWaMsg = a2 == null ? 'clicked — check it' : (a2 === 'true' ? 'ticked' : 'tick it yourself');
-    return a2 == null || a2 === 'true';
+    var look = function () { return card.innerHTML.length + '|' + card.className + '|' + Array.prototype.map.call(card.querySelectorAll('*'), function (e) { return e.className && e.className.baseVal == null ? e.className : ''; }).join(','); };
+    if (state() === true) { window.__kgWaMsg = 'already on'; return true; }
+    var before = look();
+    (role || (input && (input.closest('label') || input)) || card).click();
+    await sleep(500);
+    if (input && !input.checked) { input.click(); await sleep(300); }
+    var st = state();
+    if (st === true) { window.__kgWaMsg = 'ticked'; return true; }
+    if (st === null && look() !== before) { window.__kgWaMsg = 'ticked'; return true; }
+    window.__kgWaMsg = 'tick it yourself';
+    return false;
   }
+
 
   // ---------- after the person presses Publish: tell keygroup.ge the MyHome / SS id (so the admin sees where each listing is live)
   var ACC = '';
