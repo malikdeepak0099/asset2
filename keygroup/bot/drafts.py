@@ -513,8 +513,7 @@ def discard(chat, uid, did):
 
 def owner_photo_request(d, text=None):
     """Ready WhatsApp message asking the owner for the original photos (with their personal upload link when we have one)."""
-    txt = text or ("გამარჯობა! KEY GROUP-დან გწერთ. როგორც შევთანხმდით, გთხოვთ გამომიგზავნოთ ბინის ორიგინალი ფოტოები "
-                   "(როგორც ტელეფონშია, ლოგოს გარეშე). მადლობა!")
+    txt = text or "გამარჯობა! KEY GROUP-დან გწერთ. როგორც შევთანხმდით, გთხოვთ გამომიგზავნოთ ბინის ფოტოები.\nმადლობა!"
     phone = re.sub(r"\D", "", str(d.get("phone") or ""))
     if phone and len(phone) == 9:
         phone = "995" + phone
