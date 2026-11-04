@@ -310,7 +310,47 @@
       val(pinput, Math.round(d.price));
       note(null, 'Price: ' + Math.round(d.price) + ' ' + (d.currency === 'GEL' ? '₾' : '$') + ' — check the currency');
     }
+    // WhatsApp on the contact number (the agent can be reached on WhatsApp too)
+    note(await ssWhatsApp() ? true : false, 'WhatsApp on the phone number' + (window.__kgWaMsg ? ' — ' + window.__kgWaMsg : ''));
     if (d.promo) { promoSS(d.promo); note(null, 'Paid: ' + TIER[d.promo.tier] + ' — it will be selected on the next step (after “გაგრძელება”)'); }
+  }
+
+  // SS contact block: tick "WhatsApp" next to the phone number (never untick it if it is already on)
+  async function ssWhatsApp() {
+    window.__kgWaMsg = '';
+    var phone = document.querySelector('input[placeholder="მობილურის ნომერი"]') || document.querySelector('input[type=tel]');
+    var box = phone;
+    for (var i = 0; i < 7 && box && !/whats\s?app/i.test(box.innerHTML || ''); i++) box = box.parentElement;
+    if (!box || !/whats\s?app/i.test(box.innerHTML || '')) {   // the WhatsApp option may only appear after the number is filled
+      await sleep(800);
+      box = document.getElementById('create-app-contact') || document.body;
+    }
+    var isWa = function (e) {
+      var h = ((e.getAttribute('aria-label') || '') + ' ' + (e.getAttribute('title') || '') + ' ' + (e.getAttribute('alt') || '') + ' ' +
+               (e.getAttribute('name') || '') + ' ' + (e.id || '') + ' ' + (e.getAttribute('src') || '') + ' ' + txt(e)).toLowerCase();
+      return /whats\s?app/.test(h) && txt(e).length < 40;
+    };
+    // 1) a real checkbox / switch
+    var cbs = Array.prototype.filter.call(box.querySelectorAll('input[type=checkbox]'), function (c) {
+      var l = c.closest('label') || c.parentElement; return isWa(c) || (l && isWa(l)) || (c.id && document.querySelector('label[for="' + c.id + '"]') && isWa(document.querySelector('label[for="' + c.id + '"]')));
+    });
+    if (cbs.length) {
+      var c = cbs[0];
+      if (!c.checked) { (c.closest('label') || c).click(); await sleep(300); if (!c.checked) c.click(); }
+      window.__kgWaMsg = c.checked ? 'ticked' : 'tick it yourself';
+      return c.checked;
+    }
+    // 2) a toggle button / icon (role=switch / checkbox or aria-pressed)
+    var el = Array.prototype.find.call(box.querySelectorAll('[role=switch],[role=checkbox],button,label,img,span,div'), function (e) { return e.offsetParent && isWa(e); });
+    if (!el) { window.__kgWaMsg = 'not found — tick WhatsApp yourself'; return false; }
+    var target = el.closest('[role=switch],[role=checkbox],button,label') || el;
+    var on = function () { var a = target.getAttribute('aria-checked') || target.getAttribute('aria-pressed'); return a === 'true' || /(^|\s)(active|selected|checked|is-active)(\s|$)/i.test(target.className || ''); };
+    if (on()) { window.__kgWaMsg = 'already on'; return true; }
+    target.click();
+    await sleep(400);
+    var a2 = target.getAttribute('aria-checked') || target.getAttribute('aria-pressed');
+    window.__kgWaMsg = a2 == null ? 'clicked — check it' : (a2 === 'true' ? 'ticked' : 'tick it yourself');
+    return a2 == null || a2 === 'true';
   }
 
   // ---------- after the person presses Publish: tell keygroup.ge the MyHome / SS id (so the admin sees where each listing is live)
