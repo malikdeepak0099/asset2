@@ -2217,7 +2217,9 @@ def queue_auto_publish(con, user_id, lid, d):
 def job_out(j):
     if not j:
         return None
-    return {"id": j["id"], "listing_id": j["listing_id"], "sites": json.loads(j["sites"] or "[]"), "status": j["status"],
+    # SS first, then MyHome (the extension publishes in this order)
+    sites = sorted(json.loads(j["sites"] or "[]"), key=lambda x: {"ss": 0, "myhome": 1}.get(x, 2))
+    return {"id": j["id"], "listing_id": j["listing_id"], "sites": sites, "status": j["status"],
             "site_status": json.loads(j["site_status"] or "{}"), "opts": json.loads(j["opts"] or "{}"), "created": j["created"],
             "kind": j["kind"] if "kind" in j.keys() else "publish"}
 
