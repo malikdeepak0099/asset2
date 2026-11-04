@@ -1164,16 +1164,25 @@ def on_callback(cb):
     send(chat, f"✅ თანხმობა ჩაწერილია: {consent_at}. ვაქვეყნებ keygroup.ge-ზე…")
     j, agency = drafts.quick_publish(chat, dr, d)
     ok_crm, info = save_to_crm(d, item["agent"], item["uid"], consent_at, False)
-    txt, link = drafts.owner_photo_request(d)
+    up = {}
+    if j.get("ok") and j.get("id"):   # the owner's personal link: they upload the originals themselves, the photos change on the site
+        try:
+            up = requests.post(PORTAL_URL + "/api/bot/owner-link", json={"tg": str(item["uid"]), "listing_id": j["id"]},
+                               headers={"X-Bot-Secret": CRM_SECRET}, timeout=30).json()
+        except Exception:
+            up = {}
+    txt, link = drafts.owner_photo_request(d, up.get("text") if up.get("ok") else None)
     if j.get("ok"):
         msg = (f"🌐 <b>გამოქვეყნდა keygroup.ge-ზე</b> ({j.get('photos', 0)} ფოტო):\n{e(j.get('url'))}\n"
                + (f"👤 შენი პროფილი: {e(j.get('profile'))}\n" if j.get("profile") else
                   "⚠️ შენი ნომერი არ მაქვს — განცხადება KEY GROUP-ის ნომრითაა. დაამატე: <code>/phone 5XXXXXXXX</code>\n")
                + ("⚠️ ეს განცხადება სააგენტოსია — მისი ფოტოები არ გამოვიყენე.\n" if agency else "")
                + ("💾 ჩაწერილია Master CRM-ში.\n" if ok_crm else "⚠️ CRM-ში ჩაწერა ვერ მოხერხდა.\n")
-               + "\n✏️ შეცვლა ან მესაკუთრის ორიგინალი ფოტოების დამატება: გადმომიგზავნე ფოტოები და დააჭირე „👁 გადახედვა“ → „✅ დამტკიცება“ — "
-               "იგივე განცხადება განახლდება.\n\n"
-               f"WhatsApp ტექსტი მესაკუთრისთვის (ორიგინალი ფოტოები):\n<code>{e(txt)}</code>")
+               + ("\n📷 <b>ორიგინალი ფოტოები:</b> დააჭირე „💬 WhatsApp მესაკუთრეს“ — მესაკუთრე ბმულით თავად ატვირთავს ფოტოებს და keygroup.ge-ზე "
+                  "ავტომატურად შეიცვლება (შეტყობინება აქ მოგივა).\n" if up.get("ok") else
+                  "\n✏️ შეცვლა ან მესაკუთრის ორიგინალი ფოტოების დამატება: გადმომიგზავნე ფოტოები და დააჭირე „👁 გადახედვა“ → „✅ დამტკიცება“ — "
+                  "იგივე განცხადება განახლდება.\n")
+               + f"\nWhatsApp ტექსტი მესაკუთრისთვის:\n<code>{e(txt)}</code>")
     else:
         msg = (f"⚠️ საიტზე გამოქვეყნება ვერ მოხერხდა ({e(j.get('error'))}). შეავსე ✏️ ღილაკებით (ფასი, უბანი) და დააჭირე „✅ დამტკიცება“.\n"
                f"შეიქმნა დრაფტი #{e(dr['id'])}.")

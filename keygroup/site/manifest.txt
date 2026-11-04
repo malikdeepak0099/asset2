@@ -50,3 +50,4 @@ tbilisi/isani/index.html
 tbilisi/old-tbilisi/index.html
 tbilisi/saburtalo/index.html
 tbilisi/vake/index.html
+upload/index.html

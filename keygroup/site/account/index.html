@@ -337,6 +337,7 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
       '<button class="btn sm b-gold" data-act="promo" data-id="' + l.id + '">' + KG.icon('rocket') + t('Promote', 'VIP / Boost') + '</button>' +
       (l.status === 'active' ? '<button class="btn sm b-navy" data-act="pub" data-id="' + l.id + '">MyHome / SS ⇢</button>' : '') +
       (l.status === 'active' ? '<button class="btn sm b-gold" data-act="auto" data-id="' + l.id + '">🚀 Auto</button>' : '') +
+      (l.status !== 'deleted' ? '<button class="btn sm b-ghost" data-act="ownerph" data-id="' + l.id + '" title="' + t('Link for the owner to upload the original photos', 'ბმული მესაკუთრისთვის ორიგინალი ფოტოების ასატვირთად') + '">📷 ' + t('Owner photos', 'მესაკუთრის ფოტოები') + '</button>' : '') +
       '<button class="btn sm b-red" data-act="del" data-id="' + l.id + '" aria-label="' + t('Delete', 'წაშლა') + '">' + KG.icon('trash') + '</button></div></div>';
   }
   function needConfirm(l) {
@@ -350,6 +351,15 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
     if (a === 'promo') promo(l);
     if (a === 'pub') publishOut(l);
     if (a === 'auto') autoOut(l);
+    if (a === 'ownerph') api('/api/my/listings/' + l.id + '/owner-link', {method: 'POST'}).then(function (r) {
+      if (!r.ok) { alert(r.error || 'Error'); return; }
+      kgModal('<h3 style="margin:0 0 8px">📷 ' + t('Original photos from the owner', 'ორიგინალი ფოტოები მესაკუთრისგან') + ' — #' + l.id + '</h3>' +
+        '<p class="muted" style="font-size:13px">' + t('Send this link to the owner. They upload the photos from their phone (no account needed) and they replace the photos on keygroup.ge at once — you get a Telegram message.', 'გაუგზავნე ეს ბმული მესაკუთრეს. ის ტელეფონიდან ატვირთავს ფოტოებს (რეგისტრაციის გარეშე) და keygroup.ge-ზე ფოტოები მაშინვე შეიცვლება — Telegram-ში შეტყობინება მოგივა.') + '</p>' +
+        '<input readonly value="' + esc(r.url) + '" onclick="this.select()" style="width:100%;border:1.5px solid var(--line);border-radius:10px;padding:10px;font:inherit">' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><a class="btn b-wa" target="_blank" rel="noopener" href="https://wa.me/?text=' + encodeURIComponent(r.text) + '">💬 WhatsApp</a>' +
+        '<button class="btn b-ghost" onclick="navigator.clipboard&&navigator.clipboard.writeText(' + esc(JSON.stringify(r.text)) + ');this.textContent=\'✅\'">' + t('Copy text', 'ტექსტის კოპირება') + '</button>' +
+        '<button class="btn b-ghost" onclick="this.closest(\'div[style*=fixed]\').remove()">' + t('Close', 'დახურვა') + '</button></div>');
+    });
     if (a === 'del' && confirm(t('Delete this listing?', 'წავშალო განცხადება?'))) api('/api/my/listings/' + id, {method: 'DELETE'}).then(dash);
   }
 
@@ -358,6 +368,14 @@ dialog::backdrop{background:rgba(5,12,24,.5)}
   var COND = [['new_renovated', 'ახალი გარემონტებული'], ['old_renovated', 'ძველი გარემონტებული'], ['ongoing', 'მიმდინარე რემონტი'], ['needs', 'სარემონტო'],
     ['white_frame', 'თეთრი კარკასი'], ['black_frame', 'შავი კარკასი'], ['green_frame', 'მწვანე კარკასი'], ['white_plus', 'თეთრი პლიუსი']];
   var BLD = [['old', 'ძველი აშენებული'], ['new', 'ახალი აშენებული'], ['construction', 'მშენებარე']];
+  function kgModal(html) {
+    var box = document.createElement('div');
+    box.style.cssText = 'position:fixed;inset:0;background:rgba(5,12,24,.55);display:grid;place-items:center;z-index:60;padding:16px';
+    box.innerHTML = '<div class="card" style="padding:22px;max-width:520px;width:100%;display:flex;flex-direction:column;gap:10px">' + html + '</div>';
+    box.onclick = function (e) { if (e.target === box) box.remove(); };
+    document.body.appendChild(box);
+    return box;
+  }
   function autoOut(l) {
     var has = {};   // an owner's ad the listing was copied from ("import") is not the agent's own post — still publish there
     Object.keys(l.ext || {}).forEach(function (k) { if (l.ext[k] && l.ext[k].source !== 'import') has[k] = l.ext[k]; });

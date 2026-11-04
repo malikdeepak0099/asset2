@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ka">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KEY GROUP — ფოტოების ატვირთვა</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Noto+Sans+Georgian:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/assets/portal.css">
+<style>
+.pg{padding:24px 16px 64px;max-width:640px;box-sizing:border-box}
+.drop{display:block;border:2px dashed var(--gold);border-radius:18px;padding:34px 16px;text-align:center;cursor:pointer;background:rgba(212,168,83,.07)}
+.drop b{font:800 18px var(--display);color:var(--navy)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;margin-top:14px}
+.grid img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px}
+.bar{height:10px;border-radius:6px;background:var(--line);overflow:hidden;margin-top:14px;display:none}
+.bar i{display:block;height:100%;width:0;background:var(--gold);transition:width .2s}
+.big{width:100%;justify-content:center;font-size:17px;padding:14px;margin-top:14px}
+</style>
+</head>
+<body>
+<main class="wrap pg" id="app">
+  <h1 id="h1">📷 ფოტოების ატვირთვა</h1>
+  <p class="muted" id="who">…</p>
+  <div class="card" style="padding:20px">
+    <label class="drop" for="f"><b id="pick">📱 აირჩიე ფოტოები</b><br><span class="muted" id="pickhint">ორიგინალი ფოტოები ტელეფონიდან, ლოგოს გარეშე · Original photos from your phone, no logos</span></label>
+    <input type="file" id="f" accept="image/*" multiple hidden>
+    <div class="grid" id="grid"></div>
+    <div class="bar" id="bar"><i></i></div>
+    <button class="btn b-gold big" id="go" disabled>⬆ ატვირთვა · Upload</button>
+    <div id="msg" style="margin-top:12px"></div>
+  </div>
+  <p class="muted" style="font-size:13px;margin-top:14px" id="privacy">ფოტოები გამოჩნდება მხოლოდ თქვენი განცხადებაში keygroup.ge-ზე, MyHome.ge-სა და SS.ge-ზე. · Your photos are used only for your listing.</p>
+</main>
+<script src="/assets/portal.js"></script>
+<script>
+(function () {
+  var t = KG.t, esc = KG.esc, $ = KG.$;
+  var tok = (location.search.match(/[?&]t=([a-z0-9]+)/i) || [])[1] || '';
+  var files = [];
+  var who = $('#who'), msg = $('#msg');
+  function bad(text) { msg.innerHTML = '<div class="msg err">' + esc(text) + '</div>'; }
+  if (!tok) { who.textContent = ''; bad('ბმული არასწორია — სთხოვეთ აგენტს ახალი. · Wrong link — ask your agent for a new one.'); return; }
+  fetch('/api/owner-upload/' + tok).then(function (r) { return r.json(); }).then(function (j) {
+    if (!j.ok) { who.textContent = ''; bad(j.error || 'Error'); $('#go').style.display = 'none'; return; }
+    var l = j.listing;
+    who.innerHTML = '🏠 ' + esc([l.rooms ? l.rooms + ' ოთახიანი' : '', ({flat: 'ბინა', house: 'სახლი', commercial: 'კომერციული ფართი', land: 'მიწა', hotel: 'სასტუმრო'})[l.type] || '', l.district].filter(Boolean).join(' · ')) +
+      ' — <b>' + esc(j.agent) + '</b> · KEY GROUP' + (j.uploads ? '<br><span style="color:var(--green,#1a7f37)">✅ ფოტოები უკვე მიღებულია — შეგიძლიათ დაამატოთ კიდევ. · Photos received — you can add more.</span>' : '');
+  }).catch(function () { bad('keygroup.ge did not answer — try again'); });
+
+  // phone photos can be huge (and HEIC on iPhone): shrink to a JPEG in the browser before sending
+  function toJpeg(file) {
+    return new Promise(function (res) {
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onload = function () {
+        var max = 2000, w = img.naturalWidth, h = img.naturalHeight, k = Math.min(1, max / Math.max(w, h));
+        var c = document.createElement('canvas'); c.width = Math.round(w * k); c.height = Math.round(h * k);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        c.toBlob(function (b) { URL.revokeObjectURL(url); res(b || file); }, 'image/jpeg', 0.88);
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); res(file); };
+      img.src = url;
+    });
+  }
+  $('#f').onchange = function (e) {
+    files = Array.prototype.slice.call(e.target.files || [], 0, 20);
+    $('#grid').innerHTML = files.map(function (f) { return '<img src="' + URL.createObjectURL(f) + '" alt="">'; }).join('');
+    $('#go').disabled = !files.length;
+    $('#pick').textContent = files.length ? '📱 ' + files.length + ' ფოტო არჩეულია — შეცვლა' : '📱 აირჩიე ფოტოები';
+    msg.innerHTML = '';
+  };
+  $('#go').onclick = function () {
+    var b = this; b.disabled = true; msg.innerHTML = '<span class="muted">⏳ მზადდება… · Preparing…</span>';
+    Promise.all(files.map(toJpeg)).then(function (blobs) {
+      var fd = new FormData();
+      blobs.forEach(function (bl, i) { fd.append('photos', bl, 'photo' + (i + 1) + '.jpg'); });
+      var x = new XMLHttpRequest();
+      x.open('POST', '/api/owner-upload/' + tok);
+      $('#bar').style.display = 'block';
+      x.upload.onprogress = function (ev) { if (ev.lengthComputable) $('#bar i').style.width = Math.round(ev.loaded / ev.total * 100) + '%'; };
+      x.onload = function () {
+        var j = {}; try { j = JSON.parse(x.responseText); } catch (e) { /* not JSON */ }
+        if (j.ok) {
+          msg.innerHTML = '<div class="msg ok">✅ მადლობა! ატვირთულია ' + j.added + ' ფოტო. თქვენი აგენტი უკვე იღებს შეტყობინებას.<br>Thank you! ' + j.added + ' photos uploaded — your agent has been notified.</div>';
+          files = []; $('#grid').innerHTML = ''; $('#pick').textContent = '📱 კიდევ დამატება · Add more';
+        } else { bad(j.error || ('Error ' + x.status)); b.disabled = false; }
+      };
+      x.onerror = function () { bad('ინტერნეტის პრობლემა — სცადეთ თავიდან. · Connection problem — try again.'); b.disabled = false; };
+      x.send(fd);
+    });
+  };
+})();
+</script>
+</body>
+</html>

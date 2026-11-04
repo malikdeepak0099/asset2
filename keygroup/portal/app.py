@@ -132,6 +132,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS login_tokens (token TEXT PRIMARY KEY, user_id INTEGER, expires REAL, used REAL DEFAULT 0, purpose TEXT DEFAULT 'login');
         CREATE TABLE IF NOT EXISTS bot_outbox (id INTEGER PRIMARY KEY, tg_id TEXT, text TEXT, button_url TEXT DEFAULT '', button_text TEXT DEFAULT '', created REAL, sent REAL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS publish_codes (code TEXT PRIMARY KEY, listing_id INTEGER, user_id INTEGER, expires REAL, used INTEGER DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS owner_uploads (token TEXT PRIMARY KEY, listing_id INTEGER, user_id INTEGER, created REAL, expires REAL,
+                                                  uploads INTEGER DEFAULT 0, last_upload REAL DEFAULT 0, reminded INTEGER DEFAULT 0);
         CREATE TABLE IF NOT EXISTS publish_errors (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, listing_id INTEGER, user_id INTEGER, site TEXT, message TEXT, created REAL);
         CREATE TABLE IF NOT EXISTS pub_jobs (
             id INTEGER PRIMARY KEY, listing_id INTEGER, user_id INTEGER, sites TEXT, opts TEXT DEFAULT '{}', status TEXT DEFAULT 'queued',
@@ -977,7 +979,7 @@ KA_LAT = dict(zip("აბგდევზთიკლმნოპჟრსტუ�
                   ["a", "b", "g", "d", "e", "v", "z", "t", "i", "k", "l", "m", "n", "o", "p", "zh", "r", "s", "t", "u", "p", "k", "gh", "q",
                    "sh", "ch", "ts", "dz", "ts", "ch", "kh", "j", "h"]))
 RESERVED_SLUGS = {"account", "admin", "agent", "api", "assets", "batumi", "compare", "invest-in-georgia", "ka", "ru", "en", "p", "partners",
-                  "privacy", "project", "search", "tbilisi", "uploads", "img", "_staging", "kutaisi"}
+                  "privacy", "project", "search", "tbilisi", "uploads", "img", "_staging", "kutaisi", "upload", "publish"}
 
 
 def slugify(text, n=60):
@@ -1116,6 +1118,117 @@ def crm_agent_row(lid):
             print("crm_agent_row", lid, ex, flush=True)
 
     threading.Thread(target=run, daemon=True).start()
+
+
+# ---------------------------------------------------------------- the owner sends the original photos (no portal logos) by a personal link
+OWNER_LINK_DAYS = 14
+
+
+def owner_link(con, lid, user_id):
+    """One personal upload link per listing (reused while valid): keygroup.ge/upload/?t=TOKEN."""
+    now = time.time()
+    r = con.execute("SELECT token FROM owner_uploads WHERE listing_id=? AND expires>? ORDER BY created DESC LIMIT 1", (lid, now)).fetchone()
+    tok = r["token"] if r else "".join(secrets.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(10))
+    if not r:
+        con.execute("INSERT INTO owner_uploads (token, listing_id, user_id, created, expires) VALUES (?,?,?,?,?)",
+                    (tok, lid, user_id, now, now + OWNER_LINK_DAYS * 86400))
+    return f"{SITE}/upload/?t={tok}"
+
+
+def owner_link_text(url):
+    return ("გამარჯობა! KEY GROUP-დან გწერთ. როგორც შევთანხმდით, გთხოვთ ატვირთოთ ბინის ორიგინალი ფოტოები "
+            f"(როგორც ტელეფონშია, ლოგოს გარეშე) ამ ბმულით — რეგისტრაცია არ სჭირდება:\n{url}\nმადლობა!")
+
+
+async def my_owner_link(request):
+    u, e = need_user(request)
+    if e:
+        return e
+    lid = int(request.path_params["lid"])
+    with _LOCK, db() as con:
+        if not own_listing(u, lid, con):
+            return err("Not found", 404)
+        url = owner_link(con, lid, u["id"])
+    return ok(url=url, text=owner_link_text(url))
+
+
+async def bot_owner_link(request):
+    sec = request.headers.get("x-bot-secret", "")
+    if not CRM_SECRET or not hmac.compare_digest(sec, CRM_SECRET):
+        return err("unauthorized", 401)
+    d = await body_json(request)
+    tg, lid = str(d.get("tg") or ""), int(d.get("listing_id") or 0)
+    with _LOCK, db() as con:
+        u = con.execute("SELECT id, role FROM users WHERE tg_id=? AND tg_id!=''", (tg,)).fetchone() if tg.isdigit() else None
+        l = con.execute("SELECT id, user_id FROM listings WHERE id=? AND status!='deleted'", (lid,)).fetchone()
+        if not u or not l or (l["user_id"] != u["id"] and u["role"] != "admin"):
+            return err("Not found", 404)
+        url = owner_link(con, lid, l["user_id"])
+    return ok(url=url, text=owner_link_text(url))
+
+
+def owner_upload_row(con, tok):
+    tok = re.sub(r"[^a-z0-9]", "", str(tok or "").lower())[:20]
+    r = con.execute("SELECT * FROM owner_uploads WHERE token=? AND expires>?", (tok, time.time())).fetchone() if tok else None
+    l = con.execute("SELECT * FROM listings WHERE id=? AND status!='deleted'", (r["listing_id"],)).fetchone() if r else None
+    return r, l
+
+
+async def owner_upload(request):
+    """Public page API for the property owner (no account): see which listing, upload the original photos."""
+    tok = request.path_params["tok"]
+    if request.method == "GET":
+        with db() as con:
+            r, l = owner_upload_row(con, tok)
+            if not l:
+                return err("This link has expired — ask your KEY GROUP agent for a new one", 404)
+            ag = con.execute("SELECT name FROM users WHERE id=?", (l["user_id"],)).fetchone()
+        return ok(listing={"deal": l["deal"], "type": l["type"], "district": l["district"], "rooms": l["rooms"], "area": l["area"],
+                           "photos": len(json.loads(l["photos"] or "[]"))}, agent=ag["name"] if ag else "KEY GROUP", uploads=r["uploads"])
+    if too_many(request, "owner_upload:" + str(tok)[:20], limit=20, window=3600):
+        return err("Too many uploads — try again in an hour", 429)
+    form = await request.form()
+    files = form.getlist("photos")[:20]
+    with db() as con:
+        r, l = owner_upload_row(con, tok)
+    if not l:
+        return err("This link has expired — ask your KEY GROUP agent for a new one", 404)
+    loop = asyncio.get_running_loop()
+    new = []
+    for up in files:
+        raw = await up.read()
+        if not raw or len(raw) > 15 * 1024 * 1024:
+            continue
+        try:
+            new.append(await loop.run_in_executor(None, save_photo, raw))
+        except Exception as ex:
+            print("owner upload: bad image", ex)
+    if not new:
+        return err("Could not read the photos — use JPG / PNG / HEIC from your phone camera (up to 15 MB each)")
+    with _LOCK, db() as con:
+        cur = con.execute("SELECT photos, photo_hashes FROM listings WHERE id=?", (l["id"],)).fetchone()
+        old = json.loads(cur["photos"] or "[]")
+        # first upload: the owner's originals replace the copied photos; later uploads are added
+        photos = (new if not r["uploads"] else old + new)[:30]
+        if not r["uploads"]:
+            for p in old:
+                remove_photo_files(p)
+        hashes = {p: ahash(os.path.join(UPLOADS, "t_" + p)) for p in photos}
+        con.execute("UPDATE listings SET photos=?, photo_hashes=?, updated=? WHERE id=?", (json.dumps(photos), json.dumps(hashes), time.time(), l["id"]))
+        con.execute("UPDATE owner_uploads SET uploads=uploads+1, last_upload=? WHERE token=?", (time.time(), r["token"]))
+        tell_agent(con, l["user_id"], f"📷 #{l['id']} — მესაკუთრემ ატვირთა {len(new)} ორიგინალი ფოტო. keygroup.ge-ზე ფოტოები უკვე შეიცვალა.\n"
+                                     f"The owner uploaded {len(new)} original photos — already on keygroup.ge.", f"{SITE}/p/?id={l['id']}")
+        audit(con, {"id": 0, "name": "owner upload"}, "owner_photos", "listing", l["id"], str(len(new)))
+    return ok(added=len(new), total=len(photos))
+
+
+def owner_link_reminders(con):
+    """Once, 2 days after the link was made: remind the agent if the owner has not uploaded yet."""
+    now = time.time()
+    for r in con.execute("SELECT * FROM owner_uploads WHERE uploads=0 AND reminded=0 AND created<? AND expires>?", (now - 2 * 86400, now)).fetchall():
+        con.execute("UPDATE owner_uploads SET reminded=1 WHERE token=?", (r["token"],))
+        tell_agent(con, r["user_id"], f"⏰ #{r['listing_id']} — მესაკუთრეს ორიგინალი ფოტოები ჯერ არ ატვირთავს. შეახსენე:\n{SITE}/upload/?t={r['token']}\n"
+                                      f"The owner has not uploaded the original photos yet — remind them with the link above.")
 
 
 async def bot_owner_phone(request):
@@ -1401,6 +1514,7 @@ async def bot_daily_report(request):
     with _LOCK, db() as con:
         if data:
             link_ss_from_crm(con, data)
+        owner_link_reminders(con)
         return ok(text=daily_report_text(con))
 
 
@@ -3642,6 +3756,9 @@ routes = [
     Route("/api/bot/daily-report", bot_daily_report, methods=["POST"]),
     Route("/api/admin/link-ss", admin_link_ss, methods=["POST"]),
     Route("/api/my/find", my_find),
+    Route("/api/my/listings/{lid:int}/owner-link", my_owner_link, methods=["POST"]),
+    Route("/api/bot/owner-link", bot_owner_link, methods=["POST"]),
+    Route("/api/owner-upload/{tok}", owner_upload, methods=["GET", "POST"]),
     Route("/api/bot/owner-phone", bot_owner_phone, methods=["POST"]),
     Route("/api/admin/publish-errors", admin_publish_errors),
     Route("/api/my/profile", my_profile, methods=["GET", "POST"]),
