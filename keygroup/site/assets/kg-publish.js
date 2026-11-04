@@ -505,11 +505,87 @@
     if (!r2) reportStatus(code, 'failed', 'no answer from SS — check the SS window (balance / SMS code?)');
   }
 
+  // ---------- photos only (KEY GROUP extension): the owner sent the original photos later → replace them in the agent's existing ad
+  var PHOTOS = /kgphotos=/.test(location.hash);
+  function netWatch() {   // remember every save request and its answer
+    if (window.__kgNet) return; window.__kgNet = [];
+    var oo = XMLHttpRequest.prototype.open, os = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (m, u) { this.__kgm = String(m || ''); this.__kgu2 = String(u); return oo.apply(this, arguments); };
+    XMLHttpRequest.prototype.send = function () {
+      var x = this; this.addEventListener('load', function () { window.__kgNet.push({m: x.__kgm, u: x.__kgu2 || x.responseURL, s: x.status, t: String(x.responseText || '').slice(0, 600)}); });
+      return os.apply(this, arguments);
+    };
+    var of = window.fetch;
+    window.fetch = function (i, o) {
+      var u = typeof i === 'string' ? i : (i && i.url) || '', m = (o && o.method) || (i && i.method) || 'GET';
+      return of.apply(this, arguments).then(function (r) { r.clone().text().then(function (t) { window.__kgNet.push({m: m, u: u, s: r.status, t: t.slice(0, 600)}); }).catch(function () {}); return r; });
+    };
+  }
+  function pressAll(el) { ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(function (t) { el.dispatchEvent(new MouseEvent(t, {bubbles: true, cancelable: true})); }); }
+  async function photosOnly(code, d) {
+    head = 'KEY GROUP ⇢ new photos · #' + d.id;
+    netWatch();
+    var files = await photosToFiles((d.photos || []).slice(0, 16));
+    if (!files.length) { reportStatus(code, 'failed', 'no photos on keygroup.ge'); return; }
+    var box, tiles, delBtn, fileInput, saveBtn, saveRe;
+    if (SITE === 'myhome') {
+      box = function () { return document.querySelector('[data-test-id="add-statement-photo-upload"]'); };
+      tiles = function () { return box() ? Array.prototype.slice.call(box().querySelectorAll('[aria-roledescription="sortable"]')) : []; };
+      delBtn = function (tile) { var x = Array.prototype.find.call(tile.querySelectorAll('svg'), function (sv) { var p = sv.querySelector('path'); return p && /^M11\.2501 0\.758431/.test(p.getAttribute('d') || ''); }); return x && x.parentElement; };
+      fileInput = function () { return box() && box().querySelector('input[type=file]'); };
+      saveBtn = function () { return document.querySelector('[data-test-id="add-statement-edit"]') || Array.prototype.find.call(document.querySelectorAll('button'), function (b) { return txt(b) === 'რედაქტირება'; }); };
+      saveRe = /statements\/update/i;
+    } else {
+      box = function () { return document.getElementById('create-app-images'); };
+      tiles = function () { return box() ? Array.prototype.filter.call(box().querySelectorAll('button'), function (b) { return txt(b) === 'delete'; }) : []; };
+      delBtn = function (b) { return b; };
+      fileInput = function () { return (box() && box().querySelector('input[type=file]')) || document.querySelector('input[type=file]'); };
+      saveBtn = function () { return Array.prototype.find.call(document.querySelectorAll('button'), function (b) { return txt(b) === 'შენახვა'; }); };
+      saveRe = /application|realestate|update|edit/i;
+    }
+    if (!(await waitFor(function () { return box() && (tiles().length || fileInput()); }, 30000))) {
+      reportStatus(code, 'failed', 'edit page did not open (signed in to the agent’s own account?)'); return;
+    }
+    await sleep(1500);
+    var before = tiles().length;
+    note(null, 'Removing ' + before + ' old photos…');
+    for (var i = 0; i < 60 && tiles().length; i++) {
+      var b = delBtn(tiles()[0]);
+      if (!b) break;
+      pressAll(b);
+      await sleep(500);
+      var ok = Array.prototype.find.call(document.querySelectorAll('button'), function (x) { return x.offsetParent && /^(წაშლა|დიახ|კი|დადასტურება|Yes|Delete|OK)$/i.test(txt(x)); });
+      if (ok) { pressAll(ok); await sleep(500); }
+    }
+    if (tiles().length) { reportStatus(code, 'failed', 'could not remove the old photos (' + tiles().length + ' left)'); return; }
+    note(true, 'Old photos removed: ' + before);
+    putFiles(fileInput(), files);
+    note(null, 'Uploading ' + files.length + ' new photos…');
+    await waitFor(function () { return tiles().length >= files.length; }, 90000);
+    await sleep(4000);   // let the site finish its own uploads
+    if (tiles().length < files.length) { reportStatus(code, 'failed', 'only ' + tiles().length + ' of ' + files.length + ' photos uploaded'); return; }
+    note(true, 'New photos: ' + tiles().length);
+    var sb = saveBtn();
+    if (!sb) { reportStatus(code, 'failed', 'Save button not found'); return; }
+    var n0 = window.__kgNet.length, startUrl = location.href;
+    sb.scrollIntoView({block: 'center'}); pressAll(sb);
+    note(null, 'Saving…');
+    var res = await waitFor(function () {
+      var hit = window.__kgNet.slice(n0).find(function (r) { return /^(POST|PUT|PATCH)$/i.test(r.m) && saveRe.test(r.u); });
+      if (hit) return hit;
+      if (location.href !== startUrl && !/\/edit\//.test(location.pathname)) return {s: 200, moved: true};
+      return null;
+    }, 60000);
+    if (res && res.s < 300) { note(true, 'Saved — photos updated'); reportStatus(code, 'updated', 'photos updated'); }
+    else if (res) { var msg = failReason(res.s, res.t); note(false, 'Not saved: ' + msg); reportStatus(code, 'failed', msg); }
+    else { var errs = visibleText(/სავალდებულო|შეცდომ|required/i).filter(function (x) { return !/^\*?\s*სავალდებულო ველი$|არასავალდებულო/.test(x); }); reportStatus(code, 'failed', errs.join(', ') || 'no answer after Save'); }
+  }
+
   // ---------- run
   (async function () {
     if (!SITE) { note(false, 'Open MyHome.ge or SS.ge “add listing” first'); return; }
     if (SITE === 'ss' && /\/user\/my-applications/.test(location.pathname)) { try { await ssCollect(); } catch (e) { note(false, 'Stopped: ' + e.message); } window.__kgpubRunning = false; return; }
-    var code = (location.hash.match(/kg(?:pub|auto)=([A-Z0-9]{6,12})/i) || [])[1];
+    var code = (location.hash.match(/kg(?:pub|auto|photos)=([A-Z0-9]{6,12})/i) || [])[1];
     try { code = code || sessionStorage.getItem('kgpub'); } catch (e) { /* storage blocked */ }
     if (AUTO) head = 'KEY GROUP ⇢ auto-publish';
     if (!code) code = (prompt('KEY GROUP publish code (from the MyHome / SS button on keygroup.ge):') || '').trim();
@@ -522,6 +598,10 @@
     if (!d.ok) { note(false, d.error || 'Code not valid'); return; }
     head += ' · #' + d.id;
     note(true, 'Listing #' + d.id + ' loaded');
+    if (PHOTOS && d.photos_only) {
+      try { await photosOnly(code.toUpperCase(), d); } catch (e) { reportStatus(code.toUpperCase(), 'failed', 'script: ' + e.message); }
+      draw(); window.__kgpubRunning = false; return;
+    }
     watchPublish(code.toUpperCase(), d);
     try { if (SITE === 'myhome') await fillMyHome(d); else await fillSS(d); } catch (e) { note(false, 'Stopped: ' + e.message); }
     // Plan B: every agent publishes from their own MyHome / SS account — warn if the wrong account is signed in

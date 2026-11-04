@@ -163,7 +163,7 @@ def init_db():
                                 ("projects", "frame", "TEXT DEFAULT ''"), ("projects", "handover", "TEXT DEFAULT ''"),
                                 ("projects", "down_pct", "REAL DEFAULT 0"), ("projects", "inst_months", "INTEGER DEFAULT 0"),
                                 ("projects", "inst_note", "TEXT DEFAULT ''"), ("listings", "source_url", "TEXT DEFAULT ''"),
-                                ("listings", "prop_owner", "TEXT DEFAULT ''"), ("listings", "prop_phone", "TEXT DEFAULT ''"),
+                                ("listings", "prop_owner", "TEXT DEFAULT ''"), ("listings", "prop_phone", "TEXT DEFAULT ''"), ("pub_jobs", "kind", "TEXT DEFAULT 'publish'"),
                                 ("listings", "agent_name", "TEXT DEFAULT ''"), ("users", "slug", "TEXT DEFAULT ''"),
                                 ("users", "links", "TEXT DEFAULT '{}'"), ("users", "pw_set", "INTEGER DEFAULT 1"),
                                 ("login_tokens", "purpose", "TEXT DEFAULT 'login'"), ("publish_codes", "promo", "TEXT DEFAULT ''"), ("publish_codes", "job_id", "INTEGER DEFAULT 0"), ("users", "ext_key", "TEXT DEFAULT ''"), ("users", "ext_seen", "REAL DEFAULT 0"), ("users", "tg_id", "TEXT DEFAULT ''"), ("users", "email", "TEXT DEFAULT ''"), ("users", "bio", "TEXT DEFAULT ''"), ("users", "last_login", "REAL DEFAULT 0")):
@@ -1219,7 +1219,21 @@ async def owner_upload(request):
         tell_agent(con, l["user_id"], f"📷 #{l['id']} — მესაკუთრემ ატვირთა {len(new)} ორიგინალი ფოტო. keygroup.ge-ზე ფოტოები უკვე შეიცვალა.\n"
                                      f"The owner uploaded {len(new)} original photos — already on keygroup.ge.", f"{SITE}/p/?id={l['id']}")
         audit(con, {"id": 0, "name": "owner upload"}, "owner_photos", "listing", l["id"], str(len(new)))
+        queue_photo_update(con, l["id"], l["user_id"])
     return ok(added=len(new), total=len(photos))
+
+
+def queue_photo_update(con, lid, user_id):
+    """New photos on keygroup.ge → the agent's extension replaces them in the agent's existing MyHome / SS ads (edit pages)."""
+    sites = [r["site"] for r in con.execute("SELECT site, ext_id FROM ext_posts WHERE listing_id=? AND source!='import'", (lid,)).fetchall()
+             if str(r["ext_id"]).isdigit()]
+    if not sites:
+        return None
+    if con.execute("SELECT 1 FROM pub_jobs WHERE listing_id=? AND kind='photos' AND status='queued'", (lid,)).fetchone():
+        return None   # a waiting job takes the newest photos when it runs
+    cur = con.execute("INSERT INTO pub_jobs (listing_id, user_id, sites, opts, created, updated, kind) VALUES (?,?,?,?,?,?, 'photos')",
+                      (lid, user_id, json.dumps(sorted(sites)), json.dumps({"kind": "photos"}), time.time(), time.time()))
+    return cur.lastrowid
 
 
 def owner_link_reminders(con):
@@ -1444,6 +1458,8 @@ async def bot_listing(request):
             con.execute(f"UPDATE listings SET {sets}, status='active', updated=?, confirmed=?, agent_name=?, user_id=? WHERE id=?", (*f.values(), now, now, agent, adm["id"], lid))
             if photos:
                 con.execute("UPDATE listings SET photos=? WHERE id=?", (json.dumps(photos), lid))
+                if uploads:   # the agent sent new (original) photos for a listing already on MyHome / SS → replace them there too
+                    queue_photo_update(con, lid, adm["id"])
         else:
             cols = ",".join(f.keys())
             cur_ = con.execute(f"""INSERT INTO listings (user_id,{cols},status,created,updated,approved,expires,confirmed,verify_level,photos,source_url,agent_name)
@@ -2049,6 +2065,8 @@ async def publish_data(request):
         o = json.loads(j["opts"] or "{}") if j else {}
         cond = CONDITIONS.get(o.get("condition")) or ("", "")
         d["auto"] = {"condition_myhome": cond[0], "condition_ss": cond[1], "building": BUILDINGS.get(o.get("building"), ""), "submit": True}
+        if o.get("kind") == "photos":   # only replace the photos of the agent's existing ad, nothing else
+            d["photos_only"] = True
     if not d["bedrooms"] and d["rooms"] and d["type"] == "flat":
         d["bedrooms"] = max(1, int(d["rooms"]) - 1)
     return JSONResponse(d, headers=hdr)
@@ -2184,7 +2202,7 @@ def queue_auto_publish(con, user_id, lid, d):
         return None, "Choose the condition (renovation)"
     if bld not in BUILDINGS:
         return None, "Choose the building status"
-    if con.execute("SELECT 1 FROM pub_jobs WHERE listing_id=? AND status IN ('queued','running')", (lid,)).fetchone():
+    if con.execute("SELECT 1 FROM pub_jobs WHERE listing_id=? AND status IN ('queued','running') AND COALESCE(kind,'publish')='publish'", (lid,)).fetchone():
         return None, "This listing is already waiting to be published"
     opts = {"condition": cond, "building": bld, "promo": clean_promo(d.get("promo"))}
     cur = con.execute("INSERT INTO pub_jobs (listing_id, user_id, sites, opts, created, updated) VALUES (?,?,?,?,?,?)",
@@ -2196,7 +2214,8 @@ def job_out(j):
     if not j:
         return None
     return {"id": j["id"], "listing_id": j["listing_id"], "sites": json.loads(j["sites"] or "[]"), "status": j["status"],
-            "site_status": json.loads(j["site_status"] or "{}"), "opts": json.loads(j["opts"] or "{}"), "created": j["created"]}
+            "site_status": json.loads(j["site_status"] or "{}"), "opts": json.loads(j["opts"] or "{}"), "created": j["created"],
+            "kind": j["kind"] if "kind" in j.keys() else "publish"}
 
 
 def tell_agent(con, user_id, text, url=""):
@@ -2221,6 +2240,10 @@ def finish_job_if_done(con, job_id):
             st = ss[x]
             parts.append(f"{'✅' if st['state'] == 'done' else '⚠️'} {name}" + (f" #{st.get('ext_id')}" if st.get("ext_id") else "") +
                          ("" if st["state"] == "done" else f" — {esc(st.get('message') or 'not published')}"))
+        if (j["kind"] if "kind" in j.keys() else "publish") == "photos":
+            tell_agent(con, j["user_id"], (f"📷 #{j['listing_id']} — ფოტოები განახლდა / photos updated" if ok_all else f"📷 #{j['listing_id']} — ფოტოები ნაწილობრივ განახლდა / photos partly updated")
+                       + "\n✅ keygroup.ge\n" + "\n".join(p.split(" #")[0] if p.startswith("✅") else p for p in parts), f"{SITE}/p/?id={j['listing_id']}")
+            return
         tell_agent(con, j["user_id"], (f"🚀 #{j['listing_id']} — " + ("გამოქვეყნდა / published" if ok_all else "ნაწილობრივ / partly") + "\n" + "\n".join(parts)),
                    f"{SITE}/account/")
 
@@ -2295,6 +2318,8 @@ async def ext_next(request):
                 return ok(job=None)
             # checked again when the job starts: a site where the listing is already live is never posted twice
             have = {r["site"] for r in con.execute("SELECT site FROM ext_posts WHERE listing_id=? AND source!='import'", (j["listing_id"],)).fetchall()}
+            if (j["kind"] or "publish") == "photos":
+                break
             left = [x for x in json.loads(j["sites"] or "[]") if x not in have]
             if left:
                 if len(left) != len(json.loads(j["sites"] or "[]")):
@@ -2312,6 +2337,10 @@ async def ext_next(request):
         out.update(status="running", code=code,
                    urls={"myhome": f"https://statements.myhome.ge/ka/statement/create?referrer=myhome#kgauto={code}",
                          "ss": f"https://home.ss.ge/ka/udzravi-qoneba/create#kgauto={code}"})
+        if (j["kind"] or "publish") == "photos":   # the agent's existing ads: their edit pages
+            ext = {r["site"]: r["ext_id"] for r in con.execute("SELECT site, ext_id FROM ext_posts WHERE listing_id=? AND source!='import'", (j["listing_id"],))}
+            out["urls"] = {"myhome": f"https://statements.myhome.ge/ka/statement/edit/{ext.get('myhome')}?referrer=myhome#kgphotos={code}",
+                           "ss": f"https://home.ss.ge/ka/udzravi-qoneba/edit/{ext.get('ss')}#kgphotos={code}"}
         return ok(job=out)
 
 
@@ -2347,7 +2376,7 @@ async def publish_status(request):
     except Exception:
         d = {}
     site, state = d.get("site"), d.get("state")
-    if site not in ("myhome", "ss") or state not in ("failed", "needs_otp", "working", "needs_payment", "paid"):
+    if site not in ("myhome", "ss") or state not in ("failed", "needs_otp", "working", "needs_payment", "paid", "updated"):
         return JSONResponse({"ok": False}, status_code=400, headers=hdr)
     with _LOCK, db() as con:
         c = con.execute("SELECT * FROM publish_codes WHERE code=? AND expires>?", (code, time.time())).fetchone()
@@ -2393,8 +2422,8 @@ async def publish_status(request):
         cur = ss.get(site) or {}
         if cur.get("state") == "done" and state != "needs_payment":
             return JSONResponse({"ok": True}, headers=hdr)
-        if state == "paid":
-            ss[site] = {"state": "done", "ext_id": ext_id or cur.get("ext_id", ""), "message": "paid", "at": time.time()}
+        if state in ("paid", "updated"):
+            ss[site] = {"state": "done", "ext_id": ext_id or cur.get("ext_id", ""), "message": state, "at": time.time()}
         else:
             ss[site] = {"state": state, "message": str(d.get("message") or "")[:200], "at": time.time()}
             if ext_id or cur.get("ext_id"):
