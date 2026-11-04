@@ -440,8 +440,9 @@ def ss_features(a):
     return out[:40]
 
 
-def extract(url):
-    page = fetch(url)
+def extract(url, page=None):
+    """page: the HTML when we already have it (e.g. read by the agent's own browser because the site refused the server)."""
+    page = page if page else fetch(url)
     parsed = parse_myhome(page, url) if site_of(url) == "myhome" else parse_ss(page, url)
     if parsed:
         parsed["refuses_agencies"] = parsed.pop("refuses_partnership", False) or refuses_agencies(parsed["description"])

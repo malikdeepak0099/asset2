@@ -133,6 +133,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS bot_outbox (id INTEGER PRIMARY KEY, tg_id TEXT, text TEXT, button_url TEXT DEFAULT '', button_text TEXT DEFAULT '', created REAL, sent REAL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS publish_codes (code TEXT PRIMARY KEY, listing_id INTEGER, user_id INTEGER, expires REAL, used INTEGER DEFAULT 0);
         CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
+        CREATE TABLE IF NOT EXISTS fetch_jobs (id INTEGER PRIMARY KEY, user_id INTEGER, url TEXT, status TEXT DEFAULT 'queued', html TEXT DEFAULT '',
+                                               created REAL, updated REAL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS owner_uploads (token TEXT PRIMARY KEY, listing_id INTEGER, user_id INTEGER, created REAL, expires REAL,
                                                   uploads INTEGER DEFAULT 0, last_upload REAL DEFAULT 0, reminded INTEGER DEFAULT 0);
         CREATE TABLE IF NOT EXISTS publish_errors (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, listing_id INTEGER, user_id INTEGER, site TEXT, message TEXT, created REAL);
@@ -2300,6 +2302,51 @@ async def bot_auto_publish(request):
         return ok(job_id=jid, extension_seen=l["ext_seen"] or 0, sites=d.get("_sites", []))
 
 
+# ---------------------------------------------------------------- MyHome / SS refused the server: read the page in the agent's own Chrome
+FETCH_HOSTS = ("www.myhome.ge", "myhome.ge", "home.ss.ge", "ss.ge")
+
+
+async def bot_fetch(request):
+    sec = request.headers.get("x-bot-secret", "")
+    if not CRM_SECRET or not hmac.compare_digest(sec, CRM_SECRET):
+        return err("unauthorized", 401)
+    if request.method == "GET":
+        jid = int(request.path_params.get("jid") or 0)
+        with db() as con:
+            j = con.execute("SELECT status, html FROM fetch_jobs WHERE id=?", (jid,)).fetchone()
+        return ok(status=j["status"], html=j["html"] if j["status"] == "done" else "") if j else err("Not found", 404)
+    d = await body_json(request)
+    tg, url = str(d.get("tg") or ""), str(d.get("url") or "").strip()[:500]
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    if host not in FETCH_HOSTS or not url.startswith("https://"):
+        return err("Only MyHome.ge / SS.ge listing links")
+    with _LOCK, db() as con:
+        u = con.execute("SELECT id, ext_key, ext_seen FROM users WHERE tg_id=? AND tg_id!=''", (tg,)).fetchone() if tg.isdigit() else None
+        if not u or not u["ext_key"]:
+            return err("KEY GROUP გაფართოება ჯერ არ გაქვს დაყენებული (keygroup.ge/publish/#extension)")
+        if (u["ext_seen"] or 0) < time.time() - 10 * 60:
+            return err("შენი KEY GROUP გაფართოება ბოლო 10 წუთში არ ჩანდა — ჩართე კომპიუტერი და Chrome")
+        con.execute("DELETE FROM fetch_jobs WHERE created<?", (time.time() - 86400,))
+        jid = con.execute("INSERT INTO fetch_jobs (user_id, url, created) VALUES (?,?,?)", (u["id"], url, time.time())).lastrowid
+    return ok(job_id=jid)
+
+
+async def ext_fetched(request):
+    """The extension sends back the listing page it opened in the agent's Chrome."""
+    jid = int(request.path_params["jid"])
+    raw = (await request.body())[:4_000_000]
+    with _LOCK, db() as con:
+        u = ext_key_user(con, request)
+        if not u:
+            return err("Extension key not valid", 401)
+        j = con.execute("SELECT id FROM fetch_jobs WHERE id=? AND user_id=?", (jid, u["id"])).fetchone()
+        if not j:
+            return err("Not found", 404)
+        html = raw.decode("utf-8", "replace")
+        con.execute("UPDATE fetch_jobs SET status=?, html=?, updated=? WHERE id=?", ("done" if len(html) > 2000 else "failed", html, time.time(), jid))
+    return ok()
+
+
 async def ext_next(request):
     """The extension asks for work: the agent's oldest queued job, with a short code the publisher script uses."""
     with _LOCK, db() as con:
@@ -2307,6 +2354,10 @@ async def ext_next(request):
         if not u:
             return err("Extension key not valid — pair it again on keygroup.ge → My profile", 401)
         now = time.time()
+        fj = con.execute("SELECT id, url FROM fetch_jobs WHERE user_id=? AND status='queued' AND created>? ORDER BY id LIMIT 1", (u["id"], now - 180)).fetchone()
+        if fj:   # quick: open one listing page and send it back (the bot is waiting)
+            con.execute("UPDATE fetch_jobs SET status='running', updated=? WHERE id=?", (now, fj["id"]))
+            return ok(job=None, fetch={"id": fj["id"], "url": fj["url"]})
         for j in con.execute("SELECT * FROM pub_jobs WHERE user_id=? AND status='running' AND started<?", (u["id"], now - 20 * 60)).fetchall():
             ss = json.loads(j["site_status"] or "{}")
             for x in json.loads(j["sites"] or "[]"):
@@ -3790,6 +3841,9 @@ routes = [
     Route("/api/bot/daily-report", bot_daily_report, methods=["POST"]),
     Route("/api/admin/link-ss", admin_link_ss, methods=["POST"]),
     Route("/api/my/find", my_find),
+    Route("/api/bot/fetch", bot_fetch, methods=["POST"]),
+    Route("/api/bot/fetch/{jid:int}", bot_fetch),
+    Route("/api/ext/fetched/{jid:int}", ext_fetched, methods=["POST"]),
     Route("/api/my/listings/{lid:int}/owner-link", my_owner_link, methods=["POST"]),
     Route("/api/bot/owner-link", bot_owner_link, methods=["POST"]),
     Route("/api/owner-upload/{tok}", owner_upload, methods=["GET", "POST"]),

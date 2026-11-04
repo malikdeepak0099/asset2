@@ -983,11 +983,58 @@ def on_message(msg):
     except Exception as ex:
         traceback.print_exc()
         code = getattr(ex, "status", "") or type(ex).__name__
+        if isinstance(ex, extract.Blocked):   # the site refused the server: read the page in the agent's own Chrome (KEY GROUP extension)
+            threading.Thread(target=browser_fallback, args=(chat, uid, name, url, code), daemon=True).start()
+            return
+        link_from_slug(chat, uid, name, url, code)
+        return
+    handle_link_data(chat, uid, name, url, d)
+
+
+def browser_fallback(chat, uid, name, url, code):
+    """MyHome / SS refused the server (403): ask keygroup.ge to have the agent's extension open the page and send it back (≤ 90 s)."""
+    try:
+        j = requests.post(PORTAL_URL + "/api/bot/fetch", json={"tg": str(uid), "url": url}, headers={"X-Bot-Secret": CRM_SECRET}, timeout=30).json()
+    except Exception as ex:
+        j = {"ok": False, "error": str(ex)[:80]}
+    if not j.get("ok"):
+        link_from_slug(chat, uid, name, url, code, hint=j.get("error"))
+        return
+    send(chat, "🌐 საიტმა სერვერს გვერდი არ მისცა — ვკითხულობ შენი Chrome-ით (KEY GROUP გაფართოება), 1 წუთამდე…")
+    html = ""
+    for _ in range(45):
+        time.sleep(2)
+        try:
+            r = requests.get(PORTAL_URL + f"/api/bot/fetch/{j['job_id']}", headers={"X-Bot-Secret": CRM_SECRET}, timeout=30).json()
+        except Exception:
+            continue
+        if r.get("status") == "done":
+            html = r.get("html") or ""
+            break
+        if r.get("status") == "failed":
+            break
+    d = None
+    if html:
+        try:
+            d = extract.extract(url, page=html)
+        except Exception:
+            traceback.print_exc()
+    if d and (d.get("price") or d.get("price_usd") or d.get("area")):
+        handle_link_data(chat, uid, name, url, d)
+    else:
+        link_from_slug(chat, uid, name, url, code, hint="გაფართოებამ გვერდი ვერ წაიკითხა")
+
+
+def link_from_slug(chat, uid, name, url, code, hint=None):
+    """Last resort: only what the link itself says (deal, rooms, type, district)."""
+    if True:
         d = extract.from_slug(url)
         site = "SS.ge" if d["source"] == "ss" else "MyHome.ge"
         send(chat, f"⚠️ {site}-მა სერვერს გვერდი არ მისცა ({e(code)}) — სრულ ინფორმაციას ვერ ვკითხულობ.\n"
                    f"ბმულიდან ამოვიღე: {e(B_DEAL.get(d['deal'], '—'))} · {e(d['rooms'] or '—')} ოთახი · {e(TYPE_KA.get(d['type'], '—'))} · {e(d['district'] or '—')}.\n\n"
-                   "შეგიძლია მაინც გააგრძელო: დაურეკე მესაკუთრეს, დააჭირე „✅ თანახმაა“, მერე ფასი, ფართი და მისამართი შეავსე ✏️ ღილაკებით.")
+                   "შეგიძლია მაინც გააგრძელო: დაურეკე მესაკუთრეს, დააჭირე „✅ თანახმაა“, მერე ფასი, ფართი და მისამართი შეავსე ✏️ ღილაკებით."
+                   + (f"\n\nℹ️ {e(hint)}" if hint else "")
+                   + "\n\n💡 სრული ინფორმაციისთვის ჩართე კომპიუტერზე Chrome KEY GROUP გაფართოებით — მაშინ ბოტი განცხადებას შენი ბრაუზერით წაიკითხავს.")
         if not d["id"]:
             return
         key = f"{chat}-{int(time.time())}"
@@ -996,6 +1043,9 @@ def on_message(msg):
         send(chat, f"🔗 {e(url)}", [[{"text": "✅ მესაკუთრე თანახმაა", "callback_data": "ok|" + key}],
                                     [{"text": "❌ გაუქმება", "callback_data": "no|" + key}]])
         return
+
+
+def handle_link_data(chat, uid, name, url, d):
     prof = profile_of(uid)
     own = False
     if d.get("source") == "myhome" and prof.get("myhome"):
