@@ -396,20 +396,42 @@
         .then(function (j) { note(!!j.ok, j.ok ? 'Saved on keygroup.ge: ' + (site === 'myhome' ? 'MyHome' : 'SS') + ' #' + extId : 'Could not save the ' + site + ' id on keygroup.ge'); })
         .catch(function () { note(false, 'Could not reach keygroup.ge to save the ' + site + ' id'); });
     }
-    async function myhomeId(uuid) {      // the success page may show the new listing's number; otherwise keep the uuid
-      for (var i = 0; i < 30; i++) {
-        await sleep(500);
-        var a = document.querySelector('a[href*="/pr/"]'), m = a && a.href.match(/\/pr\/(\d{5,10})/);
-        if (!m) m = (document.body.innerText.match(/ID[:\s]+(\d{6,10})/) || null);
+    async function myhomeId(uuid, created) {   // MyHome answers "create" with a uuid; the number (ID 12345678) comes from the next answers / the success page
+      window.__kgMhUuid = uuid;
+      var direct = created && (created.id || created.statement_id || created.statementId || created.number);
+      if (/^\d{5,10}$/.test(String(direct || ''))) return String(direct);
+      for (var i = 0; i < 60; i++) {
+        if (window.__kgMhId) return window.__kgMhId;
+        var m = null, links = document.querySelectorAll('a[href]');
+        for (var k = 0; k < links.length && !m; k++) m = links[k].href.match(/\/(?:pr|statement\/edit|statement|statements)\/(\d{6,10})(?:\D|$)/);
+        if (!m) m = location.href.match(/[\/=](\d{7,10})(?:\D|$)/);
+        if (!m) m = document.body.innerText.match(/(?:ID|აიდი|№)[:\s#]*(\d{6,10})/);
         if (m) return m[1];
+        await sleep(500);
       }
       return uuid;
     }
+    // any later MyHome answer that mentions our new uuid next to a numeric id gives us the listing number
+    function idForUuid(text) {
+      var uuid = window.__kgMhUuid;
+      if (!uuid || window.__kgMhId || text.indexOf(uuid) < 0) return;
+      try {
+        (function walk(v, depth) {
+          if (!v || typeof v !== 'object' || depth > 8 || window.__kgMhId) return;
+          if (String(v.uuid || v.statement_uuid || '') === uuid) {
+            var n = v.id || v.statement_id || v.statementId;
+            if (/^\d{5,10}$/.test(String(n || ''))) { window.__kgMhId = String(n); return; }
+          }
+          Object.keys(v).forEach(function (k) { walk(v[k], depth + 1); });
+        })(JSON.parse(text), 0);
+      } catch (e) { /* not JSON */ }
+    }
     function seen(url, text) {
       try {
+        if (SITE === 'myhome') idForUuid(text);
         if (/statements\/create/.test(url)) {
           var j = JSON.parse(text);
-          if (j && j.result && j.data && j.data.uuid) myhomeId(j.data.uuid).then(function (id) { report('myhome', id); });
+          if (j && j.result && j.data && j.data.uuid) myhomeId(j.data.uuid, j.data).then(function (id) { report('myhome', id); });
         } else if (/PaidService\/create-application/i.test(url)) {
           var k = JSON.parse(text), id = k && k.application && k.application.success && k.application.realEstateApplicationId;
           if (id) report('ss', id);
@@ -431,6 +453,7 @@
       var u = typeof i === 'string' ? i : (i && i.url) || '';
       return of.apply(this, arguments).then(function (r) {
         if (/statements\/create|create-application/i.test(u)) r.clone().text().then(function (t) { if (r.ok) seen(u, t); else if (window.__kgOnFail) window.__kgOnFail(u, r.status, t); });
+        else if (SITE === 'myhome' && window.__kgMhUuid && !window.__kgMhId && r.ok) r.clone().text().then(idForUuid).catch(function () {});
         return r;
       });
     };
