@@ -1240,9 +1240,9 @@ def queue_photo_update(con, lid, user_id):
 
 
 def owner_link_reminders(con):
-    """Once, 2 days after the link was made: remind the agent if the owner has not uploaded yet."""
+    """Once, 1 hour after the link was made: remind the agent if the owner has not uploaded yet (checked every 30 s with the bot's outbox)."""
     now = time.time()
-    for r in con.execute("SELECT * FROM owner_uploads WHERE uploads=0 AND reminded=0 AND created<? AND expires>?", (now - 2 * 86400, now)).fetchall():
+    for r in con.execute("SELECT * FROM owner_uploads WHERE uploads=0 AND reminded=0 AND created<? AND expires>?", (now - 3600, now)).fetchall():
         con.execute("UPDATE owner_uploads SET reminded=1 WHERE token=?", (r["token"],))
         tell_agent(con, r["user_id"], f"⏰ #{r['listing_id']} — მესაკუთრეს ორიგინალი ფოტოები ჯერ არ ატვირთავს. შეახსენე:\n{SITE}/upload/?t={r['token']}\n"
                                       f"The owner has not uploaded the original photos yet — remind them with the link above.")
@@ -1651,6 +1651,7 @@ async def bot_outbox(request):
         return err("unauthorized", 401)
     with _LOCK, db() as con:
         con.execute("INSERT INTO kv (k, v) VALUES ('bot_seen', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", (str(time.time()),))   # bot health
+        owner_link_reminders(con)   # 1 hour after an owner photo link: remind the agent (goes out in this same answer)
         rows = [dict(r) for r in con.execute("SELECT id, tg_id, text, button_url, button_text FROM bot_outbox WHERE sent=0 ORDER BY id LIMIT 30")]
         if rows:
             con.execute(f"UPDATE bot_outbox SET sent=? WHERE id IN ({','.join('?' * len(rows))})", (time.time(), *[r["id"] for r in rows]))
