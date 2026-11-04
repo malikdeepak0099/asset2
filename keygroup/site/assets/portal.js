@@ -146,7 +146,7 @@
     return m ? m[1] : '';
   };
   KG.agentUrl = function (a) { return a && a.slug ? '/' + a.slug + '/' : '/agent/?id=' + (a ? a.id : ''); };
-  KG.ROLE = function (r) { return {agent: KG.t('Agent', 'აგენტი'), agency: KG.t('Agency', 'სააგენტო'), developer: KG.t('Developer', 'დეველოპერი')}[r] || ''; };
+  KG.ROLE = function (r) { return {agent: KG.t('Agent', 'აგენტი'), agency: KG.t('Agency', 'სააგენტო'), developer: KG.t('Developer', 'დეველოპერი'), admin: KG.t('Director', 'დირექტორი')}[r] || ''; };
   KG.FRAME = function (f) { return {black: KG.t('Black frame', 'შავი კარკასი'), white: KG.t('White frame', 'თეთრი კარკასი'), green: KG.t('Green frame', 'მწვანე კარკასი'), mixed: KG.t('Mixed finishing', 'შერეული')}[f] || ''; };
 
   // ---------- labels
