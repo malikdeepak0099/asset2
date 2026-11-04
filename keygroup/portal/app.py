@@ -3087,6 +3087,10 @@ async def admin_users(request):
                 return ok(password=pw, phone=t["phone"], name=t["name"], link=f"{SITE}/api/login/link?t={tok}", telegram=sent_tg)
             elif action == "set_role":
                 role = d.get("role")
+                if role == "admin" and u["role"] == "admin":   # only a full admin can make another full admin (company partners)
+                    con.execute("UPDATE users SET role='admin' WHERE id=?", (uid,))
+                    audit(con, u, "make_admin", "user", uid, "")
+                    return ok()
                 if role not in ("owner",) + PARTNER_ROLES + ("moderator", "finance"):
                     return err("Unknown role")
                 con.execute("UPDATE users SET role=? WHERE id=? AND role!='admin'", (role, uid))
