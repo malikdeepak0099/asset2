@@ -1025,6 +1025,51 @@ def browser_fallback(chat, uid, name, url, code):
         link_from_slug(chat, uid, name, url, code, hint="გაფართოებამ გვერდი ვერ წაიკითხა")
 
 
+def full_from_masked(masked, html):
+    """MyHome shows "598 850 ***"; after "ნომრის ნახვა" the page holds the whole number — find it by its first digits."""
+    pre = re.sub(r"\D", "", str(masked or ""))
+    if len(pre) < 5 or not html:
+        return ""
+    m = re.search(r"(?:(?<!\d)|(?<=995)|(?<=995 ))" + r"[\s-]?".join(pre) + r"[\s-]?(\d)[\s-]?(\d)[\s-]?(\d)(?![\d*])", html)
+    return pre + "".join(m.groups()) if m else ""
+
+
+def reveal_owner_phone(chat, uid, d, url):
+    """MyHome hides the last 3 digits: the agent's own Chrome (KEY GROUP extension) opens the ad and presses "ნომრის ნახვა"."""
+    try:
+        j = requests.post(PORTAL_URL + "/api/bot/fetch", json={"tg": str(uid), "url": url.split("#")[0] + "#kgphone"},
+                          headers={"X-Bot-Secret": CRM_SECRET}, timeout=30).json()
+    except Exception:
+        return
+    if not j.get("ok"):
+        return                       # no extension running — the bot asks the agent for the number later, as before
+    full = ""
+    for _ in range(40):
+        time.sleep(2)
+        try:
+            r = requests.get(PORTAL_URL + f"/api/bot/fetch/{j['job_id']}", headers={"X-Bot-Secret": CRM_SECRET}, timeout=30).json()
+        except Exception:
+            continue
+        if r.get("status") in ("done", "failed"):
+            full = full_from_masked(d.get("phone"), r.get("html") or "")
+            break
+    if not full:
+        return
+    d["phone"], d["phone_masked"] = full, False
+    send(chat, f"📞 მესაკუთრის სრული ნომერი: <b>{e(full)}</b> ({e(d.get('owner') or '—')}) — შეინახება შენს CRM-ში.")
+    # the listing may already be on keygroup.ge (agent approved before the number came): save it there too
+    wait = STATE.get("await_owner", {}).get(str(uid))
+    if wait and wait.get("phone_prefix") == re.sub(r"\D", "", full)[:6]:
+        try:
+            requests.post(PORTAL_URL + "/api/bot/owner-phone", json={"tg": str(uid), "listing_id": wait["lid"], "phone": full},
+                          headers={"X-Bot-Secret": CRM_SECRET}, timeout=30)
+            STATE["await_owner"].pop(str(uid), None)
+            send(chat, f"✅ #{e(wait['lid'])} — ნომერი CRM-ში ჩაიწერა, ხელით გამოგზავნა აღარ არის საჭირო.")
+        except Exception:
+            pass
+    save_state()
+
+
 def link_from_slug(chat, uid, name, url, code, hint=None):
     """Last resort: only what the link itself says (deal, rooms, type, district)."""
     if True:
@@ -1068,6 +1113,8 @@ def handle_link_data(chat, uid, name, url, d):
         return
     key = f"{chat}-{int(time.time())}"
     STATE["pending"][key] = {"data": d, "uid": uid, "agent": name, "created": time.time()}
+    if d.get("source") == "myhome" and d.get("phone_masked"):
+        threading.Thread(target=reveal_owner_phone, args=(chat, uid, d, url), daemon=True).start()
     # keep only the 200 newest pending items
     if len(STATE["pending"]) > 200:
         for k in sorted(STATE["pending"], key=lambda k: STATE["pending"][k]["created"])[:-200]:
@@ -1242,7 +1289,7 @@ def on_callback(cb):
         dr["site_id"] = j["id"]
         if not drafts.is_own_listing(item["uid"], d) and (d.get("phone_masked") or not d.get("phone")):
             # MyHome hides the owner's number — ask the agent for it once, for their own CRM (private)
-            STATE.setdefault("await_owner", {})[str(item["uid"])] = {"lid": j["id"], "at": time.time()}
+            STATE.setdefault("await_owner", {})[str(item["uid"])] = {"lid": j["id"], "at": time.time(), "phone_prefix": re.sub(r"\D", "", d.get("phone") or "")[:6]}
             send(chat, f"📞 <b>#{j['id']} — მესაკუთრის სრული ნომერი</b> ({e(d.get('owner') or '—')}, {e(d.get('phone') or '—')}):\n"
                        "გამომიგზავნე 9 ციფრი, მაგ. <code>555123456</code> — შეინახება შენს CRM-ში (ჩანს მხოლოდ შენთვის და ოფისისთვის).\n"
                        f"მოგვიანებით: <code>/owner {j['id']} 5XXXXXXXX</code>")
