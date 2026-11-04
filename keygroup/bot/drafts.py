@@ -124,8 +124,8 @@ def site_payload(dr):
             "district": dr["district"], "address": dr["address"], "rooms": dr["rooms"], "bedrooms": dr["bedrooms"], "area": dr["area"],
             "floor": dr["floor"], "total_floors": dr["total_floors"], "price": dr["price"], "currency": dr["currency"],
             "title": dr.get("title_en") or dr["title"],
-            "description": "\n\n".join(x for x in (dr["desc_en"], dr["desc_ka"]) if x)
-                           + ("\n\n" + "\n".join(f"• {k}: {v}" for k, v in dr.get("details") or []) if dr.get("details") else ""),
+            # the details are already inside the texts (condition first, KEY GROUP agent + phone last)
+            "description": "\n\n".join(x for x in (dr["desc_en"], dr["desc_ka"]) if x),
             "agent": name, "contact_phone": agent_phone(dr), "video_url": dr.get("video_url"), "lat": dr.get("lat"), "lon": dr.get("lon"),
             "profiles": profile_links(dr["uid"]), "tg": dr["uid"],
             # the property owner — private on keygroup.ge: only this agent and the office see it (the agent's CRM search)
@@ -199,7 +199,8 @@ def compose(dr):
     name, phone = contact(dr)
     d = {"deal": dr["deal"], "type": dr["type"], "city": dr["city"], "district": dr["district"], "address": dr["address"],
          "area": dr["area"], "rooms": dr["rooms"], "bedrooms": dr["bedrooms"], "floor": dr["floor"], "total_floors": dr["total_floors"],
-         "price_usd": dr["price"] if dr["currency"] == "USD" else "", "price": dr["price"], "currency": dr["currency"]}
+         "price_usd": dr["price"] if dr["currency"] == "USD" else "", "price": dr["price"], "currency": dr["currency"],
+         "details": dr.get("details") or [], "features": dr.get("features") or []}
     try:
         tx, _ = B.texts.build(d, phone, name)
     except Exception:
@@ -208,7 +209,7 @@ def compose(dr):
     if "title" not in dr["edited"]:
         dr["title"] = tx.get("title_ka") or dr["title"]
     if "desc_ka" not in dr["edited"]:
-        dr["desc_ka"] = (tx.get("ka") or "") + (f"\n\n✔️ {feats}" if feats else "")
+        dr["desc_ka"] = tx.get("ka") or (f"✔️ {feats}" if feats else "")   # details + amenities are inside, before the contact line
     if "desc_en" not in dr["edited"]:
         dr["desc_en"] = tx.get("en") or ""
     dr["desc_ru"] = tx.get("ru") or dr.get("desc_ru", "")

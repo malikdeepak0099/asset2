@@ -2042,11 +2042,13 @@ async def publish_data(request):
         deal_ka = {"sale": "იყიდება", "rent": "ქირავდება", "daily": "ქირავდება დღიურად"}.get(row["deal"], "")
         type_ka = {"flat": "ბინა", "house": "კერძო სახლი", "commercial": "კომერციული ფართი", "land": "მიწის ნაკვეთი", "hotel": "სასტუმრო"}.get(row["type"], "")
         cur = {"USD": "$", "GEL": "₾", "EUR": "€"}.get(row["currency"], "")
-        parts = [f"{deal_ka} {str(row['rooms']) + ' ოთახიანი ' if row['rooms'] else ''}{type_ka} — {district_ka(row['district']) or ''}{', ' + row['address'] if row['address'] else ''}.".strip(),
-                 f"ფართი: {row['area']:g} მ²." if row["area"] else "", f"სართული: {row['floor']}{'/' + row['total_floors'] if row['total_floors'] else ''}." if row["floor"] else "",
-                 f"ფასი: {row['price']:,.0f} {cur}{' / თვე' if row['deal'] == 'rent' else ''}.", ka if ka and ka not in (deal_ka, type_ka) else "",
-                 "დათვალიერება ნებისმიერ დროს — KEY GROUP Real Estate."]
-        ka = "\n".join(x for x in parts if x)
+        parts = [f"{deal_ka} {str(row['rooms']) + ' ოთახიანი ' if row['rooms'] else ''}{type_ka} — {district_ka(row['district']) or ''}{', ' + row['address'] if row['address'] else ''}".strip(), "",
+                 f"📐 ფართი: {row['area']:g} მ²" if row["area"] else "", f"🚪 ოთახები: {row['rooms']}" if row["rooms"] else "",
+                 f"🪜 სართული: {row['floor']}{'/' + row['total_floors'] if row['total_floors'] else ''}" if row["floor"] else "",
+                 f"💵 ფასი: {row['price']:,.0f} {cur}{' / თვე' if row['deal'] == 'rent' else ''}", ka if ka and ka not in (deal_ka, type_ka) else "", "",
+                 "📅 დათვალიერება ნებისმიერ დროს. დამატებითი ინფორმაციისთვის დაგვიკავშირდით.",
+                 f"🏢 KEY GROUP Real Estate — {owner['name'] if owner else ''}: {owner['phone'] if owner else ''}" if owner and owner["phone"] else "🏢 KEY GROUP Real Estate"]
+        ka = "\n".join(x for i, x in enumerate(parts) if x or (i and parts[i - 1]))
     if len(en) < 60:
         deal_en = {"sale": "For sale", "rent": "For rent", "daily": "Daily rent"}.get(row["deal"], "")
         type_en = {"flat": "apartment", "house": "house", "commercial": "commercial space", "land": "land plot", "hotel": "hotel"}.get(row["type"], "")
