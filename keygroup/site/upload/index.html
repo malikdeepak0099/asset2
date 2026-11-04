@@ -31,6 +31,14 @@
     <button class="btn b-gold big" id="go" disabled>⬆ ატვირთვა · Upload</button>
     <div id="msg" style="margin-top:12px"></div>
   </div>
+  <div class="card" id="after" style="padding:20px;margin-top:14px;display:none">
+    <div id="mine"></div>
+    <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--line)">
+      <b style="font:800 17px var(--display);color:var(--navy)">🔑 გაქვთ სხვა ქონება?</b>
+      <p class="muted" style="margin:6px 0 12px">ჩვენი გუნდი დაგეხმარებათ — გაყიდვა, გაქირავება, შეფასება. · Have another property? Our team will help.</p>
+      <a class="btn b-gold big" id="more" style="margin-top:0" target="_blank" rel="noopener">💬 მოგვწერეთ WhatsApp-ზე</a>
+    </div>
+  </div>
   <p class="muted" style="font-size:13px;margin-top:14px" id="privacy">ფოტოები გამოჩნდება მხოლოდ თქვენი განცხადებაში keygroup.ge-ზე, MyHome.ge-სა და SS.ge-ზე. · Your photos are used only for your listing.</p>
 </main>
 <script src="/assets/portal.js"></script>
@@ -45,9 +53,29 @@
   fetch('/api/owner-upload/' + tok).then(function (r) { return r.json(); }).then(function (j) {
     if (!j.ok) { who.textContent = ''; bad(j.error || 'Error'); $('#go').style.display = 'none'; return; }
     var l = j.listing;
+    window.__kgInfo = j;
     who.innerHTML = '🏠 ' + esc([l.rooms ? l.rooms + ' ოთახიანი' : '', ({flat: 'ბინა', house: 'სახლი', commercial: 'კომერციული ფართი', land: 'მიწა', hotel: 'სასტუმრო'})[l.type] || '', l.district].filter(Boolean).join(' · ')) +
       ' — <b>' + esc(j.agent) + '</b> · KEY GROUP' + (j.uploads ? '<br><span style="color:var(--green,#1a7f37)">✅ ფოტოები უკვე მიღებულია — შეგიძლიათ დაამატოთ კიდევ. · Photos received — you can add more.</span>' : '');
+    if (j.uploads) showAfter();
   }).catch(function () { bad('keygroup.ge did not answer — try again'); });
+
+  // after the upload: their listing (open / share) and "another property? our team will help"
+  function showAfter() {
+    var j = window.__kgInfo || {}, box = $('#after');
+    if (j.url) {
+      var share = 'https://wa.me/?text=' + encodeURIComponent('ნახეთ ეს განცხადება KEY GROUP-ზე: ' + j.url);
+      $('#mine').innerHTML = '<b style="font:800 17px var(--display);color:var(--navy)">🏠 თქვენი განცხადება keygroup.ge-ზე</b>' +
+        '<p class="muted" style="margin:6px 0 12px">ახალი ფოტოები რამდენიმე წუთში გამოჩნდება. · Your new photos appear in a few minutes.</p>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn b-ghost" href="' + esc(j.url) + '" target="_blank" rel="noopener">👁 ნახვა</a>' +
+        '<a class="btn b-ghost" href="' + esc(share) + '" target="_blank" rel="noopener">📤 გაზიარება WhatsApp-ით</a>' +
+        '<a class="btn b-ghost" href="https://www.facebook.com/sharer/sharer.php?u=' + encodeURIComponent(j.url) + '" target="_blank" rel="noopener">📘 Facebook</a></div>';
+    } else $('#mine').style.display = 'none';
+    var ph = String(j.agent_wa || '').replace(/\D/g, '');
+    var txt = 'გამარჯობა! KEY GROUP-ის საიტიდან გწერთ — მაქვს სხვა ქონებაც, მინდა თქვენი დახმარება.';
+    $('#more').href = ph.length === 9 ? 'https://wa.me/995' + ph + '?text=' + encodeURIComponent(txt) : '/';
+    if (ph.length !== 9) $('#more').textContent = '📞 დაგვიკავშირდით';
+    box.style.display = 'block';
+  }
 
   // phone photos can be huge (and HEIC on iPhone): shrink to a JPEG in the browser before sending
   function toJpeg(file) {
@@ -82,6 +110,7 @@
       x.onload = function () {
         var j = {}; try { j = JSON.parse(x.responseText); } catch (e) { /* not JSON */ }
         if (j.ok) {
+          showAfter();
           msg.innerHTML = '<div class="msg ok">✅ მადლობა! ატვირთულია ' + j.added + ' ფოტო. თქვენი აგენტი უკვე იღებს შეტყობინებას.<br>Thank you! ' + j.added + ' photos uploaded — your agent has been notified.</div>';
           files = []; $('#grid').innerHTML = ''; $('#pick').textContent = '📱 კიდევ დამატება · Add more';
         } else { bad(j.error || ('Error ' + x.status)); b.disabled = false; }

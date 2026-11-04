@@ -1185,9 +1185,12 @@ async def owner_upload(request):
             r, l = owner_upload_row(con, tok)
             if not l:
                 return err("This link has expired — ask your KEY GROUP agent for a new one", 404)
-            ag = con.execute("SELECT name FROM users WHERE id=?", (l["user_id"],)).fetchone()
+            ag = con.execute("SELECT name, phone FROM users WHERE id=?", (l["user_id"],)).fetchone()
+        # after the upload the owner sees their listing (to share it) and can ask the team about another property
         return ok(listing={"deal": l["deal"], "type": l["type"], "district": l["district"], "rooms": l["rooms"], "area": l["area"],
-                           "photos": len(json.loads(l["photos"] or "[]"))}, agent=ag["name"] if ag else "KEY GROUP", uploads=r["uploads"])
+                           "photos": len(json.loads(l["photos"] or "[]"))}, agent=ag["name"] if ag else "KEY GROUP", uploads=r["uploads"],
+                  url=f"{SITE}/p/?id={l['id']}" if l["status"] == "active" else "",
+                  agent_wa=re.sub(r"\D", "", (ag["phone"] if ag else "") or "")[-9:] or "")
     if too_many(request, "owner_upload:" + str(tok)[:20], limit=20, window=3600):
         return err("Too many uploads — try again in an hour", 429)
     form = await request.form()
