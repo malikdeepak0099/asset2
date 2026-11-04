@@ -72,8 +72,14 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
     api('/api/admin/stats').then(function (j) {
       if (!j.ok) { login(); return; }
       STATS = j.stats;
+      STATS.bot_ok = j.bot && j.bot.seen ? (Date.now() / 1000 - j.bot.seen < 300 ? '🟢 ჩართულია' : '🔴 გაჩერებულია') : null;
       var pend = (STATS.listings || {}).pending || 0;
-      $('#app').innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"><h1>KEY GROUP admin</h1>' +
+      var B = j.bot || {}, mins = B.seen ? Math.round((Date.now() / 1000 - B.seen) / 60) : 0;
+      var botBar = B.seen && mins >= 5 ? '<div class="card" style="padding:14px 16px;margin:0 0 14px;border:2px solid var(--coral,#E2725B);background:#fff3f0">' +
+        '<b style="color:var(--coral,#E2725B)">🔴 Telegram ბოტი გაჩერებულია</b> — ბოლოს ჩანდა ' + (mins < 120 ? mins + ' წუთის' : Math.round(mins / 60) + ' საათის') + ' წინ' +
+        (B.waiting ? ' · ' + B.waiting + ' შეტყობინება ელოდება' : '') + '. აგენტების ლინკები ახლა არ მუშავდება.<br>' +
+        '<span class="muted" style="font-size:13px">ჩართვა: DigitalOcean Console → </span><code style="user-select:all">cd /opt/keygroup-listing && docker compose up -d</code></div>' : '';
+      $('#app').innerHTML = botBar + '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"><h1>KEY GROUP admin</h1>' +
         '<div style="display:flex;gap:8px"><a class="btn b-ghost" href="/account/">Owner view</a><button class="btn b-ghost" id="out">Log out</button></div></div>' +
         '<div class="tabs">' + allowedTabs([['dash', 'Dashboard', 0], ['listings', 'Listings', pend], ['crm', 'CRM', 0], ['agents', 'KEY Agents', 0], ['chats', 'Chats', STATS.chats_waiting], ['leads', 'Leads', STATS.leads_new], ['partners', 'Partners', STATS.apps_new], ['orders', 'Payments', STATS.orders_waiting], ['reports', 'Reports', STATS.reports_open], ['users', 'Users', 0], ['analytics', 'Analytics', 0], ['performance', 'Performance', STATS.viewings_soon], ['log', 'Activity log', 0], ['settings', 'Plans & settings', 0]]).map(function (x) {
           return '<button data-t="' + x[0] + '" aria-pressed="' + (TAB === x[0]) + '">' + x[1] + (x[2] ? ' <span class="n">' + x[2] + '</span>' : '') + '</button>';
@@ -235,7 +241,7 @@ th{font:700 12px var(--display);color:var(--muted);text-transform:uppercase;lett
   }
   function dash() {
     var L = STATS.listings || {}, cur = STATS.currency === 'GEL' ? '₾' : STATS.currency;
-    $('#tab').innerHTML = '<div class="kpis">' + [[L.pending || 0, 'Waiting for approval'], [L.active || 0, 'Live owner listings'], [STATS.vip_active, 'VIP / Super VIP live'], [STATS.orders_waiting, 'Payments to confirm'],
+    $('#tab').innerHTML = '<div class="kpis">' + [[STATS.bot_ok == null ? '—' : STATS.bot_ok, 'Telegram bot'], [L.pending || 0, 'Waiting for approval'], [L.active || 0, 'Live owner listings'], [STATS.vip_active, 'VIP / Super VIP live'], [STATS.orders_waiting, 'Payments to confirm'],
       [cur + Math.round(STATS.revenue_30d), 'Paid in last 30 days'], [STATS.owners, 'Owner accounts'], [STATS.leads_new || 0, 'New enquiries'], [STATS.viewings_soon || 0, 'Viewings next 7 days'], [STATS.no_photos || 0, 'Listings without photos'], [STATS.partners || 0, 'Partners'], [STATS.apps_new || 0, 'Partner applications'], [STATS.reports_open, 'Open reports'], [STATS.duplicates || 0, 'Possible duplicates'], [L.changes || 0, 'Waiting for owner changes'], [STATS.chats_today || 0, 'Website chats (24h)'], [L.expired || 0, 'Expired']].map(function (k) {
         return '<div class="card"><b>' + esc(k[0]) + '</b><span>' + esc(k[1]) + '</span></div>'; }).join('') + '</div>' +
       '<p class="muted" style="margin-top:18px">New listings, plan orders and reports also come to the KEY GROUP Telegram bot.</p>' +

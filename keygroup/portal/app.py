@@ -132,6 +132,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS login_tokens (token TEXT PRIMARY KEY, user_id INTEGER, expires REAL, used REAL DEFAULT 0, purpose TEXT DEFAULT 'login');
         CREATE TABLE IF NOT EXISTS bot_outbox (id INTEGER PRIMARY KEY, tg_id TEXT, text TEXT, button_url TEXT DEFAULT '', button_text TEXT DEFAULT '', created REAL, sent REAL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS publish_codes (code TEXT PRIMARY KEY, listing_id INTEGER, user_id INTEGER, expires REAL, used INTEGER DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
         CREATE TABLE IF NOT EXISTS owner_uploads (token TEXT PRIMARY KEY, listing_id INTEGER, user_id INTEGER, created REAL, expires REAL,
                                                   uploads INTEGER DEFAULT 0, last_upload REAL DEFAULT 0, reminded INTEGER DEFAULT 0);
         CREATE TABLE IF NOT EXISTS publish_errors (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, listing_id INTEGER, user_id INTEGER, site TEXT, message TEXT, created REAL);
@@ -1647,6 +1648,7 @@ async def bot_outbox(request):
     if not CRM_SECRET or not hmac.compare_digest(sec, CRM_SECRET):
         return err("unauthorized", 401)
     with _LOCK, db() as con:
+        con.execute("INSERT INTO kv (k, v) VALUES ('bot_seen', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", (str(time.time()),))   # bot health
         rows = [dict(r) for r in con.execute("SELECT id, tg_id, text, button_url, button_text FROM bot_outbox WHERE sent=0 ORDER BY id LIMIT 30")]
         if rows:
             con.execute(f"UPDATE bot_outbox SET sent=? WHERE id IN ({','.join('?' * len(rows))})", (time.time(), *[r["id"] for r in rows]))
@@ -3059,7 +3061,10 @@ async def admin_stats(request):
         dups = con.execute("SELECT COUNT(*) FROM listings WHERE dup_of!='' AND status IN ('pending','active','changes')").fetchone()[0]
         chats_waiting = con.execute("SELECT COUNT(*) FROM chats WHERE status IN ('waiting','agent') AND unread>0").fetchone()[0]
         chats_today = con.execute("SELECT COUNT(DISTINCT chat_id) FROM chat_msgs WHERE who='visitor' AND ts>?", (now - 86400,)).fetchone()[0]
-    return ok(stats={"no_photos": no_photos, "viewings_soon": viewings_soon, "role": u["role"], "leads_new": leads_new, "apps_new": apps_new, "partners": partners, "duplicates": dups, "chats_waiting": chats_waiting, "chats_today": chats_today, "listings": by_status, "owners": users, "orders_waiting": await_pay, "revenue_30d": paid_30,
+    with db() as con:
+        bs = con.execute("SELECT v FROM kv WHERE k='bot_seen'").fetchone()
+        waiting = con.execute("SELECT COUNT(*) FROM bot_outbox WHERE sent=0").fetchone()[0]
+    return ok(bot={"seen": float(bs["v"]) if bs else 0, "waiting": waiting}, stats={"no_photos": no_photos, "viewings_soon": viewings_soon, "role": u["role"], "leads_new": leads_new, "apps_new": apps_new, "partners": partners, "duplicates": dups, "chats_waiting": chats_waiting, "chats_today": chats_today, "listings": by_status, "owners": users, "orders_waiting": await_pay, "revenue_30d": paid_30,
                      "vip_active": vip, "reports_open": reports, "currency": get_settings()["currency"]})
 
 
