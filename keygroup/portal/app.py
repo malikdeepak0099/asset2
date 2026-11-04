@@ -170,6 +170,11 @@ def init_db():
                 con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
         con.execute("UPDATE listings SET verify_level=2 WHERE verified=1 AND verify_level=0")
         con.execute("UPDATE listings SET confirmed=COALESCE(NULLIF(approved,0), created) WHERE confirmed=0")
+        # KEY GROUP agents' listings show the agent's account name (older bot posts carried the name typed in the bot)
+        for r in con.execute("""SELECT l.id, l.agent_name, u.name FROM listings l JOIN users u ON u.id=l.user_id
+                                WHERE u.role='agent' AND UPPER(u.company)='KEY GROUP' AND u.name!='' AND l.agent_name!=''""").fetchall():
+            if name_key(r["agent_name"]) != name_key(r["name"]):   # "Ana" / "ანა" is the same person; "Deepak" on Zurab's listing is not
+                con.execute("UPDATE listings SET agent_name=?, contact_name=? WHERE id=?", (r["name"][:40], ("KEY GROUP · " + r["name"])[:80], r["id"]))
         # listings imported from a MyHome / SS link before ext_posts existed: remember where they came from
         for r in con.execute("SELECT l.id, l.user_id, l.source_url FROM listings l WHERE l.source_url!='' AND l.status!='deleted' "
                              "AND NOT EXISTS (SELECT 1 FROM ext_posts x WHERE x.listing_id=l.id)").fetchall():
@@ -948,13 +953,13 @@ async def public_agent(request):
             rows = con.execute(f"SELECT id, name, company, role FROM users WHERE id IN ({','.join('?' * len(tm)) or '0'})", tuple(tm)).fetchall()
             return ok(rules=TRUSTED_RULES, trusted=[{"id": r["id"], "name": r["company"] or r["name"], "role": r["role"]} for r in rows])
         u = con.execute("SELECT id, name, company, role, created, blocked, slug, links, phone, bio FROM users WHERE id=?", (int(aid),)).fetchone()
-        if not u or u["blocked"] or u["role"] not in PARTNER_ROLES:
+        if not u or u["blocked"] or (u["role"] not in PARTNER_ROLES and not (u["role"] == "admin" and u["slug"])):
             return err("Profile not found", 404)
         st = agent_stats(con, u["id"])
         rows = con.execute("SELECT * FROM listings WHERE user_id=? AND status='active' ORDER BY MAX(boosted_at, approved) DESC LIMIT 60", (u["id"],)).fetchall()
         s = get_settings()
         st.pop("open_reports", None)
-        kg = (u["company"] or "").upper() == "KEY GROUP" and u["role"] == "agent"
+        kg = (u["company"] or "").upper() == "KEY GROUP" and u["role"] in ("agent", "admin")
         try:
             links = json.loads(u["links"] or "{}")
         except ValueError:
@@ -1294,6 +1299,11 @@ async def bot_listing(request):
     if not owner:
         return err("no admin account", 500)
     adm = owner
+    with db() as con:   # a KEY GROUP agent's listing always shows the agent's account name (not the name typed in the bot)
+        au = con.execute("SELECT name, role, company FROM users WHERE id=?", (adm["id"],)).fetchone()
+    if au and is_kg_agent(au) and au["name"] and name_key(agent) != name_key(au["name"]):
+        agent = au["name"][:40]
+        f["contact_name"] = ("KEY GROUP · " + agent)[:80]
     photos = []
     loop = asyncio.get_running_loop()
     for raw in uploads:   # originals sent by the agent; the website keeps web-size copies
@@ -1600,8 +1610,10 @@ def save_profile(con, u, d):
     company = u.get("company") or ""
     if "company" in d and not is_kg_agent(u):   # KEY GROUP agents always show KEY GROUP
         company = str(d.get("company") or "").strip()[:80]
+    if is_kg_agent(u):
+        company = "KEY GROUP"
     slug = u.get("slug") or ""
-    if "slug" in d and u["role"] in PARTNER_ROLES:
+    if "slug" in d and u["role"] in PARTNER_ROLES + ("admin",):   # the office can have a public page too (director / company)
         want = slugify(str(d.get("slug") or ""), 30)
         if want and want != slug:
             if len(want) < 2 or want in RESERVED_SLUGS or con.execute("SELECT 1 FROM users WHERE slug=? AND id!=?", (want, u["id"])).fetchone():
