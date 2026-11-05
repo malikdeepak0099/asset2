@@ -418,6 +418,17 @@ def sync_agent(uid, notify=True):
         return stats
     try:
         recs = profiles.myhome_profile(prof["myhome"])
+    except (requests.RequestException, extract.Blocked) as ex:
+        # MyHome did not answer the server (timeout / refused): read the profile in the agent's own Chrome instead
+        print("sync", uid, type(ex).__name__, ex)
+        try:
+            recs = profiles.myhome_profile(prof["myhome"], fetch=browser_fetcher(uid), pause=0.5)
+            stats["via"] = "chrome"
+        except Exception as ex2:
+            print("sync via chrome", uid, getattr(ex2, "why", ex2))
+            stats["error"] = "myhome_down"
+            plan_sync_retry(uid)
+            return stats
     except Exception as ex:
         traceback.print_exc()
         stats["error"] = f"{type(ex).__name__}: {ex}"[:200]
@@ -425,6 +436,7 @@ def sync_agent(uid, notify=True):
             send(uid, tr(uid, "⚠️ MyHome.ge პროფილის წაკითხვა ვერ მოხერხდა. მოგვიანებით ვცდი ხელახლა.",
                          "⚠️ Could not read your MyHome.ge profile. I will try again later."))
         return stats
+    STATE.get("sync_retry", {}).pop(uid, None)
     if not recs and DB.counts(uid).get(uid, {}).get("myhome", {}).get("Active", 0) > 3:
         stats["error"] = "profile returned 0 listings (skipped, possible site problem)"
         return stats
@@ -588,14 +600,55 @@ def company_report(results, uid=None):
         if st.get("error") == "no profile":
             lines.append(f"• {e(st['name'])}: ⚠️ " + ("no MyHome.ge profile yet" if en else "პროფილი არ არის მითითებული"))
             continue
+        if st.get("error") == "myhome_down":
+            lines.append(f"• {e(st['name'])}: ⏳ " + (f"MyHome.ge did not answer — retrying every {SYNC_RETRY_MIN} min" if en
+                                                       else f"MyHome.ge არ პასუხობს — ვცდი ხელახლა ყოველ {SYNC_RETRY_MIN} წუთში"))
+            continue
         if st.get("error"):
             lines.append(f"• {e(st['name'])}: ⚠️ {e(st['error'])}")
             continue
-        lines.append(f"• <b>{e(st['name'])}</b>: {st['total']} " + ("listings" if en else "განცხ.") + f" · 🆕 {len(st['new'])} · ✏️ {len(st['updated'])} · 🗑 {len(st['removed'])}")
+        lines.append(f"• <b>{e(st['name'])}</b>: {st['total']} " + ("listings" if en else "განცხ.") + f" · 🆕 {len(st['new'])} · ✏️ {len(st['updated'])} · 🗑 {len(st['removed'])}"
+                     + (" · 🌐 Chrome" if st.get("via") == "chrome" else ""))
         tot["n"] += len(st["new"]); tot["u"] += len(st["updated"]); tot["r"] += len(st["removed"]); tot["t"] += st["total"]
     lines += ["", ("Total" if en else "სულ") + f": <b>{tot['t']}</b> · 🆕 {tot['n']} · ✏️ {tot['u']} · 🗑 {tot['r']}",
               ("Details" if en else "დეტალები") + ": Master CRM → Agent Listings / Agent Activity"]
     return "\n".join(lines)
+
+
+SYNC_RETRY_MIN = 30      # MyHome did not answer: try that agent again every 30 minutes,
+SYNC_RETRY_MAX = 8       # up to 8 times (≈ 4 hours)
+
+
+def plan_sync_retry(uid):
+    r = STATE.setdefault("sync_retry", {}).setdefault(str(uid), {"tries": 0})
+    r["tries"] += 1
+    r["at"] = time.time() + SYNC_RETRY_MIN * 60
+    save_state()
+
+
+def run_sync_retries():
+    """Agents whose MyHome profile could not be read this morning: try again; tell the admins what came through."""
+    due = [u for u, r in list(STATE.get("sync_retry", {}).items()) if r.get("at", 0) <= time.time()]
+    done, gave_up = [], []
+    for uid in due:
+        r = STATE["sync_retry"].get(uid) or {}
+        if r.get("tries", 0) > SYNC_RETRY_MAX:
+            STATE["sync_retry"].pop(uid, None)
+            gave_up.append(agent_name(uid) or uid)
+            continue
+        with SYNC_LOCK:
+            st = sync_agent(uid, notify=True)
+        if st.get("error") != "myhome_down":
+            done.append(st)
+        time.sleep(2)
+    save_state()
+    if done:
+        send_admins(lambda a: ("🔁 <b>MyHome — retry OK</b>\n" if lang_of(a) == "en" else "🔁 <b>MyHome — ხელახლა წავიკითხე</b>\n")
+                    + "\n".join(f"• <b>{e(st['name'])}</b>: {st['total']} · 🆕 {len(st['new'])} · ✏️ {len(st['updated'])} · 🗑 {len(st['removed'])}"
+                                for st in done if not st.get("error")))
+    if gave_up:
+        send_admins(lambda a: "⚠️ MyHome.ge did not answer all day for: " + e(", ".join(gave_up)) + ". Tomorrow's sync will try again."
+                    if lang_of(a) == "en" else "⚠️ MyHome.ge მთელი დღე არ პასუხობდა: " + e(", ".join(gave_up)) + ". ხვალ ისევ ვცდი.")
 
 
 def sync_all(report_to_admin=True, notify_agents=True):
@@ -637,6 +690,8 @@ def scheduler():
                 STATE["last_daily"] = today
                 save_state()
                 sync_all()
+            if STATE.get("sync_retry"):
+                run_sync_retries()
             if now.hour >= EVENING_REPORT_HOUR and STATE.get("last_evening") != today:
                 STATE["last_evening"] = today
                 save_state()
@@ -989,6 +1044,39 @@ def on_message(msg):
         link_from_slug(chat, uid, name, url, code)
         return
     handle_link_data(chat, uid, name, url, d)
+
+
+def browser_page(uid, url, tries=45):
+    """Open a MyHome / SS page in the agent's own Chrome (KEY GROUP extension) and get its HTML. ("", reason) when not possible."""
+    try:
+        j = requests.post(PORTAL_URL + "/api/bot/fetch", json={"tg": str(uid), "url": url}, headers={"X-Bot-Secret": CRM_SECRET}, timeout=30).json()
+    except Exception as ex:
+        return "", str(ex)[:80]
+    if not j.get("ok"):
+        return "", j.get("error") or "no extension"
+    for _ in range(tries):
+        time.sleep(2)
+        try:
+            r = requests.get(PORTAL_URL + f"/api/bot/fetch/{j['job_id']}", headers={"X-Bot-Secret": CRM_SECRET}, timeout=30).json()
+        except Exception:
+            continue
+        if r.get("status") == "done":
+            return r.get("html") or "", ""
+        if r.get("status") == "failed":
+            return "", "the extension could not read the page"
+    return "", "no answer from the extension"
+
+
+def browser_fetcher(uid):
+    """A fetch(url) for profiles.myhome_profile that goes through the agent's Chrome instead of the server."""
+    def fetch(url):
+        html, why = browser_page(uid, url)
+        if not html:
+            ex = extract.Blocked(0)
+            ex.why = why
+            raise ex
+        return html
+    return fetch
 
 
 def browser_fallback(chat, uid, name, url, code):
