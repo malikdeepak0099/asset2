@@ -4,6 +4,8 @@
 #   - unknown URLs return a real 404 (agent profiles become real files)
 #   - clean sitemap.xml (no /tbilisi/ /batumi/ /ka/ /ru/), all real landing pages added
 #   - every listing gets its own title / description / social preview in the first HTML
+#   - current listings as direct links on the hub, buyer guides, Tbilisi/Batumi and district pages
+#   - landing-page attribution for WhatsApp/enquiries + weekly report (Mondays, /opt/keygroup/seo/reports)
 # Backs up the Caddyfile, checks the site afterwards and restores the backup if a core check fails.
 # Does NOT replace the portal app, the website pages or any data.
 set -u
@@ -16,6 +18,7 @@ mkdir -p /opt/keygroup/seo
 curl -fsSL "$RAW/seo/kg_seo.py?$(date +%s)" -o /opt/keygroup/seo/kg_seo.py.new || { echo "STOP: download failed - nothing changed"; exit 1; }
 python3 -m py_compile /opt/keygroup/seo/kg_seo.py.new || { echo "STOP: generator broken - nothing changed"; exit 1; }
 mv /opt/keygroup/seo/kg_seo.py.new /opt/keygroup/seo/kg_seo.py
+curl -fsSL "$RAW/seo/kg_report.py?$(date +%s)" -o /opt/keygroup/seo/kg_report.py || echo "report script not downloaded"
 
 # 1) new pages (buyer guides / hub) listed in seo/pages.txt
 if curl -fsSL "$RAW/seo/pages.txt?$(date +%s)" -o /tmp/kg-seo-pages.txt; then
@@ -92,5 +95,6 @@ echo "listing title: $(curl -s "$L" | grep -o '<title>[^<]*' | head -n1)"
 
 # 5) refresh hourly
 echo '17 * * * * root /usr/bin/python3 /opt/keygroup/seo/kg_seo.py >> /var/log/kg-seo.log 2>&1' > /etc/cron.d/keygroup-seo
+echo '20 6 * * 1 root /usr/bin/python3 /opt/keygroup/seo/kg_report.py 7 >> /var/log/kg-report.log 2>&1' >> /etc/cron.d/keygroup-seo
 chmod 644 /etc/cron.d/keygroup-seo
 echo "DONE - SEO fix is live. Backup of the old Caddyfile: $BK"

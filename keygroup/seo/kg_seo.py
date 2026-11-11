@@ -14,6 +14,7 @@ SITE_URL = "https://keygroup.ge"
 SITE = os.environ.get("KG_SITE", "/opt/keygroup/site")
 SSR = os.path.join(SITE, "_ssr")
 MAX_AGE = 24 * 3600
+BACKUP = os.environ.get("KG_BACKUP", "/opt/keygroup/seo/orig")
 SKIP_DIRS = {"admin", "account", "publish", "compare", "upload", "agent", "p", "_ssr", "_staging",
              "assets", "img", "media", "uploads", "privacy"}
 
@@ -65,7 +66,15 @@ def set_head(page, title, desc, canonical, image=None, ld=None, og_type="website
                   '<meta name="twitter:image" content="' + esc(image) + '">']
     if ld:
         extra.append('<script type="application/ld+json">' + json.dumps(ld, ensure_ascii=False).replace("</", "<\\/") + "</script>")
-    return page.replace("</head>", "\n".join(extra) + "\n</head>", 1)
+    page = page.replace("</head>", "\n".join(extra) + "\n</head>", 1)
+    return add_attrib(page)
+
+
+ATTRIB = '<script src="/assets/kg-attrib.js?v=1" defer></script>'
+
+
+def add_attrib(page):
+    return page if "kg-attrib.js" in page else page.replace("</body>", ATTRIB + "\n</body>", 1)
 
 
 def listing_page(tpl, l, path):
@@ -90,6 +99,79 @@ def listing_page(tpl, l, path):
         ld["offers"] = {"@type": "Offer", "price": float(l["price"]), "priceCurrency": l.get("currency") or "USD",
                         "businessFunction": "http://purl.org/goodrelations/v1#" + ("LeaseOut" if l.get("deal") == "rent" else "Sell")}
     return set_head(tpl, title + " — KEY GROUP", desc, url, image, ld, "article")
+
+
+# pages that get a server-rendered "current listings" block with direct links (crawlable)
+INVENTORY = [
+    # file, filter, language, show INR/AED
+    ("georgia/property-for-sale/index.html", {"deal": "sale"}, "en", False),
+    ("ka/georgia/property-for-sale/index.html", {"deal": "sale"}, "ka", False),
+    ("buy-property-in-georgia-from-india/index.html", {"deal": "sale", "type": "flat", "city": "Tbilisi"}, "en", True),
+    ("buy-property-in-georgia-from-uae/index.html", {"deal": "sale", "type": "flat"}, "en", True),
+    ("tbilisi/apartments-for-sale/index.html", {"deal": "sale", "type": "flat", "city": "Tbilisi"}, "en", False),
+    ("ka/tbilisi/apartments-for-sale/index.html", {"deal": "sale", "type": "flat", "city": "Tbilisi"}, "ka", False),
+    ("tbilisi/apartments-for-rent/index.html", {"deal": "rent", "type": "flat", "city": "Tbilisi"}, "en", False),
+    ("ka/tbilisi/apartments-for-rent/index.html", {"deal": "rent", "type": "flat", "city": "Tbilisi"}, "ka", False),
+    ("batumi/apartments-for-sale/index.html", {"deal": "sale", "city": "Batumi"}, "en", False),
+    ("ka/batumi/apartments-for-sale/index.html", {"deal": "sale", "city": "Batumi"}, "ka", False),
+    ("tbilisi/saburtalo/index.html", {"deal": "sale", "district": "Saburtalo"}, "en", False),
+    ("ka/tbilisi/saburtalo/index.html", {"deal": "sale", "district": "Saburtalo"}, "ka", False),
+    ("tbilisi/vake/index.html", {"deal": "sale", "district": "Vake"}, "en", False),
+    ("ka/tbilisi/vake/index.html", {"deal": "sale", "district": "Vake"}, "ka", False),
+]
+
+
+def inventory_block(items, lang, fx, rates):
+    h = {"en": "Available now (%d)", "ka": "ახლა ხელმისაწვდომია (%d)"}[lang] % len(items)
+    if not items:
+        msg = {"en": "No listings here right now. Message us on WhatsApp +995 577 114 118 and an agent will send current options.",
+               "ka": "ამჟამად განცხადება არ არის. მოგვწერეთ WhatsApp-ზე +995 577 114 118 და აგენტი გამოგიგზავნით ვარიანტებს."}[lang]
+        return '<section class="kgl"><p>' + esc(msg) + "</p></section>"
+    li = []
+    for l in items[:24]:
+        cur = {"USD": "$", "EUR": "€", "GEL": "₾"}.get(l.get("currency"), "")
+        price = (cur + "{:,.0f}".format(float(l["price"]))) if l.get("price") else ""
+        if l.get("deal") == "rent" and price:
+            price += " / month"
+        if fx and price and l.get("currency") == "USD" and rates:
+            inr = float(l["price"]) * rates["INR"]
+            inr_s = ("₹%.2f crore" % (inr / 1e7)) if inr >= 1e7 else ("₹%.1f lakh" % (inr / 1e5))
+            price += " (≈ %s · AED %s)" % (inr_s, "{:,.0f}".format(float(l["price"]) * rates["AED"]))
+        li.append('<li><a href="%s">%s</a>%s</li>' % (esc(l.get("path") or "/p/?id=%s" % l["id"]), esc(l.get("title") or "Listing %s" % l["id"]),
+                                                     (" — " + esc(price)) if price else ""))
+    return '<section class="kgl"><h2>' + esc(h) + "</h2><ul>" + "".join(li) + "</ul></section>"
+
+
+def inject_inventory(rates):
+    try:
+        allx = json.loads(get("/api/listings?limit=200", 60)).get("listings") or []
+    except Exception as ex:
+        print("inventory not updated:", ex); return
+    done = 0
+    for rel, f, lang, fx in INVENTORY:
+        path = os.path.join(SITE, rel)
+        if not os.path.exists(path):
+            continue
+        items = [l for l in allx if l.get("status") == "active"
+                 and all(str(l.get(k) or "").lower() == str(v).lower() for k, v in f.items())]
+        items.sort(key=lambda l: -(l.get("created") or 0))
+        block = "<!--kg-listings-->" + inventory_block(items, lang, fx, rates) + "<!--/kg-listings-->"
+        page = open(path, encoding="utf-8").read()
+        bk = os.path.join(BACKUP, rel)
+        if not os.path.exists(bk):  # one-time backup of the original page (kept outside the web root)
+            os.makedirs(os.path.dirname(bk), exist_ok=True)
+            open(bk, "w", encoding="utf-8").write(page)
+        if "<!--kg-listings-->" in page:
+            page = re.sub(r"<!--kg-listings-->.*?<!--/kg-listings-->", lambda m: block, page, flags=re.S)
+        elif '<div class="faqh"' in page:
+            page = page.replace('<div class="faqh"', block + '\n  <div class="faqh"', 1)
+        else:
+            page = page.replace("</main>", block + "\n</main>", 1)
+        if ".kgl{" not in page:
+            page = page.replace("</style>", ".kgl{margin:26px 0;max-width:900px}.kgl ul{columns:2 320px;padding-left:18px}.kgl li{margin:5px 0;break-inside:avoid}\n</style>", 1)
+        write_if_changed(path, add_attrib(page))
+        done += 1
+    print("inventory blocks:", done)
 
 
 def main():
@@ -194,15 +276,21 @@ def main():
     write_if_changed(os.path.join(SITE, "sitemap.xml"), sm)
 
     # 4) indicative exchange rates for the INR/AED guide pages (keeps the last good file on failure)
+    rates = {"INR": 95.0, "AED": 3.6725}
+    try:
+        rates = json.loads(open(os.path.join(SITE, "assets", "kg-fx.json")).read())
+    except Exception:
+        pass
     try:
         req = urllib.request.Request("https://open.er-api.com/v6/latest/USD", headers={"User-Agent": "kg-seo/1.0"})
         r = json.loads(urllib.request.urlopen(req, timeout=20).read().decode())
         inr, aed = float(r["rates"]["INR"]), float(r["rates"]["AED"])
         if 60 < inr < 200 and 3.5 < aed < 3.8:
-            write_if_changed(os.path.join(SITE, "assets", "kg-fx.json"),
-                             json.dumps({"INR": round(inr, 2), "AED": round(aed, 4), "date": time.strftime("%d %b %Y")}))
+            rates = {"INR": round(inr, 2), "AED": round(aed, 4), "date": time.strftime("%d %b %Y")}
+            write_if_changed(os.path.join(SITE, "assets", "kg-fx.json"), json.dumps(rates))
     except Exception as ex:
         print("fx not updated:", ex)
+    inject_inventory(rates)
 
     # 5) branded 404 page (only if none exists)
     nf = os.path.join(SITE, "404.html")
