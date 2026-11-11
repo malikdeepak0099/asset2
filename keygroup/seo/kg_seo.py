@@ -8,7 +8,7 @@ Builds, without touching the portal code:
   site/404.html            branded not-found page
 Only reads public endpoints of https://keygroup.ge. Never deletes anything it did not create.
 """
-import html, json, os, re, sys, time, urllib.request
+import html, json, os, re, sys, time, urllib.parse, urllib.request
 
 SITE_URL = "https://keygroup.ge"
 SITE = os.environ.get("KG_SITE", "/opt/keygroup/site")
@@ -174,6 +174,110 @@ def inject_inventory(rates):
     print("inventory blocks:", done)
 
 
+HOME_PATCHES = [
+    ("<title>KEY GROUP Real Estate — Rent, buy and sell in Tbilisi & Batumi</title>",
+     "<title>KEY GROUP Real Estate — Property in Georgia: rent, buy & sell in Tbilisi & Batumi</title>"),
+    ("apartments, houses, commercial space and land for rent and sale in Tbilisi and Batumi. Local agents",
+     "apartments, houses, commercial space and land for rent and sale across Georgia, with active listings in Tbilisi and Batumi. Local agents"),
+    ('<meta property="og:title" content="KEY GROUP Real Estate — Tbilisi & Batumi">',
+     '<meta property="og:title" content="KEY GROUP Real Estate — Georgia: Tbilisi & Batumi">'),
+    ('"areaServed":[{"@type":"City","name":"Tbilisi"},{"@type":"City","name":"Batumi"}]',
+     '"areaServed":[{"@type":"Country","name":"Georgia"},{"@type":"City","name":"Tbilisi"},{"@type":"City","name":"Batumi"}]'),
+    ("Real estate agency in Tbilisi and Batumi.",
+     "Real estate agency serving all of Georgia, with active listings in Tbilisi and Batumi."),
+    ("უძრავი ქონების სააგენტო თბილისსა და ბათუმში.",
+     "უძრავი ქონების სააგენტო მთელ საქართველოში — აქტიური განცხადებები თბილისსა და ბათუმში."),
+    ("Агентство недвижимости в Тбилиси и Батуми.",
+     "Агентство недвижимости по всей Грузии — актуальные объекты в Тбилиси и Батуми."),
+]
+
+
+def patch_home():
+    path = os.path.join(SITE, "index.html")
+    if not os.path.exists(path):
+        return
+    page = open(path, encoding="utf-8").read()
+    bk = os.path.join(BACKUP, "index.html")
+    if not os.path.exists(bk):
+        os.makedirs(os.path.dirname(bk), exist_ok=True)
+        open(bk, "w", encoding="utf-8").write(page)
+    new = page
+    for a, b in HOME_PATCHES:
+        new = new.replace(a, b)
+    new = add_attrib(new)
+    if new != page:
+        write_if_changed(path, new)
+        print("homepage updated")
+
+
+# --- /invest-in-georgia/ (en/ka/ru): buyer-guide block with INR/AED budget examples at today's rate ---
+GUIDE_TXT = {
+    "en": {"h": "Buying from India or the UAE (Dubai)?",
+           "p": "Budget examples at today's rate (%s). Prices on our listings are in US$; INR and AED are indicative.",
+           "c": ("Budget", "INR", "AED"),
+           "rows": ["Typical 2–3 room apartment in Tbilisi", "Property for a residence permit", "Investment residence permit"],
+           "v": "Can't fly in yet? An agent shows you the apartment on a live WhatsApp video call.",
+           "in": "Guide for buyers from India →", "ae": "Guide for buyers from Dubai & the UAE →", "wa": "Book a video viewing"},
+    "ka": {"h": "მყიდველები ინდოეთიდან და არაბთა გაერთიანებული საამიროებიდან (დუბაი)",
+           "p": "ბიუჯეტის მაგალითები დღევანდელი კურსით (%s). ფასები ჩვენს განცხადებებში აშშ დოლარშია; INR და AED მიახლოებითია.",
+           "c": ("ბიუჯეტი", "INR", "AED"),
+           "rows": ["2–3 ოთახიანი ბინა თბილისში", "ქონება ბინადრობის ნებართვისთვის", "საინვესტიციო ბინადრობის ნებართვა"],
+           "v": "ჩამოსვლა ჯერ არ შეგიძლიათ? აგენტი ბინას WhatsApp-ის ვიდეოზარით გაჩვენებთ.",
+           "in": "გზამკვლევი ინდოელი მყიდველებისთვის →", "ae": "გზამკვლევი დუბაისა და UAE-ს მყიდველებისთვის →", "wa": "ვიდეოდათვალიერების დაჯავშნა"},
+    "ru": {"h": "Покупаете из Индии или ОАЭ (Дубай)?",
+           "p": "Примеры бюджета по сегодняшнему курсу (%s). Цены в объявлениях в US$; INR и AED — ориентировочно.",
+           "c": ("Бюджет", "INR", "AED"),
+           "rows": ["Типичная 2–3-комнатная квартира в Тбилиси", "Недвижимость для вида на жительство", "Инвестиционный вид на жительство"],
+           "v": "Пока не можете приехать? Агент покажет квартиру по видеозвонку в WhatsApp.",
+           "in": "Гид для покупателей из Индии →", "ae": "Гид для покупателей из Дубая и ОАЭ →", "wa": "Записаться на видеопросмотр"},
+}
+GUIDE_PAGES = [("invest-in-georgia/index.html", "en"), ("ka/invest-in-georgia/index.html", "ka"), ("ru/invest-in-georgia/index.html", "ru")]
+
+
+def inr_s(v):
+    return ("₹%.2f crore" % (v / 1e7)) if v >= 1e7 else ("₹%.1f lakh" % (v / 1e5))
+
+
+def guide_block(lang, rates):
+    t = GUIDE_TXT[lang]
+    budgets = [("US$90,000–100,000", 90000, 100000), ("US$150,000+", 150000, None), ("US$300,000+", 300000, None)]
+    rows = []
+    for label, (b, lo, hi) in zip(t["rows"], budgets):
+        inr = inr_s(lo * rates["INR"]) + (("–" + inr_s(hi * rates["INR"]).lstrip("₹")) if hi else "+")
+        aed = "{:,.0f}".format(lo * rates["AED"]) + (("–" + "{:,.0f}".format(hi * rates["AED"])) if hi else "+")
+        rows.append("<tr><td>%s<br><b>%s</b></td><td>%s</td><td>AED %s</td></tr>" % (esc(label), esc(b), esc(inr), esc(aed)))
+    wa = "https://wa.me/995577114118?text=" + urllib.parse.quote("Hello KEY GROUP! I would like a video viewing.")
+    return ('<section class="kgg"><h2>' + esc(t["h"]) + "</h2><p>" + esc(t["p"] % rates.get("date", "")) + "</p>"
+            '<table><tr><th>%s</th><th>%s</th><th>%s</th></tr>' % tuple(esc(x) for x in t["c"]) + "".join(rows) + "</table>"
+            '<p>' + esc(t["v"]) + ' <a href="' + wa + '" target="_blank" rel="noopener">' + esc(t["wa"]) + "</a></p>"
+            '<p class="kgg-l"><a href="/buy-property-in-georgia-from-india/">' + esc(t["in"]) + '</a> <a href="/buy-property-in-georgia-from-uae/">' + esc(t["ae"]) + "</a></p></section>")
+
+
+def inject_guides(rates):
+    for rel, lang in GUIDE_PAGES:
+        path = os.path.join(SITE, rel)
+        if not os.path.exists(path):
+            continue
+        page = open(path, encoding="utf-8").read()
+        bk = os.path.join(BACKUP, rel)
+        if not os.path.exists(bk):
+            os.makedirs(os.path.dirname(bk), exist_ok=True)
+            open(bk, "w", encoding="utf-8").write(page)
+        block = "<!--kg-guides-->" + guide_block(lang, rates) + "<!--/kg-guides-->"
+        if "<!--kg-guides-->" in page:
+            page = re.sub(r"<!--kg-guides-->.*?<!--/kg-guides-->", lambda m: block, page, flags=re.S)
+        elif '<h2 style="margin-bottom:12px">' in page:
+            page = page.replace('<h2 style="margin-bottom:12px">', block + '\n  <h2 style="margin-bottom:12px">', 1)
+        elif '<div class="faqh"' in page:
+            page = page.replace('<div class="faqh"', block + '\n  <div class="faqh"', 1)
+        else:
+            continue
+        if ".kgg{" not in page:
+            page = page.replace("</style>", ".kgg{margin:6px 0 26px;max-width:900px;background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px 18px}.kgg table{border-collapse:collapse;width:100%}.kgg td,.kgg th{border-bottom:1px solid var(--line);padding:8px 6px;text-align:left;font-size:14px}.kgg-l a{display:inline-block;margin:4px 10px 0 0;font:700 14px var(--display);color:var(--blue)}\n</style>", 1)
+        write_if_changed(path, add_attrib(page))
+    print("invest guide blocks updated")
+
+
 def main():
     t0 = time.time()
     portal_sm = get("/api/sitemap.xml", 60)
@@ -276,7 +380,7 @@ def main():
     write_if_changed(os.path.join(SITE, "sitemap.xml"), sm)
 
     # 4) indicative exchange rates for the INR/AED guide pages (keeps the last good file on failure)
-    rates = {"INR": 95.0, "AED": 3.6725}
+    rates = {"INR": 95.0, "AED": 3.6725, "date": time.strftime("%d %b %Y")}
     try:
         rates = json.loads(open(os.path.join(SITE, "assets", "kg-fx.json")).read())
     except Exception:
@@ -291,6 +395,8 @@ def main():
     except Exception as ex:
         print("fx not updated:", ex)
     inject_inventory(rates)
+    inject_guides(rates)
+    patch_home()
 
     # 5) branded 404 page (only if none exists)
     nf = os.path.join(SITE, "404.html")
