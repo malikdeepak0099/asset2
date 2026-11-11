@@ -38,4 +38,9 @@ curl -s https://keygroup.ge/assets/portal.css | grep -q '{' || { echo "PROBLEM: 
 if [ $FAIL = 1 ]; then echo "RESTORING pages from $BK"; ( cd $SITE && tar xzf $BK ); exit 1; fi
 echo "homepage: $H"
 echo "invest: $(curl -s https://keygroup.ge/invest-in-georgia/ | grep -o 'Budget examples at today[^<]*' | head -n1)"
+# hourly generator + weekly report to Telegram (Mondays 06:20 UTC = 10:20 Tbilisi)
+printf '%s\n%s\n' '17 * * * * root /usr/bin/python3 /opt/keygroup/seo/kg_seo.py >> /var/log/kg-seo.log 2>&1' \
+  '20 6 * * 1 root /usr/bin/python3 /opt/keygroup/seo/kg_report.py 7 --telegram >> /var/log/kg-report.log 2>&1' > /etc/cron.d/keygroup-seo
+chmod 644 /etc/cron.d/keygroup-seo
+echo "cron:"; cat /etc/cron.d/keygroup-seo
 echo "DONE - content update live"

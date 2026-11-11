@@ -6,9 +6,10 @@ referrer is the source (google.* = Google search), and the market (GE / IN / AE 
 from kg-attrib.js (browser time zone). Counts what those sessions did: WhatsApp clicks, call
 clicks, enquiry forms and viewing requests. No names or phone numbers are read.
 Writes /opt/keygroup/seo/reports/<YYYY-MM-DD>.json and prints a table.
-Usage: python3 kg_report.py [days]   (default 7)
+Usage: python3 kg_report.py [days] [--telegram]   (default 7 days)
+--telegram sends a short English summary to the KEY GROUP admin Telegram (bot token from the portal .env).
 """
-import collections, json, os, sqlite3, sys, time
+import collections, json, os, sqlite3, sys, time, urllib.parse, urllib.request
 
 DB = os.environ.get("KG_DB", "/opt/keygroup-portal/data/portal.db")
 OUT = os.environ.get("KG_REPORTS", "/opt/keygroup/seo/reports")
@@ -31,8 +32,60 @@ def source(ref):
     return "referral:" + r[:40]
 
 
+ENV = os.environ.get("KG_PORTAL_ENV", "/opt/keygroup-portal/.env")
+REPORT_CHATS = os.environ.get("KG_REPORT_CHATS", "8462114396")  # Deepak's Telegram ID
+
+
+def telegram(text):
+    token = ""
+    try:
+        for line in open(ENV):
+            if line.startswith("BOT_TOKEN="):
+                token = line.split("=", 1)[1].strip()
+    except Exception as e:
+        print("telegram: no env", e); return
+    if not token:
+        print("telegram: no BOT_TOKEN"); return
+    for chat in [c for c in REPORT_CHATS.split(",") if c.strip()]:
+        try:
+            data = urllib.parse.urlencode({"chat_id": chat.strip(), "text": text, "disable_web_page_preview": "true"}).encode()
+            urllib.request.urlopen("https://api.telegram.org/bot%s/sendMessage" % token, data, timeout=20).read()
+            print("telegram: sent to", chat)
+        except Exception as e:
+            print("telegram: failed for", chat, e)
+
+
+def summary(out, days):
+    g = [r for r in out if r["source"] == "google"]
+    by_m = collections.Counter()
+    enq_m = collections.Counter()
+    for r in g:
+        by_m[r["market"]] += r.get("sessions", 0)
+        enq_m[r["market"]] += r.get("sessions_with_enquiry", 0)
+    lines = ["KEY GROUP - Google organic report, last %d days" % days, "",
+             "Google visits / visits with enquiry (WhatsApp, call, form, viewing):"]
+    for m in ("GE", "IN", "AE", "other", "unknown"):
+        if by_m[m]:
+            lines.append("  %s: %d / %d" % (m, by_m[m], enq_m[m]))
+    if not g:
+        lines.append("  no Google visits recorded yet")
+    top = sorted(g, key=lambda r: (-r.get("sessions_with_enquiry", 0), -r.get("sessions", 0)))[:8]
+    if top:
+        lines += ["", "Top landing pages from Google:"]
+        for r in top:
+            lines.append("  %s [%s] visits %d, enquiries %d (wa %d, call %d, form %d)" % (
+                r["landing"][:60], r["market"], r.get("sessions", 0), r.get("sessions_with_enquiry", 0),
+                r.get("whatsapp_click", 0), r.get("call_click", 0), r.get("lead_submitted", 0)))
+    allv = sum(r.get("sessions", 0) for r in out)
+    alle = sum(r.get("sessions_with_enquiry", 0) for r in out)
+    lines += ["", "All sources: %d visits, %d with an enquiry." % (allv, alle),
+              "Mark qualified leads in the CRM using the [ref ...] tag in WhatsApp messages."]
+    return "\n".join(lines)
+
+
 def main():
-    days = int(sys.argv[1]) if len(sys.argv) > 1 else 7
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    days = int(args[0]) if args else 7
     since = time.time() - days * 86400
     con = sqlite3.connect("file:%s?mode=ro" % DB, uri=True)
     rows = con.execute("SELECT name, sid, page, props, ts FROM events WHERE ts>=? AND name IN (%s) ORDER BY ts"
@@ -80,6 +133,8 @@ def main():
                                                          r.get("sessions_with_enquiry", 0), r.get("whatsapp_click", 0), r.get("call_click", 0),
                                                          r.get("lead_submitted", 0), r.get("viewing_requested", 0)))
     print("saved", f)
+    if "--telegram" in sys.argv:
+        telegram(summary(out, days))
 
 
 if __name__ == "__main__":
